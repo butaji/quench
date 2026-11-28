@@ -632,6 +632,7 @@ impl Vm {
                 .eq(taken.frame_captures.iter().copied())
             && lowered.region.stable.atoms.iter().all(|atom| !self.method_cache_atoms.bits().contains(*atom as usize))
     }
+}
 
 #[quench_macros::ext(CompiledLaneCompileVm2)]
 impl Vm {
