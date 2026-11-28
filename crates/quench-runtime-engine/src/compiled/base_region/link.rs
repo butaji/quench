@@ -206,8 +206,6 @@ pub(crate) struct Layout<'a> {
     pub(crate) numbers: Vec<Register>,
     /// The class-typed parameters the function never writes, with the prototype each entry checks (`declared::class_prototypes`).
     pub(crate) prototypes: Vec<super::function::ClassProto>,
-    /// The loop-invariant receivers whose exact shape the entry checks, and the proofs seed (`Known::shapes`, `Heap::Shape`).
-    pub(crate) shapes: Vec<super::function::ShapeProto>,
     /// The VM's reads of a cache site (`Known::reads`), which a method call's chain reads (`plan::chain_reads`).
     pub(crate) reads: Option<&'a dyn Fn(u16) -> Vec<crate::compiled::NativeFieldLoad>>,
     /// The holders the planned chains read through, which the body subscribes to with its own (`function::assemble`).

@@ -162,9 +162,6 @@ heap::IC_KNOWN_SET_FLAT_ADMITTED_ROW field_store
 heap::IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW field_store
 heap::DECLARED_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::CAPTURE_IDENTITY_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::PROTOTYPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::SHAPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::SHAPE_FLAT_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::STORES_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::CHAR_CODE_AT_ROW str_charcodeat
 heap::PARSE_INT_ROW parse_int

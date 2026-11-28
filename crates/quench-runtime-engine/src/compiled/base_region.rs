@@ -124,9 +124,6 @@ pub(crate) struct Known<'a> {
     /// a named read of such a parameter folds to its prototype's own value (`declared::class_member_read`), and the entry
     /// checks each (`declared::class_prototypes`). Empty where none was observed.
     pub(crate) classes: &'a [function::ClassProto],
-    /// The exact shapes the region's field accesses of each loop-invariant receiver saw at entry (`osr_compile::loop_shapes`):
-    /// the entry checks each (`Heap::Shape`). Empty for a body, whose parameters are `classes`.
-    pub(crate) shapes: &'a [function::ShapeProto],
 }
 
 /// The realm a body's inlined callees were found in: where the active realm's global object sits in

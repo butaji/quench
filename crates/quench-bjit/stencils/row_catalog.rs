@@ -262,22 +262,14 @@ macro_rules! catalog {
     /// (byte offset in hole 1) holds exactly the word of hole 2 (the callee the body calls by identity). A hit continues at NEXT; a miss leaves
     /// through EXIT0 with nothing written.
     CAPTURE_IDENTITY_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::CaptureIdentity,
-    /// A class-typed parameter's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
-    /// object of the exact shape in hole 1's low half whose prototype link is its high half (`HELD_LINK_AT`), the record
-    /// found in the payload's object record table (`guard::prototype`). A hit continues at NEXT; a miss leaves through
-    /// EXIT0 with nothing written.
-    PROTOTYPE_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Prototype,
+    // The shape-and-link entry test's value is retired: the numbering keeps it free.
+    reserve 1,
     /// A live class cell's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct object whose
     /// live class cell's class is hole 1 (`guard::class`), which fixes the exact shape and prototype link. A hit continues at
     /// NEXT; a miss leaves through EXIT0 with nothing written.
     CLASS_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Class,
-    /// A loop-invariant receiver's entry test (`base_region::link::entry_rows`): the frame slot at hole 0 holds a direct
-    /// object of the exact shape in hole 1 (its record found in the payload's object record table, `guard::shape`). A hit
-    /// continues at NEXT; a miss leaves through EXIT0 with nothing written.
-    SHAPE_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Shape,
-    /// `SHAPE_ROW` of a receiver whose flat form the entry checks too: the auxiliary word is the shape in hole 1 with no
-    /// storage-form bit (`guard::shape` at `Form::Arena`), so its values are the arena run's.
-    SHAPE_FLAT_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::ShapeFlat,
+    // The loop-receiver shape entry tests' values are retired: the numbering keeps them free.
+    reserve 2,
     /// A region's entry test that the run stores specialized (`JS_STEP_STORES_SPECIALIZED`, `slot_store::store_admitted`):
     /// a hit continues at NEXT; a miss leaves through EXIT0 with nothing written.
     STORES_ROW: uses(Unread, Unread, Unread, Never) twin: none("entry guard: its cost is the guarded operation's, no kernel isolates it") = Heap::Stores,
