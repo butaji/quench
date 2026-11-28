@@ -16,6 +16,7 @@ use super::scope::Scope;
 use super::shape::Shape;
 use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{ControlEdge, Function, Successors, WideInstruction};
+use crate::typed_ir::Type;
 use crate::dataflow::{BitSet, Dataflow, solve};
 use super::quiet::Quiet;
 use crate::staged::Operation;
@@ -84,6 +85,13 @@ pub(super) struct FunctionFlow {
     /// Per named property a store of this function writes, the holders of the object it stores on (`Holders::of` of the
     /// base). A read of the name is wild only where such a holder may be a wild holder (`Census::wild`).
     pub(super) member_bases: Vec<(u32, Holders)>,
+    /// The values the literals of this function define (`DefineArrayElement`, a data `DefinePropertyRecord`): an array or object
+    /// literal keeps them where no store records them, so unseen code holding an object of unknown origin may read them (`escapes`).
+    pub(super) defined: Vec<(Option<crate::typed_ir::ElementClass>, Word)>,
+    /// Whether this function makes a global store of its own that names no global (`with`, `delete`, a sloppy declaration, a
+    /// capture store of no known owner); a computed-key store is `computed_global`. Holding the global object (`global_wild`)
+    /// lets unseen code write globals too, but only with values it holds, which the escapes hold already.
+    pub(super) unkeyed_global: bool,
     /// Whether a store a builtin makes may write an index of an object that may be a builtin's prototype (`Cell::prototype`):
     /// an array mutator on one, or a property adder handed one. An element store records its own (`ElementStore::prototype`).
     pub(super) prototype_writes: bool,
@@ -120,6 +128,9 @@ pub(super) struct FunctionFlow {
     /// Per parameter, whether its argument is in a register at entry (`bound_parameters`): its array is then the
     /// parameter's own element class, which a resolved call links to the argument's (`types::entry_links`).
     pub(super) in_register: Box<[bool]>,
+    /// Per parameter, whether it lives in a local slot (`Key::Slot` of its index) rather than a register: the slot holds
+    /// the argument from entry, so its cell joins the parameter's (`types::Types::of`).
+    pub(super) slotted: Box<[bool]>,
     /// Whether the function's return value leaves the closed world: the program's root (the host reads its result),
     /// an async function (its result is a promise a runtime reaction reads) or a generator (`next()` hands it out).
     /// `types::escapes` takes its returns as positions the solve cannot follow.
@@ -234,6 +245,7 @@ pub(super) fn analyze_function(id: u32, function: &Function, (scope, decode, rec
     let mut flow = record.finish(arity, returns_out, in_register, function.strict);
     flow.entries = entries;
     flow.leaked = leaked;
+    flow.slotted = (0..function.params).map(|index| function.promoted_register(index).is_none()).collect();
     flow
 }
 
@@ -391,6 +403,22 @@ impl Solver<'_> {
     /// holds the argument at entry (`Function::promoted_register`).
     fn entry_facts(&self) -> Vec<Word> {
         let mut state = vec![Word::UNKNOWN; self.ctx.registers];
+        // A register no instruction writes and no parameter lives in is one an activation starts `undefined` where it is read
+        // (`ResidualProgram::entry_fill` fills every register live at entry): the receiver register of a plain call, say.
+        let mut written = vec![false; self.ctx.registers];
+        for pc in 0..self.function.code.len() {
+            for register in self.function.instruction_at(pc).written_registers() {
+                if let Some(slot) = written.get_mut(usize::from(register)) { *slot = true; }
+            }
+        }
+        for index in 0..self.function.params {
+            if let Some(slot) = self.function.promoted_register(index).and_then(|register| written.get_mut(usize::from(register))) { *slot = true; }
+        }
+        for (register, word) in state.iter_mut().enumerate() {
+            if !written[register] && register >= usize::from(self.function.params) {
+                *word = Word::of(Type::language(crate::ValueType::Undefined));
+            }
+        }
         if let Some(types) = self.ctx.types {
             for index in 0..self.function.params {
                 if let Some(register) = self.function.promoted_register(index) {

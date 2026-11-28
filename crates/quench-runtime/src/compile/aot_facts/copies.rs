@@ -153,6 +153,8 @@ pub(super) fn expand(flows: &mut [FunctionFlow], assign: Option<u32>, prototype:
                 match fields {
                     Some(fields) => for &(atom, value) in &fields {
                         writes.push((caller, call.pc, Key::Member(atom), value));
+                        // The destination may be an object of no one class: the copy is a store into any class's instance.
+                        writes.push((caller, call.pc, Key::MemberAny(atom), value));
                         bases.push((caller, atom, holders));
                     },
                     None => wild.push((caller, holders)),

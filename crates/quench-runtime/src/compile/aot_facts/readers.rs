@@ -32,7 +32,7 @@ use crate::typed_ir::{Cell, Classes, FactKey, Type};
 use crate::staged::glue_prelude::*;
 
 /// The names builtins read off an object with no read instruction of the program (`FieldReaders::protocol_names`).
-const PROTOCOL_NAMES: [&str; 33] = [
+pub(super) const PROTOCOL_NAMES: [&str; 33] = [
     "toString", "valueOf", "toLocaleString", "toJSON", "then", "constructor", "length", "next", "done", "value", "return",
     "throw", "lastIndex", "source", "flags", "global", "ignoreCase", "multiline", "sticky", "unicode", "unicodeSets", "dotAll",
     "hasIndices", "exec", "join", "message", "name", "cause", "index", "input", "groups", "get", "set",
