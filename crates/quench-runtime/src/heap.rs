@@ -4372,8 +4372,8 @@ impl Heap {
         // The barrier remembers the owner of any reference stored; one test covers each.
         let stored = values.into_iter().find(|value| value.heap_index().is_some()).unwrap_or(Value::UNDEFINED);
         let record = match self.object_store_mut(object, stored).expect("property owner is an object") {
-            // The class cell took the store in place above: a store that breaks its representation changes its class.
-            ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
+            // The class cell took the store in place above; a store that breaks its representation is a class transition.
+            ObjectMut::Cell(_) => unreachable!("a class cell that declines a store takes a class transition in the cell path, never a record"),
             ObjectMut::Record(record) => record,
         };
         record.note_constant_write();
@@ -4465,8 +4465,8 @@ impl Heap {
         }
         let vector = {
             let record = match self.object_store_mut(object, value).expect("property owner is an object") {
-                // The class cell took the store in place above: a store that breaks its representation changes its class.
-                ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
+                // The class cell took the store in place above; a store that breaks its representation is a class transition.
+                ObjectMut::Cell(_) => unreachable!("a class cell that declines a store takes a class transition in the cell path, never a record"),
                 ObjectMut::Record(record) => record,
             };
             record.note_value_write(slot);
@@ -4519,8 +4519,8 @@ impl Heap {
         }
         let vector = {
             let record = match self.object_store_mut(object, value).expect("property owner is an object") {
-                // The class cell took the store in place above: a store that breaks its representation changes its class.
-                ObjectMut::Cell(_) => unreachable!("a class cell that declined a store has departed"),
+                // The class cell took the store in place above; a store that breaks its representation is a class transition.
+                ObjectMut::Cell(_) => unreachable!("a class cell that declines a store takes a class transition in the cell path, never a record"),
                 ObjectMut::Record(record) => record,
             };
             record.note_value_write(slot);

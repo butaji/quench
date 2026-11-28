@@ -93,26 +93,4 @@ impl Heap {
         self.properties.slot_observation(shape, slot).ty()
     }
 
-    #[quench_macros::test_visible]
-    /// The slots of live object records whose value its owner's representation does not hold
-    /// (`ValueArena::slot_observation`): zero while every write joins its value's class;
-    /// zero too where representations are not kept.
-    pub(crate) fn unrepresented_slots(&self) -> usize {
-        if !self.properties.tracks() { return 0; }
-        let mut unrepresented = 0;
-        self.object_records.for_each_live(|_, record| {
-            let object = &record.object;
-            let shape = object.exact_shape();
-            if shape != object.shape() { return; }
-            for slot in 0..self.properties.shape_length(shape) {
-                // SAFETY: an exact, non-dictionary shape holds its registered slots.
-                let value = unsafe { self.property_get_flat(object, slot) };
-                if !value.is_deleted()
-                    && !crate::typed_ir::Type::immediate(value).is_subtype(self.properties.slot_observation(shape, slot).ty()) {
-                    unrepresented += 1;
-                }
-            }
-        });
-        unrepresented
-    }
 }
