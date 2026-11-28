@@ -32,6 +32,13 @@ impl<'a> FunctionFacts<'a> {
         }
     }
 
+    /// The functions the call at `pc` may call where no guess is among them (`call_targets` less a guessed target under
+    /// `guessed_calls`): empty where the call's target is a guess. A load-time choice reads this, never a guess (ruling Q5).
+    pub fn proven_call_targets(&self, pc: u32) -> Vec<u32> {
+        if self.facts.guessed_calls.contains(&(self.function, pc)) { return Vec::new(); }
+        self.call_targets(pc)
+    }
+
     /// The accessor the field access at `pc` runs, where the census proves one (`accessors::accessor_arms`).
     /// Read by the load-time choice of the accessor protocol rows (category F: sites 54, 59).
     pub fn accessor_arms(&self, pc: u32) -> Option<&'a accessors::AccessorArms> {

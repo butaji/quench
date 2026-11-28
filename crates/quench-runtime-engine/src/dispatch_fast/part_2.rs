@@ -350,7 +350,7 @@ pub(super) const fn script_call_row(argc: u16, plain: bool, returns: bool) -> Ha
 /// `AotFacts::body_entry`): one body's, or the one entry shared by several. None where a body's entry is
 /// not named, or where the bodies differ.
 fn targets_entry(facts: &quench_runtime::compile::aot_facts::AotFacts, function: u32, pc: u32) -> Option<CallEntry> {
-    let mut entries = facts.function_facts(function).call_targets(pc).into_iter().map(|body| facts.body_entry(body));
+    let mut entries = facts.function_facts(function).proven_call_targets(pc).into_iter().map(|body| facts.body_entry(body));
     let first = entries.next()??;
     entries.all(|entry| entry == Some(first)).then_some(first)
 }
