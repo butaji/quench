@@ -7,7 +7,6 @@
 use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::{field_load_groups, NativeFieldLoad};
-use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::staged::ic::IcOp;
 use quench_runtime::staged::property::{Arm, ClassArm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use quench_runtime::staged::Form;
@@ -89,18 +88,6 @@ impl Fast {
     }
 }
 
-/// Whether a load's field is one the lane addresses: a class-keyed load of an own field whose slot is past its class's
-/// spill slot (`AotFacts::spill_from`) names a word of the cell's spill run, which the lane does not address, so the load
-/// builds no arm and its site's access takes the VM path. The spill slot itself holds the run's offset, so it is no field
-/// either. Shape loads address their record and held loads their holder, so both are always addressable here; a spilled
-/// slot is no `NativeFieldLoad` at all (its `u16` slot refuses it, `native_field_entry`).
-pub(crate) fn addressable_load(facts: Option<&AotFacts>, load: &NativeFieldLoad) -> bool {
-    match (load.class, load.holder) {
-        (Some(class), None) => facts.and_then(|facts| facts.spill_from(class)).is_none_or(|from| u32::from(load.slot) < from),
-        _ => true,
-    }
-}
-
 /// Whether a link's read dispatches over classes (`FieldPlan::Classed`): its class-keyed loads are the class arms and
 /// its shape loads the rest (the VM's read where there are none). A lone class-keyed load is `Fast::Single`'s.
 fn dispatches_classes(loads: &[NativeFieldLoad]) -> bool {
@@ -173,7 +160,7 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
         };
     }
     match load.holder {
-        None => vec![IcOp::LoadSlot { slot: load.slot,
+        None => vec![IcOp::LoadSlot { slot: load.record_slot(),
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), quench_runtime::staged::ic::form_of_layout),
             storage_len: load.storage_len, rep: Representation::Tagged }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
@@ -188,7 +175,7 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
                 Some(id) => IcOp::GuardLayout(id),
                 None => IcOp::GuardShape(holder),
             };
-            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.slot)]
+            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.record_slot())]
         }
     }
 }

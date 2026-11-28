@@ -1835,12 +1835,13 @@ impl Vm {
     pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
-        // A spilled slot names a run's word, which the lane's inline read cannot address: no inline descriptor.
-        let slot = u16::try_from(cache.slot).ok()?;
+        let slot = cache.slot;
+        // A shape-keyed entry never spills: its slot is an inline field index.
+        if !is_class_key(cache.receiver) && is_spilled_slot(slot) { return None; }
         let shape = cache.receiver_shape();
         let storage_len = self.shapes.get(shape as usize)?.storage_len();
-        if usize::from(slot) >= storage_len { return None; }
-        let ty = self.heap.slot_type(shape, usize::from(slot));
+        if field_index_of(slot) as usize >= storage_len { return None; }
+        let ty = self.heap.slot_type(shape, field_index_of(slot) as usize);
         // A class-keyed receiver is a live cell, which no record's storage describes: no plain storage.
         let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
             .filter(|object| object.exact_shape() == shape)
@@ -1958,14 +1959,15 @@ impl Vm {
     /// one, and the slot, which the shape that holds it must cover.
     fn native_field_entry(&self, entry: FieldCache) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
-        // A spilled slot names a run's word, which the lane's inline read cannot address: no inline descriptor.
-        let slot = u16::try_from(entry.slot).ok()?;
+        let slot = entry.slot;
         let class = is_class_key(entry.receiver).then_some(entry.receiver & !CLASS_KEY);
+        // A shape-keyed entry never spills: its slot is an inline field index.
+        if class.is_none() && is_spilled_slot(slot) { return None; }
         let shape = entry.receiver_shape();
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(shape) as usize)?.storage_len();
-        if usize::from(slot) >= storage_len { return None; }
-        let ty = self.heap.slot_type(holder.unwrap_or(shape), usize::from(slot));
+        if field_index_of(slot) as usize >= storage_len { return None; }
+        let ty = self.heap.slot_type(holder.unwrap_or(shape), field_index_of(slot) as usize);
         // A class-keyed held entry names the holder cell by granule, read live: it has no inherited
         // constant. A shape-keyed one keeps the holder's layout id where it kept one, which the plan
         // checks names the holder's shape before a read guards by it.
@@ -1973,7 +1975,7 @@ impl Vm {
             (Some(_), Some(_)) => (Some(entry.holder_cell), None),
             (Some(holder), None) => (
                 (entry.holder_cell != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_cell),
-                self.inherited_constant(holder, slot),
+                self.inherited_constant(holder, field_index_of(slot) as u16),
             ),
             (None, _) => (None, None),
         };

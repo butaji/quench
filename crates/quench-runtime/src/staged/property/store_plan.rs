@@ -11,7 +11,8 @@ use super::super::field_cache_layout::{is_class_key, CLASS_KEY};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StoreArm {
     pub shape: u32,
-    pub slot: u16,
+    /// The slot word: a field index of an own shape, or a class arm's `spilled_slot` (`class_slot_address`).
+    pub slot: u32,
     pub holds: Option<Type>,
     /// The slot's type (`slot_ty` of `StoreArm::of`): a Number slot's words are raw doubles, so a
     /// store writes `slot_store::class_word(class, value)` whether or not `holds` tests the value.
@@ -28,21 +29,28 @@ impl StoreArm {
     /// the arm admits an int32, or for a slot that holds any direct object, that type; `None`
     /// where the slot's type holds no such value, so every store of it goes through the VM.
     pub fn of((shape, slot): (u32, u16), slot_ty: Type, fact: Type) -> Option<Self> {
+        let slot = u32::from(slot);
         if fact.is_subtype(slot_ty) { return Some(Self { shape, slot, holds: None, class: slot_ty, image: false }); }
         let holds = if slot_ty.direct_object_part() == Some(Type::DIRECT_OBJECT_FAMILY) { slot_ty } else { Type::INT32 };
         holds.is_subtype(slot_ty).then_some(Self { shape, slot, holds: Some(holds), class: slot_ty, image: false })
     }
 
+    /// The inline record slot of a shape arm: a shape's field index, which fits a record's `u16` (`StoreArm::of`).
+    pub fn record_slot(self) -> u16 {
+        debug_assert!(!self.keys_class() && self.slot <= u32::from(u16::MAX), "a shape arm names an inline field");
+        self.slot as u16
+    }
+
     /// The arm of an ahead image's construction: `key` is its field guard key (`ImageWord::Layout`), and `slot` a field
     /// of the live class cell the loader's class names. Like `of_class`, it takes no slot type: the cell's gate admits
     /// or refuses a tracked slot.
-    pub fn of_image(key: u32, slot: u16) -> Self {
+    pub fn of_image(key: u32, slot: u32) -> Self {
         Self { shape: key, slot, holds: None, class: Type::ANY, image: true }
     }
 
     /// The arm of a class-keyed receiver: `key` is the entry's key (`class | CLASS_KEY`), and `slot` a field of the
     /// live class cell. It takes no slot type: the cell's store gate admits or refuses a tracked slot (`class_arm_store`).
-    pub fn of_class(key: u32, slot: u16) -> Self {
+    pub fn of_class(key: u32, slot: u32) -> Self {
         Self { shape: key, slot, holds: None, class: Type::ANY, image: false }
     }
 
