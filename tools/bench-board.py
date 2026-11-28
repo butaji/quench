@@ -7,8 +7,8 @@ row), so a regression and its closing show side by side.
 The comparison table every step reports (user, 2026-11-28): score and peak RSS of each V8 v7
 bench in Quench no-jit, default and AOT (a compiled image) against Node, Bun and the C analogue
 (quench-bench/c-analogues), all on this machine, median of RUNS runs each. Each JS engine runs
-the pinned base.js + bench + the stock reporting runner; peak RSS is the child's ru_maxrss
-(wait4). The C score is the harness formula, 100 * reference / microseconds per run, over the
+the pinned base.js + bench + the stock reporting runner; peak RSS is the engine's ru_maxrss
+(wait4) from a small C launcher, so no parent footprint inflates it. The C score is the harness formula, 100 * reference / microseconds per run, over the
 analogue's timed iterations. Prints a Markdown table, with the build and run count, and
 writes it to WORK/board.md.
 """
@@ -23,13 +23,43 @@ RUNNER = ('var r=[];BenchmarkSuite.RunSuites({NotifyResult:function(n,s){r.push(
 CLEAN_ENV = {k: v for k, v in os.environ.items() if k not in ("BUN_OPTIONS", "NODE_OPTIONS", "QUENCH_TRACE")}
 
 
+# Peak RSS is read by a small C launcher that forks the engine from its own tiny image: Linux carries a
+# process's resident high-water mark across execve, so a child forked from this Python process would
+# report Python's footprint (about 13 MB) as the floor of every engine's peak.
+LAUNCHER_C = r"""
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/resource.h>
+int main(int argc, char **argv) {
+    pid_t pid = fork();
+    if (pid == 0) { execvp(argv[2], argv + 2); _exit(127); }
+    int status; struct rusage usage;
+    wait4(pid, &status, 0, &usage);
+    FILE *f = fopen(argv[1], "w"); fprintf(f, "%ld\n", usage.ru_maxrss); fclose(f);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+"""
+LAUNCHER = None
+
+
+def launcher(work):
+    global LAUNCHER
+    if LAUNCHER is None:
+        source, exe = os.path.join(work, "rss-run.c"), os.path.join(work, "rss-run")
+        open(source, "w").write(LAUNCHER_C)
+        subprocess.run(["cc", "-O2", "-o", exe, source], check=True)
+        LAUNCHER = exe
+    return LAUNCHER
+
+
 def run(argv, env=None):
     """(stdout, exit status, peak RSS in KiB) of one run."""
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env or CLEAN_ENV)
-    out = proc.stdout.read().decode(errors="replace")
-    _, status, usage = os.wait4(proc.pid, 0)
-    proc.returncode = os.waitstatus_to_exitcode(status)
-    return out, proc.returncode, usage.ru_maxrss
+    peak_file = LAUNCHER + ".peak"
+    proc = subprocess.run([LAUNCHER, peak_file] + argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env or CLEAN_ENV)
+    out = proc.stdout.decode(errors="replace")
+    return out, proc.returncode, int(open(peak_file).read())
 
 
 def js_score(out):
@@ -106,6 +136,7 @@ def main():
     a = ap.parse_args()
     work = os.path.abspath(a.work or tempfile.mkdtemp(prefix="board-"))
     os.makedirs(work, exist_ok=True)
+    launcher(work)
     quench = os.path.abspath(a.quench)
     build = subprocess.run(["git", "-C", ROOT, "log", "-1", "--format=%h"], capture_output=True, text=True).stdout.strip()
     builds = [(f"integ {build}", quench)]
