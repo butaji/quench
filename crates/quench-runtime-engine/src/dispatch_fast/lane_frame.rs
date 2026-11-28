@@ -782,12 +782,12 @@ impl RecordPlan {
         Self { ops: [none, none], len: 0, records, other: None, word: false, store: Some(store), functions: false, nested: None, host: None, entry: None, own: None }
     }
 
-    /// The store the hint `(layout, slot)` proves for a tracked (`narrow` false) or narrow store
-    /// (`StorePlan::Hinted`), a refusal leaving to the VM's own-field store.
+    /// The tracked store the hint `(layout, slot)` proves (`StorePlan::Hinted`, not narrow), a refusal leaving
+    /// to the VM's own-field store.
     #[inline(always)]
-    pub(crate) fn own_hinted(layout: u32, slot: u16, records: u64, narrow: bool) -> Self {
+    pub(crate) fn own_hinted(layout: u32, slot: u16, records: u64) -> Self {
         use quench_runtime::staged::property::{StoreJoin, StorePlan};
-        let store = StorePlan::Hinted { id: layout, slot, narrow, join: StoreJoin::Host };
+        let store = StorePlan::Hinted { id: layout, slot, narrow: false, join: StoreJoin::Host };
         Self { store: Some(store), ..Self::own_store(layout, slot, records) }
     }
 
@@ -799,26 +799,11 @@ impl RecordPlan {
         Self { store: Some(store), ..Self::own_store(layout, slot, records) }
     }
 
-    /// The store the hint `(layout, slot)` and the site's polymorphic entries prove
-    /// (`StorePlan::Polymorphic`).
-    #[inline(always)]
-    pub(crate) fn own_polymorphic(layout: u32, slot: u16, records: u64) -> Self {
-        let store = quench_runtime::staged::property::StorePlan::Polymorphic { id: layout, slot };
-        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
-    }
-
     /// The general cached write of a public name (`StorePlan::Host`): the VM's cached store or
     /// add, which a refusal leaves to the lane's general store.
     #[inline(always)]
     pub(crate) fn general_store(records: u64) -> Self {
         Self { store: Some(quench_runtime::staged::property::StorePlan::Host), ..Self::own_store(0, 0, records) }
-    }
-
-    /// The adding store of a named store record whose site may add its property (`StorePlan::Add`):
-    /// the VM's proved or cached add completes it (`PropertyFrame::field_add`).
-    #[inline(always)]
-    pub(crate) fn own_add() -> Self {
-        Self { store: Some(quench_runtime::staged::property::StorePlan::Add), ..Self::own_store(0, 0, 0) }
     }
 
     /// The read of a string receiver through a `String.prototype` hint whose operands are

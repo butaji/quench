@@ -73,44 +73,21 @@ pub(super) const fn field_store_opcode(receiver: StoreReceiver, strict: bool) ->
 /// receiver and strictness `store` names.
 pub(super) const fn field_store_row(store: FieldStore) -> Handler { field_store_row_at::<FLAG_UNREAD>(store) }
 
-/// `field_store_row` at site fact `FLAG`: `ADD_SITE` is the row of a store that may add its property.
+/// `field_store_row` at site fact `FLAG`: `GENERAL_SITE` for a store the class's facts do not prove always stored,
+/// `TRACKED_SITE` for a store whose field keeps a narrower domain (`named_store_row`).
 pub(super) const fn field_store_row_at<const FLAG: u8>(store: FieldStore) -> Handler {
     match (store.receiver, store.strict) {
-        (StoreReceiver::Register, false) => generated_row!(FIELD_STORE, ACC_NONE, FLAG_UNREAD),
-        (StoreReceiver::Register, true) => generated_row!(FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD),
-        (StoreReceiver::This, false) => generated_row!(THIS_FIELD_STORE, ACC_NONE, FLAG_UNREAD),
-        (StoreReceiver::This, true) => generated_row!(THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG_UNREAD),
+        (StoreReceiver::Register, false) => generated_row!(FIELD_STORE, ACC_NONE, FLAG),
+        (StoreReceiver::Register, true) => generated_row!(FIELD_STORE_STRICT, ACC_NONE, FLAG),
+        (StoreReceiver::This, false) => generated_row!(THIS_FIELD_STORE, ACC_NONE, FLAG),
+        (StoreReceiver::This, true) => generated_row!(THIS_FIELD_STORE_STRICT, ACC_NONE, FLAG),
     }
 }
 
-/// Whether store opcode `op` takes `this` as its receiver (`THIS_FIELD_STORE`, `THIS_FIELD_STORE_STRICT`).
-pub(super) const fn this_store_op(op: u16) -> bool { op == THIS_FIELD_STORE || op == THIS_FIELD_STORE_STRICT }
-
-/// Whether site `site` is a store's own-field instance (`store_formed_handler`), of either form and receiver.
+/// Whether site `site` is a store's own-field instance, of either form and receiver.
 pub(crate) const fn store_formed_site(site: u8) -> bool {
     site == own_site(false, STORE_FLAT) || site == own_site(true, STORE_FLAT)
         || site == own_site(false, STORE_INLINE) || site == own_site(true, STORE_INLINE)
-}
-
-/// The store row of opcode `OP` at the instance of the storage form `form` (`own_form_index`): the flat run's
-/// or packed inline values'. Extras and narrow runs have none: their stores stay plain.
-pub(super) fn store_formed_handler<const OP: u16>(form: usize) -> Option<Handler> {
-    match form {
-        3 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_FLAT)) }
-            else { generated_row!(OP, ACC_NONE, own_site(false, STORE_FLAT)) }),
-        1 => Some(if const { this_store_op(OP) } { generated_row!(OP, ACC_NONE, own_site(true, STORE_INLINE)) }
-            else { generated_row!(OP, ACC_NONE, own_site(false, STORE_INLINE)) }),
-        _ => None,
-    }
-}
-
-/// Requickens the plain own-field store of `script`'s record at `ip` to the instance of its hint's storage
-/// form (`store_formed_handler`), the hint `layout` the store just matched or a VM store set. The arena that
-/// keeps slot representations (`tracks_slot_representations`) leaves a store plain: its tracked site owns it.
-#[inline(never)]
-pub(crate) fn requicken_store_form<const OP: u16>(script: *mut LaneContext, ip: Ip, layout: u32) {
-    if unsafe { vm(script) }.heap_reads().tracks_slot_representations() { return; }
-    if let Some(handler) = store_formed_handler::<OP>(own_form_index(Some(layout))) { requicken(ip, handler); }
 }
 
 /// Whether site `site` is a tracked store installed for its slot's held type (`TRACKED_TAGGED_SITE` and its siblings).
@@ -126,21 +103,6 @@ pub(crate) const fn held_of(site: u8) -> u8 {
     else if site == TRACKED_OBJECT_SITE { HELD_OBJECT }
     else if site == TRACKED_OBJECT_OR_NULL_SITE { HELD_OBJECT_OR_NULL }
     else { HELD_NONE }
-}
-
-/// The tracked store row of opcode `OP` through the hint `(layout, slot)`: the row of the type the slot
-/// holds now (`Heap::tracked_store_held`), which stores a value of it in place with no join; else the
-/// tracked row (`TRACKED_SITE`), which stores through the VM and chooses again from the hint it leaves.
-#[inline(never)]
-pub(crate) fn tracked_store_row<const OP: u16>(script: *mut LaneContext, layout: u32, slot: u16) -> Handler {
-    use quench_runtime::staged::{HELD_INT32, HELD_OBJECT, HELD_OBJECT_OR_NULL, HELD_TAGGED};
-    match unsafe { vm(script) }.heap_reads().tracked_store_held(layout, slot) {
-        HELD_TAGGED => generated_row!(OP, ACC_NONE, TRACKED_TAGGED_SITE),
-        HELD_INT32 => generated_row!(OP, ACC_NONE, TRACKED_INT_SITE),
-        HELD_OBJECT => generated_row!(OP, ACC_NONE, TRACKED_OBJECT_SITE),
-        HELD_OBJECT_OR_NULL => generated_row!(OP, ACC_NONE, TRACKED_OBJECT_OR_NULL_SITE),
-        _ => generated_row!(OP, ACC_NONE, TRACKED_SITE),
-    }
 }
 
 /// The site fact (`generated_row`'s `FLAG`) of an own-field read of `this` (else of a register) whose

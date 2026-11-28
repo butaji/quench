@@ -324,8 +324,12 @@ pub(crate) fn derive_lane_view<'live>(
                 handler
             } else {
                 // The installed row of the opcode and accumulator; where that is the first-run field read, the load
-                // chooses its row from the atom and base instead (`named_read_row`), keeping the row's `produces`.
+                // chooses its row from the atom and base instead (`named_read_row`), and where it is a named store's
+                // default, from the class its receiver is proven to be (`named_store_row`), keeping the row's `produces`.
                 handler_in_lane(backward_jump, acc, op as usize).map(|row| {
+                    if let Some(handler) = named_store_row(facts, function_id, pc as u32, instruction, row.handler) {
+                        return LaneHandler { handler, ..row };
+                    }
                     match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, instruction)).flatten() {
                         Some(handler) => LaneHandler { handler, ..row },
                         None => row,
@@ -1443,6 +1447,38 @@ fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction) -> 
     // miss where they are not yet bound.
     let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
     Some(single_base_handler(base, this, register, row_get_field_miss))
+}
+
+/// The row of a named store (`SetField` and its strict and `this` forms) whose installed default is `row`, chosen at
+/// load from the class its receiver is proven to be. A store the class's facts do not prove always stored takes the
+/// general write (`GENERAL_SITE`); a store into a field the class keeps as a narrower domain takes the tracked row
+/// (`TRACKED_SITE`), whose decline takes the general step in place. A store the facts cannot type keeps `row`: the
+/// record's hint and the VM's stores decide it, as they always have. `None` keeps `row`.
+fn named_store_row(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32,
+    instruction: WideInstruction, row: Handler) -> Option<Handler> {
+    use quench_runtime::bytecode::StoreReceiver;
+    use quench_runtime::compile::aot_facts::StoreForm;
+    let store = instruction.op().field_store()?;
+    if row as usize != field_store_row(store) as usize {
+        return None;
+    }
+    let facts = facts?;
+    let function = facts.function_facts(function_id);
+    let classes = match store.receiver {
+        StoreReceiver::This => function.this_classes(),
+        StoreReceiver::Register => function.cell_at(pc, instruction.b())?.classes,
+    };
+    let quench_runtime::typed_ir::Classes::Set { ids, len: 1, proven: true } = classes else {
+        return None;
+    };
+    let (class, atom) = (ids[0], instruction.imm());
+    if !facts.field_always_stored(class, atom) {
+        return Some(field_store_row_at::<GENERAL_SITE>(store));
+    }
+    match facts.store_form(class, atom)? {
+        StoreForm::Own => None,
+        StoreForm::Tracked => Some(field_store_row_at::<TRACKED_SITE>(store)),
+    }
 }
 
 /// Gives each plain two-operand arithmetic record whose operands are both registers its row at

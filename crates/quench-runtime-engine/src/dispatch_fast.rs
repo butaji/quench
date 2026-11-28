@@ -259,7 +259,7 @@ const OWN_CONSTANT_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 3;
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
     /// slot of its own data field, as the site's primary entry proved it
-    /// (`row_get_field_own_refresh`) or a polymorphic store hit it (`POLY_SITE`).
+    /// (`row_get_field_own_refresh`).
     /// Between shape compactions, which clear every hint (`LaneView::invalidate_shape_bindings`), a
     /// shape's slots never change, so the pair holds whatever the entry holds now.
     #[inline(always)]
@@ -2913,38 +2913,24 @@ pub(crate) const GENERAL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 18);
 
 
 
-/// The site fact of a named store that may add its property (`StorePlan::Add`, `RecordPlan::own_add`):
-/// its row runs the VM's adds, and a refused add takes the general cached write.
-pub(crate) const ADD_SITE: u8 = own_site(false, OWN_FORMS.len() + 17);
-
-/// The site fact of a named store whose own hint is a narrow run (`StorePlan::Hinted`, `narrow`):
-/// the row stores the value's narrow form in place (`hinted_narrow_field_store_hit`); a refusal
-/// takes the VM's own-field store, and a store whose object is no longer narrow moves back.
-pub(crate) const NARROW_SITE: u8 = own_site(false, OWN_FORMS.len() + 22);
-
-/// The site fact of a named store on a runtime whose arena keeps slot representations
-/// (`Heap::tracks_slot_representations`): the row stores through the record's hint in place of
-/// the untracked own store (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`).
+/// The site fact of a named store into a field whose domain is narrower than Any (`AotFacts::store_form`
+/// Tracked), chosen at load: the row stores through the record's hint in place of the untracked own store
+/// (`StorePlan::Hinted`, `hinted_primary_field_store_hit::<true>`); a refusal takes the general step.
 pub(crate) const TRACKED_SITE: u8 = own_site(false, OWN_FORMS.len() + 23);
 
 /// The site facts of a tracked store installed for its slot's held type (`StorePlan::Held`,
 /// `slot_store::HELD_*`), one per type a store keeps in place: a tagged slot's row stores with no
 /// class test, an int slot's with one, an object slot's and an object-or-null slot's with one or two.
-/// A store the slot's type refuses takes the tracked row (`TRACKED_SITE`), which stores, widens and
-/// installs the row of the type the slot holds now (`tracked_store_row`). Free own-form indexes.
+/// A store the slot's type refuses takes the general step. Free own-form indexes. No load-time chooser
+/// picks these yet: a class's layout id is known only from its first construction (`record_class_edge`).
 pub(crate) const TRACKED_TAGGED_SITE: u8 = own_site(false, OWN_FORMS.len() + 13);
 pub(crate) const TRACKED_INT_SITE: u8 = own_site(false, OWN_FORMS.len() + 19);
 pub(crate) const TRACKED_OBJECT_SITE: u8 = own_site(false, OWN_FORMS.len() + 43);
 pub(crate) const TRACKED_OBJECT_OR_NULL_SITE: u8 = own_site(false, OWN_FORMS.len() + 49);
 
-/// The site fact of a named store past one shape (`StorePlan::Polymorphic`): the record's hint,
-/// the site's polymorphic entries, then the proved add, all inside the row; a refusal takes
-/// `GENERAL_SITE`'s activation path.
-pub(crate) const POLY_SITE: u8 = own_site(false, OWN_FORMS.len() + 24);
-
 /// The site fact of a named store the general cached write completes (`StorePlan::Host`): the VM's
 /// cached store or add inside the row, a private name's or a refusal's activation path after it
-/// (`row_set_field_miss_path`).
+/// (`row_set_field_miss_path`). Chosen at load for a store the class's facts do not prove always stored.
 pub(crate) const GENERAL_SITE: u8 = own_site(false, OWN_FORMS.len() + 25);
 /// The site facts of a field read whose value is the callee of a Math call the record after it
 /// makes (`native_calls::install_math_field_call`): one argument, a register second argument,
@@ -3791,7 +3777,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A store's general write past the generated row (`GENERAL_SITE`, `POLY_SITE`, `ADD_SITE`):
+    /// A store's general write past the generated row (`GENERAL_SITE`, and every store row that misses):
     /// the activation path of `SetField` and its strict form, on the receiver register.
     #[inline(never)]
     fn row_set_object_field_miss<>(cx, r, ip, i, view) {
@@ -3810,41 +3796,6 @@ script_handler! {
     }
 }
 
-script_handler! {
-    /// A store whose site has proved neither its add nor its shape (`UNREAD`, `TRACKED_SITE`,
-    /// `NARROW_SITE`) missed its row and its VM store: the site the record moves to, by what the
-    /// site observed (`ADD_SITE`, `POLY_SITE`, `GENERAL_SITE`), then the general write's
-    /// activation path.
-    #[inline(never)]
-    fn row_set_field_classify<OP: u16, THIS: bool>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let polymorphic = vm.field_site_polymorphic(i.c);
-        let adds = vm.field_site_adds(i.c);
-        // A receiver outside the object records (a RegExp's or a function's cell) hits the own
-        // store's logged path only at one shape, so a polymorphic site of one takes the general
-        // cached write from now on.
-        let cell_receiver = !THIS && r.get(i.b).direct_object_index().is_none() && vm.is_object_like(r.get(i.b));
-        // A private field's store takes the private element path (`row_set_field_miss_path`).
-        let handler: Option<Handler> = if vm.is_private_name(i.imm()) {
-            Some(generated_row!(OP, ACC_NONE, GENERAL_SITE))
-        } else if adds && !polymorphic && vm.field_add_atom_eligible(i.imm()) {
-            Some(generated_row!(OP, ACC_NONE, ADD_SITE))
-        } else if polymorphic && !cell_receiver {
-            Some(generated_row!(OP, ACC_NONE, POLY_SITE))
-        } else if adds || polymorphic {
-            Some(generated_row!(OP, ACC_NONE, GENERAL_SITE))
-        } else {
-            None
-        };
-        if let Some(handler) = handler {
-            requicken(ip, handler);
-        }
-        if THIS {
-            sibling!(row_set_this_field_miss, r, ip, Carried::script_in(cx, view))
-        }
-        sibling!(row_set_object_field_miss, r, ip, Carried::script_in(cx, view))
-    }
-}
 
 
 script_handler! {
