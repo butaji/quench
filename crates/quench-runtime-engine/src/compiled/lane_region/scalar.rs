@@ -13,6 +13,7 @@
 //! holds under the body's own dependencies (`GlobalRead::Stable`): the load of the binding
 //! defines the callee register as that constant, and the call compares nothing per use.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::lane_body_abi::body_signature_in_lane;
@@ -23,7 +24,8 @@ use quench_runtime::staged::{Access, GlobalBinding, Operation, Region, Stage};
 use quench_runtime::staged::machine::{Lane, MachineAccess, MachineScalar, Relation, Unary};
 use quench_runtime::vm::global_facts::GlobalRead;
 use super::super::object_slots::emit;
-use super::super::declared_checks::{self, ARRAY, EntryCheck, LANE_TESTED, OBJECT_PLAIN, STRING};
+use super::super::declared_checks::LANE_TESTED;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The alias region of the function's entry cell, which a scalar call reads its entry from.
 const CELL: Access = Region::EntryCell.mutable();
@@ -50,23 +52,20 @@ pub(crate) struct ScalarAbi {
 
 impl ScalarAbi {
     /// The entry of `function_id` over `unit`, which calls itself through `direct`: where the unit
-    /// is numeric but for those calls and the binding loads they take their callee from. A
-    /// parameter is an int32 where an operation of the unit requires one (`require_entry_types`).
+    /// is numeric but for those calls and the binding loads they take their callee from.
     pub(crate) fn of(program: &ResidualProgram, function_id: u32, unit: &super::super::lane_unit::Unit,
-        direct: &DirectSites) -> Option<Self> {
+        direct: &DirectSites, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>) -> Option<Self> {
         let function = program.function_get(function_id as usize)?;
         let params = u8::try_from(function.params).ok().filter(|params| usize::from(*params) <= MAX_PARAMETERS)?;
         // SAFETY: the body owns its direct callees for as long as its code runs.
-        let recurses = direct.values().flatten().any(|callee| unsafe { &**callee }.target.function == function_id);
+        let recurses = direct.values().flatten().any(|callee| unsafe { &**callee }.body.target.function == function_id);
         if !recurses || !numeric_unit(program, unit, true, direct)
             || !crate::js_compiled::function_candidate(function, program) { return None; }
-        let mut written = quench_runtime::dataflow::BitSet::with_capacity(usize::from(unit.registers));
-        for register in unit.instructions.iter().flat_map(|instruction| writes(*instruction)).filter(|register| *register < unit.registers) {
-            written.insert(usize::from(register));
-        }
-        let mut initial = vec![Type::ANY; usize::from(unit.registers)];
-        require_entry_types(program, function, &unit.instructions, |_| false, &written, &mut initial);
-        let floats = (0..usize::from(params)).filter(|index| initial[*index] != Type::INT32).fold(0_u8, |bits, index| bits | (1_u8 << index));
+        // A parameter is an int32 where the solve settles its cell at entry as one (`FunctionFacts::cell_at`), else a Number.
+        let solved = facts.map(|facts| facts.function_facts(function_id));
+        let int = |index: usize| solved.as_ref().zip(parameter_register(function, index))
+            .and_then(|(solved, register)| solved.cell_at(0, register)).is_some_and(|cell| cell.ty.is_subtype(Type::INT32));
+        let floats = (0..usize::from(params)).filter(|index| !int(*index)).fold(0_u8, |bits, index| bits | (1_u8 << index));
         Some(Self { floats, params })
     }
 
@@ -95,11 +94,12 @@ impl Completion {
     /// Whether a run returns a Number by its status and a result word (a numeric region, or a scalar entry).
     pub(crate) fn numeric(self) -> bool { self != Self::Body }
 
-    /// The signature the run's function has.
+    /// The signature the run's function has: a scalar entry's under `call_conv` (the default), every other run's the
+    /// lane body convention.
     pub(crate) fn signature(self, pointer: ir::Type, call_conv: cranelift_codegen::isa::CallConv) -> Signature {
         match self {
             Self::Scalar(abi) => abi.signature(pointer, call_conv),
-            _ => body_signature_in_lane(pointer, call_conv),
+            _ => body_signature_in_lane(pointer),
         }
     }
 
@@ -118,7 +118,7 @@ impl Completion {
 
 /// The plan of a scalar entry: the whole function, its parameters in registers.
 pub(crate) fn plan(abi: ScalarAbi) -> RegionPlan {
-    RegionPlan { entry_bounds: true, coverage: Coverage::Full, completion: Completion::Scalar(abi), views: ElementViews::Dense }
+    RegionPlan { coverage: Coverage::Full, completion: Completion::Scalar(abi), views: ElementViews::Dense }
 }
 
 /// The scalar entry `specializer` lowers, if it fits a function's cell: its result is an int32
@@ -154,59 +154,13 @@ pub(crate) fn numeric_unit(program: &ResidualProgram, unit: &super::super::lane_
 
 /// The self-call that takes the callee the capture read at `pc` loads: the first direct call
 /// after it whose callee register the read defines, where the read is of the activation's own scope.
-fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSites, pc: usize) -> Option<&'a DirectCallee> {
+fn callee_capture<'a>(unit: &super::super::lane_unit::Unit, direct: &'a DirectSites, pc: usize) -> Option<&'a DirectArm> {
     let read = unit.instructions[pc];
     let own = |at: usize| matches!(unit.origins[at], super::super::lane_unit::Origin::Caller(_));
     if !matches!(crate::compiled::decoded(read), Some(quench_runtime::staged::Operation::LoadCapture { .. })) || read.capture_depth() != 0 || read.result_flags() != 0 || !own(pc) { return None; }
     let call = *direct.range(pc..).find(|(call, _)| own(**call) && unit.instructions[**call].register_b() == read.result_register())?.1.first()?;
     // SAFETY: the body owns its direct callees for as long as its code runs.
     Some(unsafe { &*call })
-}
-
-/// The registers an instruction of the unit reads as numbers, and the type each needs where it is
-/// a parameter: an int32 for a bitwise operator or a comparison with an integer, a Number for arithmetic.
-fn requirement(program: &ResidualProgram, instruction: WideInstruction) -> Option<([Operand; 2], Type)> {
-    let (operands, required) = match () {
-        _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::CompareJump { .. })) => relation_requirement(program, instruction)?,
-        _ if quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NumericBinary) =>
-            ([instruction.operand_b(), instruction.operand_c()], operator_requirement(instruction)?),
-        _ => return None,
-    };
-    operands.iter().all(|operand| operand.kind() != Some(OperandKind::Constant) || constant_number(program, *operand))
-        .then_some((operands, required))
-}
-
-/// Whether the constant `operand` names is a Number.
-fn constant_number(program: &ResidualProgram, operand: Operand) -> bool {
-    program.constants.get(usize::from(operand.payload())).and_then(super::super::facts::immediate)
-        .and_then(Value::as_number).is_some()
-}
-
-/// A relation's jump reads its operands as int32s unless one is a floating constant; an equality
-/// needs a Number constant, and anything else (a nullish comparison) reads none.
-fn relation_requirement(program: &ResidualProgram, instruction: WideInstruction) -> Option<([Operand; 2], Type)> {
-    if nullish_comparison(&program.constants, instruction, |_| Type::ANY).is_some() { return None; }
-    let operands = [instruction.operand_b(), instruction.operand_c()];
-    let operator = instruction.binary_operator_field();
-    let number_constant = |operand: &Operand| operand.kind() == Some(OperandKind::Constant) && constant_number(program, *operand);
-    if super::super::operations::NumberRelation::from_operator(operator).is_none()
-        || super::super::operations::equality_operator(operator).is_some() && !operands.iter().any(number_constant) { return None; }
-    let floating = operands.iter().any(|operand| operand.kind() == Some(OperandKind::Constant)
-        && super::super::facts::operand_type(&program.constants, *operand, |_| Type::ANY) == Type::NUMBER);
-    Some((operands, if floating { Type::NUMBER } else { Type::INT32 }))
-}
-
-/// What a numeric binary operator needs of its operands.
-fn operator_requirement(instruction: WideInstruction) -> Option<Type> {
-    let operator = instruction.binary_operator();
-    if crate::compiled::number_bitwise(instruction, operator).is_some() { return Some(Type::INT32); }
-    crate::compiled::number_arithmetic(instruction, operator).map(|_| Type::NUMBER)
-}
-
-/// Whether `register` holds a parameter of `function` at entry.
-fn is_parameter(function: &quench_runtime::bytecode::Function, register: Register) -> bool {
-    function.parameter_registers.is_some_and(|base| register >= base && register - base < function.params)
-        || function.local_registers.iter().any(|entry| entry.local < function.params && entry.register == register)
 }
 
 /// Whether the non-empty language set `bits` is one entry conformance tests exactly (`conform_language`):
@@ -216,56 +170,12 @@ pub(crate) fn checkable(bits: u16) -> bool {
     bits != 0 && bits & !LANE_TESTED == 0
 }
 
-/// The u-jit's entry test of a declared parameter's check, as the language fact it proves
-/// (`conform_language`); None where this tier emits no test for it.
-fn lane_check(check: EntryCheck) -> Option<Type> {
-    match check {
-        EntryCheck::Number => Some(Type::NUMBER),
-        EntryCheck::String => Some(Type::languages(STRING)),
-        EntryCheck::Array => Some(Type::languages(ARRAY)),
-        EntryCheck::PlainObject => Some(Type::languages(OBJECT_PLAIN)),
-        EntryCheck::Languages(bits) if checkable(bits) => Some(Type::languages(bits)),
-        EntryCheck::Languages(_) => None,
-    }
-}
-
-/// Each parameter's declared TypeScript type (`declared_checks::entry_checks`) as its entry type
-/// where the unit never writes it and nothing narrower is required of it: the entry proves it
-/// once (conformance) and every later use trusts it. A value outside it leaves at the entry, so
-/// an annotation that lies costs an exit, never a wrong result. Which parameters and what each
-/// check is comes from the shared check; `lane_check` only maps it to this tier's fact.
-pub(crate) fn declared_entry_types(function: &quench_runtime::bytecode::Function, written: &quench_runtime::dataflow::BitSet, initial: &mut [Type]) {
-    for (index, check) in declared_checks::entry_checks(function) {
-        let Some(ty) = lane_check(check) else { continue };
-        let Some(register) = parameter_register(function, index) else { continue };
-        let register = usize::from(register);
-        if written.contains(register) { continue; }
-        if let Some(entry) = initial.get_mut(register).filter(|entry| **entry == Type::ANY) {
-            *entry = ty;
-        }
-    }
-}
-
 /// The register parameter `index` enters in.
 pub(crate) fn parameter_register(function: &quench_runtime::bytecode::Function, index: usize) -> Option<Register> {
     let index = u16::try_from(index).ok().filter(|index| *index < function.params)?;
     match function.parameter_registers {
         Some(base) => base.checked_add(index),
         None => function.local_registers.iter().find(|entry| entry.local == index).map(|entry| entry.register),
-    }
-}
-
-/// The type `initial` gives each parameter the unit never writes (`written`) that its instructions
-/// (but those `skipped`) read as numbers: an int32 where any needs one, else a Number.
-pub(crate) fn require_entry_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function, instructions: &[WideInstruction],
-    skipped: impl Fn(usize) -> bool, written: &quench_runtime::dataflow::BitSet, initial: &mut [Type]) {
-    for (operands, required) in instructions.iter().enumerate().filter(|(pc, _)| !skipped(*pc))
-        .filter_map(|(_, instruction)| requirement(program, *instruction)) {
-        for register in operands.into_iter().filter_map(Operand::register_index)
-            .filter(|register| is_parameter(function, *register) && !written.contains(usize::from(*register))) {
-            let current = &mut initial[usize::from(register)];
-            if *current != Type::INT32 { *current = required; }
-        }
     }
 }
 
@@ -280,7 +190,7 @@ impl Lowering<'_, '_> {
     }
 
     /// A numeric entry's parameters. A window entry proves each a Number once; a scalar entry
-    /// holds each as the number it takes, after its one check of the machine stack.
+    /// holds each as the number it takes, after its check of the machine stack unless `stack_check_free` admits none.
     pub(crate) fn enter_numeric_parameters(&mut self, state: &mut State, pc: usize, parameters: &[ir::Value]) {
         let Completion::Scalar(abi) = self.completion else {
             for register in 0..self.params as Register {
@@ -289,17 +199,19 @@ impl Lowering<'_, '_> {
             }
             return;
         };
-        self.check_native_stack(state, pc);
+        if !super::polls::stack_check_free(self.vm.graph, self.function_id) { self.check_native_stack(state, pc); }
         self.hold_callee_slots(state, pc);
         for (index, value) in parameters.iter().skip(SCALAR_LEADING_WORDS).enumerate() {
             if abi.is_float(index) { self.set_number(state, index as Register, *value); } else { self.set_int(state, index as Register, *value); }
         }
     }
 
-    /// Leaves at `pc` where this entry has run past the machine stack's budget (`CallContext::stack_limit`),
-    /// the one depth check of a run: its recursion calls entries that make their own.
+    /// Leaves at `pc` where this entry has run past the machine stack's budget (`CallContext::stack_limit`) less
+    /// `STACK_CHECK_MARGIN`, which keeps free the frames of the bounded callees `stack_check_free` admits unchecked.
+    /// Entries that recurse, or reach unnamed calls, each make their own check.
     fn check_native_stack(&mut self, state: &State, pc: usize) {
         let limit = self.raw_load(Lane::I64, super::super::invariant(), self.context, super::super::CONTEXT_STACK_LIMIT);
+        let limit = self.raw_binary_imm(Binary::Add, limit, super::polls::STACK_CHECK_MARGIN as i64);
         let stack = emit(&mut self.builder).stack_pointer();
         let room = self.raw_compare(Relation::UnsignedGreaterEqual, stack, limit);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
@@ -307,16 +219,16 @@ impl Lowering<'_, '_> {
     }
 
     /// The callee of the direct call at `pc` if it is of this function itself.
-    fn scalar_target(&self, pc: usize) -> Option<&DirectCallee> {
+    fn scalar_target(&self, pc: usize) -> Option<&DirectArm> {
         // SAFETY: the body owns its direct callees for as long as its code runs.
         let callee = self.direct.get(&pc).and_then(|sites| sites.first()).map(|callee| unsafe { &**callee })?;
-        (callee.target.function == self.function_id && callee.forwarder.is_none()).then_some(callee)
+        (callee.body.target.function == self.function_id).then_some(callee)
     }
 
     /// Whether the call at `pc` is one of this function by its scalar entry: the callee register
     /// holds the function as a Stable fact, and the arguments are proved the numbers the entry takes.
     pub(crate) fn scalar_call_admitted(&self, state: &State, pc: usize, instruction: WideInstruction) -> bool {
-        let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.callee)) else { return false };
+        let (Some(abi), Some(callee)) = (self.scalar_abi(), self.scalar_target(pc).map(|callee| callee.closure.callee)) else { return false };
         if !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Call) || instruction.result_flags() != 0 { return false; }
         let window = usize::from(ImmediateLayout::call_window_base(instruction.imm()));
         let held = state.values[usize::from(instruction.register_b())].value.ty.function_identity();
@@ -330,7 +242,7 @@ impl Lowering<'_, '_> {
     pub(crate) fn scalar_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let abi = self.scalar_abi().expect("an admitted scalar call has its entry");
         let callee = self.scalar_target(pc).expect("an admitted scalar call has its callee");
-        let (cell, captures) = (callee.cell, callee.capture_word());
+        let (cell, captures) = (callee.body.cell, callee.captures);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let window = ImmediateLayout::call_window_base(instruction.imm());
         let mut arguments = smallvec::SmallVec::<[ir::Value; ARGUMENT_WORDS]>::new();
@@ -399,7 +311,8 @@ impl Lowering<'_, '_> {
     /// that calls it: its value (one load from the entry's held slot, in the entry) compared with that
     /// callee, which the register then holds as a constant. A closure the binding names otherwise leaves the entry to the generic call.
     fn scalar_callee_capture(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
-        let callee = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call").callee;
+        let direct = callee_capture(self.unit, self.direct, pc).expect("a callee capture read has its call");
+        let (callee, body) = (direct.closure.callee, direct.body.target.function);
         let miss = self.guard_exit_for(state, pc as u32, ExitFact::NumberKind);
         let loaded = match self.completion {
             Completion::Scalar(_) => {
@@ -409,8 +322,11 @@ impl Lowering<'_, '_> {
             }
             _ => self.load_capture(state, pc, instruction, miss, None, RootedRead::No),
         };
-        let same = self.is_identity(loaded, callee);
-        super::super::emit_js_guard(&mut self.builder, same, miss);
+        // A loaded closure of a body the closed world makes one object is that object (`is_body_closure_identity`): no compare.
+        if !self.is_body_closure_identity(pc, instruction.result_register(), body) {
+            let same = self.is_identity(loaded, callee);
+            super::super::emit_js_guard(&mut self.builder, same, miss);
+        }
         let constant = self.identity_constant(callee);
         let ty = Type::function(callee).expect("a direct callee is a function");
         self.define(state, instruction.result_register(), constant, RegisterFact::definition(ty, Representation::Tagged));
@@ -435,18 +351,6 @@ impl Lowering<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A parameter an int32 operation needs is an int32 on entry, one only arithmetic reads a Number.
-    #[test]
-    fn a_parameter_is_an_int32_where_an_operation_needs_one_else_a_number() {
-        let program = quench_runtime::Engine::specialize("function mix(a, b) { return (a | 0) + b * 0.5; }", "scalar-abi.js").unwrap();
-        let function = program.function(1);
-        let instructions: Vec<_> = function.instructions().collect();
-        let written = quench_runtime::dataflow::BitSet::with_capacity(usize::from(function.registers));
-        let mut initial = vec![Type::ANY; usize::from(function.registers)];
-        require_entry_types(&program, function, &instructions, |_| false, &written, &mut initial);
-        assert_eq!(initial[..2], [Type::INT32, Type::NUMBER]);
-    }
 
     /// The entry takes the context and its numbers in registers, and answers a status and a word.
     #[test]

@@ -54,8 +54,8 @@ pub const FRAME_HEADER_WORDS: u64 = WASM_HEADER_WORDS as u64;
 /// runtime's `offset_of!` values are asserted equal to these in `wasm_codes_check.rs`.
 pub const CONTEXT_TABLE_WORDS_AT: usize = 0x48;
 pub const CONTEXT_CALL_REFERENCE_AT: usize = 0x58;
-pub const CONTEXT_MEMORY_LENGTH_AT: usize = 0x90;
-pub const CONTEXT_INSTANCE_AT: usize = 0x100;
+pub const CONTEXT_MEMORY_LENGTH_AT: usize = 0x78;
+pub const CONTEXT_INSTANCE_AT: usize = 0xC0;
 
 /// The frame offset a callout's absent operand names: the row passes the zero word.
 pub const CALLOUT_ABSENT: u32 = u32::MAX;

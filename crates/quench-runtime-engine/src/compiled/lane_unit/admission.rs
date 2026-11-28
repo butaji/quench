@@ -1,9 +1,11 @@
 //! Which instructions of a callee the unit inlines, and which callees may restart at a miss.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::Traits;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The tier that asks whether an inlined callee's instruction may be inlined. The two answer
 /// differently, by design: a loop region takes an instruction by its opcode's `INLINABLE` trait
@@ -20,7 +22,7 @@ pub(crate) enum InlineScope {
 /// Whether `instruction` of an inlined callee may be inlined by `scope`. A loop region takes the
 /// opcode's `INLINABLE` trait; the lane runs `instruction` where it is a capture of its own
 /// environment only, no fusion but a returning one, which splits into the computation and the
-/// return (`osr_loop::inlined_returning`). A lane call is the plan's to admit: only one it inlines
+/// return (`inlined_returning`). A lane call is the plan's to admit: only one it inlines
 /// in turn.
 pub(crate) fn inlinable(instruction: WideInstruction, scope: InlineScope) -> bool {
     match scope {
@@ -31,7 +33,7 @@ pub(crate) fn inlinable(instruction: WideInstruction, scope: InlineScope) -> boo
 
 /// Whether the lane body runs `instruction` of an inlined callee (`inlinable`, `InlineScope::Lane`).
 fn lane_inlinable(instruction: WideInstruction) -> bool {
-    let plain = instruction.result_flags() == 0 || super::super::osr_loop::inlined_returning(instruction);
+    let plain = instruction.result_flags() == 0 || super::inlined_returning(instruction);
     inlinable_pure(instruction, plain).unwrap_or_else(|| match () {
         // Operations native code leaves at, exactly, through the inlined frame's recovery: a
         // global name's read, a construction and a throw, typically a callee's error path.
@@ -86,7 +88,5 @@ pub(crate) fn restartable(program: &quench_runtime::ResidualProgram, function: &
     })
 }
 
-/// Whether a call keeps its result in its register or returns it: the two a unit inlines.
-pub(crate) fn returns_or_keeps(instruction: WideInstruction) -> bool {
-    matches!(instruction.result_flags(), 0 | quench_runtime::bytecode::RETURN_REGISTER)
-}
+/// Whether a call keeps its result in its register or returns it: the two a unit inlines (`tier_policy::returns_or_keeps`).
+pub(crate) use quench_runtime::vm::tier_policy::returns_or_keeps;

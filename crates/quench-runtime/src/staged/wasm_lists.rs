@@ -7,14 +7,15 @@
 //! the selector lists of `wasm/integer.rs`, `wasm/float.rs` and `wasm/conversion.rs`, which expand
 //! them; `wasm_families.rs` counts them and derives the comparison bounds from their entries.
 //!
-//! This file is pure `macro_rules!`: no `use`, no items. It is included with `#[path]` by
-//! `staged/wasm_simd_lanes.rs`, `wasm/memory.rs`, `wasm/integer.rs`, `wasm/float.rs` and
-//! `wasm/conversion.rs` (the runtime), and by `quench-bjit`'s
-//! `stencils/wasm_kinds.rs`, `wasm_families.rs`, `wasm_layout.rs` and `wasm_runtime_codes.rs`, each context
-//! including the files it reads. A
-//! callback that needs only names (the b-jit's codes) ignores each row's body, which names runtime
-//! items that only the runtime resolves. A row's position is its tag, so reordering a list renumbers
-//! its tags; the runtime asserts each tag it names (`vm/compiled/wasm_codes_check.rs`).
+//! This file is pure `macro_rules!`: no `use`, no items. The runtime includes it once, at the crate
+//! root (`lib.rs`, `#[macro_use]`), and the Wasm rules and SIMD lanes expand it from there. It is
+//! included with `#[path]` by `quench-bjit`'s `stencils/wasm_kinds.rs`, `wasm_families.rs`,
+//! `wasm_layout.rs` and `wasm_runtime_codes.rs`, and by the stencil builds of `wasm/integer.rs`,
+//! `wasm/float.rs`, `wasm/conversion.rs` and `staged/wasm_simd_lanes.rs` (`cfg(stencil_build)`), each
+//! context including the files it reads. A callback that needs only names (the b-jit's codes) ignores
+//! each row's body, which names runtime items that only the runtime resolves. A row's position is its
+//! tag, so reordering a list renumbers its tags; the runtime asserts each tag it names
+//! (`vm/compiled/wasm_codes_check.rs`).
 
 #![allow(unused_macros, unused_imports)]
 

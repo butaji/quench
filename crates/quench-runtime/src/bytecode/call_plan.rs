@@ -41,6 +41,7 @@ call_plan_bits!(
     suspended_registers,
     suspended_environment,
     admits_direct_eval,
+    tail_callee,
 );
 
 #[derive(Clone, Copy, Debug)]
@@ -81,14 +82,14 @@ pub struct CallPlan {
     /// reflection, if any, reads its parameter registers or the forwarded values. A lane
     /// may run such a body without a frame: an ordinary body (`in_loop`), a base class
     /// constructor's construction, or a `settles_in_loop` body with no rest parameter or
-    /// `arguments` binding, whose return settles its call's promise (`CallEntry::Settles`).
+    /// `arguments` binding, whose return settles its call's promise (`CallEntry::framed(Framed::Settles)`).
     pub registers_only: bool,
     /// The activation's state is its registers, its frame locals and the environment its
     /// closures capture, which it may make on entry: an ordinary body but for the closures
     /// it makes and the iteration copies of its environment, with no `arguments`, binding
     /// site, dynamic scope access or superinstruction, whose every local access is a plain or
     /// environment load, store or dead-zone opening of a selectively captured layout. A lane
-    /// may run such a body without a frame (`CallEntry::Environment`).
+    /// may run such a body without a frame (`CallEntry::framed(Framed::Environment)`).
     pub environment_activation: bool,
     /// A function that suspends (a generator, an async function or an async generator) laid out
     /// as its registers: no locals, `arguments`, closures or dynamic scope, so what its
@@ -109,6 +110,9 @@ pub struct CallPlan {
     /// and the eval promotes the window's environment into the activation's record, which owns
     /// the eval's variable environment (`Vm::eval_owner`).
     pub admits_direct_eval: bool,
+    /// An ordinary body (neither async nor a generator), which a proper tail call binds over the caller's
+    /// frame (`Vm::tail_call_reuses_frame`); a suspending body keeps its own activation.
+    pub tail_callee: bool,
 }
 
 impl CallPlan {

@@ -11,7 +11,7 @@
 use crate::bytecode::{Operand, Register};
 use crate::codes::*;
 use crate::heap_rows::{context_word, payload, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_EPOCH, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{CONTEXT_THIS, JS_STEP_LOCAL_COUNT, JS_STEP_NATIVE_LOCALS, JS_STEP_STRING_RECORD_BASE};
 use crate::staged::{Concrete, Constant, Float64, Int32, IntFact, NumberFact, Frame, GlobalFrame, NumericFrame, NumericStage, Stage, Step, string_length, value};
 use crate::typed_ir::{Representation, Type};
 use crate::words::*;
@@ -29,9 +29,11 @@ const fn rep_of(place: u8) -> Representation {
     }
 }
 
+/// The stage of a value word's tag tests and number conversions, which address no table: they read only the
+/// word (`StencilStage::words`).
 #[inline(always)]
 fn stage() -> Concrete {
-    Concrete::from_hole(0)
+    Concrete::words()
 }
 
 /// The binary64 bits of the int32 in the low half of `value`.
@@ -173,20 +175,6 @@ fn put_tagged<const D: u8>(s: &mut S, word: u64) -> bool {
 #[inline(always)]
 pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
     if put_tagged::<D>(&mut s, word) { Out::Next(s) } else { Out::Exit(s) }
-}
-
-/// `deliver` of a `word` the fact store proved a Number (an int word or a double, `ic_rows::known_get`): a
-/// pinned double takes it with no tag test and no exit, an int word converted; any other place as `deliver`.
-#[inline(always)]
-pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
-    match D {
-        PINF.. => {
-            let bits = if is_double(word) { word } else { widen(word) };
-            s.f[(D - PINF) as usize] = f64::from_bits(bits);
-            Out::Next(s)
-        }
-        _ => deliver::<D>(s, word),
-    }
 }
 
 /// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
@@ -469,12 +457,6 @@ impl Frame<Concrete> for Places {
     #[inline(always)]
     fn array_append(&mut self, stage: &mut Concrete, array: Register, value: u64) -> Option<()> { self.heap_array_append(stage, array, value) }
 
-    /// ForInNext's fast arm (`places_names`).
-    #[inline(always)]
-    fn vm_step(&mut self, stage: &mut Concrete, operation: crate::staged::CallOut, _result: Option<Register>) -> Option<(u64, Representation)> {
-        self.call_out_fast(stage, operation)
-    }
-
     /// The typeof string table at hole 2 (`places_names`).
     #[inline(always)]
     fn typeof_string(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Representation)> { self.typeof_entry(stage, name) }
@@ -526,14 +508,10 @@ impl Frame<Concrete> for Places {
         Some((word_at(locals, 0), Representation::Tagged))
     }
 
-    /// The array and object record tables and the collection epoch the dispatch payload holds, where
-    /// both tables are reserved (the lane frame's `heap_records`); `None` where one is absent.
+    /// The array record table the frame reads live records through (`Frame::heap_records`); the bjit payload
+    /// holds none, so a row that needs it takes its call-out.
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
-        let payload = payload(&self.s);
-        let (arrays, objects) = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_OBJECT_RECORD_BASE));
-        (arrays != 0 && objects != 0).then(|| (arrays, objects, word_at(payload, JS_STEP_EPOCH)))
-    }
+    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<u64> { None }
 
     #[inline(always)]
     fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: Option<()>) -> bool {

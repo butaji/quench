@@ -13,7 +13,7 @@ use crate::ext_traits::*;
 use super::wasm_stage::infallible;
 use super::wasm_call_stage::is_tail_call;
 use super::{
-    Analysis, BODY_CALL_CONV, CONTEXT_CALL_REFERENCE, CONTEXT_CALL_REFERENCE_DIAGNOSTIC,
+    Analysis, BODY_CALL_CONV, CONTEXT_CALL_REFERENCE,
     CONTEXT_INSTANCE, CONTEXT_TABLE_WORDS, CallContext, Emitter, Kind,
     Slot, Vm, internal_signature, invariant,
 };
@@ -26,6 +26,7 @@ use quench_runtime::staged::wasm_call::{WasmTable, indirect_target};
 use quench_runtime::wasm::CanonicalSignature;
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use cranelift_codegen::ir::{self, MemFlagsData, types};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The table an indirect target is being emitted for: the address of its published words, its
 /// binding and the type the call expects.
@@ -465,13 +466,8 @@ impl Emitter<'_, '_> {
             .ok()
             .map(|index| self.reference_site_ids[index].1)
             .expect("compiled indirect call has a cache site id");
-        let offset = if self.diagnostics_enabled {
-            CONTEXT_CALL_REFERENCE_DIAGNOSTIC
-        } else {
-            CONTEXT_CALL_REFERENCE
-        };
         let context = self.body.core.context;
-        let target = self.entry_target(crate::compiled::slow_paths::EngineEntry::WasmTableCallOut, invariant(), context, offset);
+        let target = self.entry_target(crate::compiled::slow_paths::EngineEntry::WasmTableCallOut, invariant(), context, CONTEXT_CALL_REFERENCE);
         let table = self.constant(Width::I64, i64::from(table));
         let signature_index = self.constant(Width::I64, i64::from(signature_index));
         let site = self.constant(Width::I64, site as i64);

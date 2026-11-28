@@ -25,6 +25,22 @@ fn for_each_promotion_age(mut scenario: impl FnMut(&mut Heap, PromotionAge)) {
     }
 }
 
+/// Registers the shapes the field tests use: shape 1 holds one field, shape 2 two (it extends shape 1).
+fn register_field_shapes(heap: &mut Heap) {
+    heap.register_shape_layouts(&[(0, None), (1, None), (2, Some((1, 1)))]);
+}
+
+/// An ordinary object with one field: a class cell whose slot 0 holds `Value::UNDEFINED`. Shape 1 must be
+/// registered (`register_field_shapes`).
+fn one_field_object(heap: &mut Heap) -> Value {
+    heap.alloc_object_with_properties(Value::NULL, 1, &[Value::UNDEFINED])
+}
+
+/// The owners the write barriers logged, in every record family and class cell region.
+fn logged_owners(heap: &Heap) -> usize {
+    heap.record_families().iter().map(|family| family.remembered_count()).sum()
+}
+
 #[test]
 #[cfg(not(feature = "profile-aggregate"))]
 fn direct_array_record_base_resolves_the_current_live_array_value() {
@@ -159,7 +175,8 @@ fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garba
 }
 
 fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age: PromotionAge) {
-    let owner = heap.alloc_object(plain_object());
+    register_field_shapes(heap);
+    let owner = one_field_object(heap);
     let array = heap.alloc_array(ArrayObject::new(plain_object(), vec![Value::UNDEFINED]));
     assert!(owner.direct_object_index().is_some());
     assert!(array.direct_array_index().is_some());
@@ -168,7 +185,7 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
 
     // Young records reachable only through stores into old records.
     let child = heap.alloc_object(plain_object());
-    heap.object_mut(owner).unwrap().set_inline_property(0, child);
+    heap.property_set(owner, 0, child);
     let element = heap.alloc_object(plain_object());
     heap.array_elements_mut(array).unwrap().make_mut().set(0, element);
     let garbage = heap.alloc_object(plain_object());
@@ -189,7 +206,7 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
     }
 
     // An old record that loses its last reference survives minors and dies at a full one.
-    heap.object_mut(owner).unwrap().set_inline_property(0, Value::UNDEFINED);
+    heap.property_set(owner, 0, Value::UNDEFINED);
     collect_minor(heap, [owner, array]);
     assert!(heap.is_live(child));
     heap.collect([owner, array]);
@@ -203,16 +220,17 @@ fn records_written_twice_are_logged_once_per_cycle() {
 }
 
 fn records_written_twice_are_logged_once(heap: &mut Heap) {
-    let owner = heap.alloc_object(plain_object());
+    register_field_shapes(heap);
+    let owner = one_field_object(heap);
     heap.collect([owner]);
-    for value in 0..4 {
-        heap.object_mut(owner)
-            .unwrap()
-            .set_inline_property(0, Value::number(f64::from(value)));
+    // Only a heap reference is an edge the barrier logs, so the writes store a young object.
+    let child = heap.alloc_object(plain_object());
+    for _ in 0..4 {
+        heap.property_set(owner, 0, child);
     }
-    assert_eq!(heap.object_records.remembered_count(), 1);
+    assert_eq!(logged_owners(heap), 1);
     collect_minor(heap, [owner]);
-    assert_eq!(heap.object_records.remembered_count(), 0);
+    assert_eq!(logged_owners(heap), 0);
     assert!(heap.is_old(owner));
 }
 
@@ -434,7 +452,7 @@ fn object_space_identity_does_not_alias_legacy_slot_identity() {
     let value = heap.alloc_object(plain_object());
 
     assert_eq!(map.legacy_heap_index(), Some(0));
-    assert_eq!(key.direct_object_index(), Some(0));
+    assert!(heap.live_class_cell(key).is_some());
     assert_ne!(map, key);
 
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
@@ -601,7 +619,7 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     drop(shared);
 
     assert!(first.direct_array_index().is_some());
-    assert_eq!(object.direct_object_index(), Some(0));
+    assert!(heap.live_class_cell(object).is_some());
     assert_eq!(first.direct_array_index(), Some(0));
     assert_ne!(object, first);
     assert!(heap.array(object).is_none());
@@ -654,7 +672,7 @@ fn direct_array_records_trace_and_remove_sparse_elements() {
 fn object_integrity_metadata_survives_collection() {
     let mut heap = Heap::new();
     let object = heap.alloc_object(plain_object());
-    if let Some(data) = heap.object_record_mut(object) {
+    if let Some(mut data) = heap.object_mut(object) {
         data.set_extensible(false);
         data.set_frozen(true);
     }
@@ -663,7 +681,7 @@ fn object_integrity_metadata_survives_collection() {
         .collect::<Vec<_>>();
     heap.collect([object]);
     assert!(
-        heap.object_record(object)
+        heap.object(object)
             .is_some_and(|data| !data.is_extensible() && data.is_frozen())
     );
     assert!(garbage.iter().all(|value| !heap.is_live(*value)));
@@ -675,8 +693,9 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let mut heap = Heap::new();
     let object = heap.alloc_object(plain_object());
     let before = heap.memory_stats().3;
-    // An object lives in its record family or a legacy cell; `Heap::object_mut` finds either.
-    let data = heap.object_mut(object).unwrap();
+    // An ordinary object is a class cell; its out-of-line metadata lives in the extras its header names.
+    heap.ensure_cell_extras(object);
+    let mut data = heap.object_mut(object).unwrap();
     data.set_arguments_object();
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
@@ -783,6 +802,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
                 flags: crate::vm::RegExpFlags::validated(""),
                 legacy_constructor: owner(constructor),
                 matcher: crate::heap::RegExpMatcher::compiled(Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap())),
+                static_frequency: 0,
             }),
         });
         let root = heap.root(regexp);
@@ -1018,10 +1038,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
 /// The old owners the next minor collection traces: those the barriers logged, and those the
 /// last minor collection carried (`Heap::carried_owners`).
 fn remembered_owners(heap: &Heap) -> usize {
-    heap.remembered.len()
-        + heap.object_records.remembered_count()
-        + heap.array_records.remembered_count()
-        + heap.carried_owners.len()
+    heap.remembered.len() + logged_owners(heap) + heap.carried_owners.len()
 }
 
 #[test]
@@ -1062,6 +1079,7 @@ fn promoted_owner_remembers_its_young_child(
     store: impl FnOnce(&mut Heap, Value, Value),
 ) {
     let mut heap = heap_at(PromotionAge::Second);
+    register_field_shapes(&mut heap);
     let owner = owner(&mut heap);
     collect_minor(&mut heap, [owner]);
     assert!(heap.is_live(owner) && !heap.is_old(owner));
@@ -1103,11 +1121,11 @@ fn promoted_cells_remember_their_young_children() {
 }
 
 #[test]
-fn promoted_object_records_remember_their_young_children() {
+fn promoted_ordinary_objects_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
+        one_field_object,
         |heap| heap.alloc_object(plain_object()),
-        |heap| heap.alloc_object(plain_object()),
-        |heap, owner, child| heap.object_mut(owner).unwrap().set_inline_property(0, child),
+        |heap, owner, child| heap.property_set(owner, 0, child),
     );
 }
 
@@ -1125,16 +1143,17 @@ fn promoted_array_records_remember_their_young_string_elements() {
 #[test]
 fn old_owners_stay_remembered_until_their_aged_children_are_promoted_or_freed() {
     let mut heap = heap_at(PromotionAge::Second);
-    let [keeper, dropper] = [(); 2].map(|()| heap.alloc_object(plain_object()));
+    register_field_shapes(&mut heap);
+    let [keeper, dropper] = [(); 2].map(|()| one_field_object(&mut heap));
     heap.collect([keeper, dropper]);
     let [kept, dropped] = [(); 2].map(|()| heap.alloc_object(plain_object()));
-    heap.object_mut(keeper).unwrap().set_inline_property(0, kept);
-    heap.object_mut(dropper).unwrap().set_inline_property(0, dropped);
+    heap.property_set(keeper, 0, kept);
+    heap.property_set(dropper, 0, dropped);
     collect_minor(&mut heap, [keeper, dropper]);
     assert!(heap.is_live(kept) && heap.is_live(dropped));
     assert_eq!(remembered_owners(&heap), 2, "both owners hold an aged child");
 
-    heap.object_mut(dropper).unwrap().set_inline_property(0, Value::UNDEFINED);
+    heap.property_set(dropper, 0, Value::UNDEFINED);
     collect_minor(&mut heap, [keeper, dropper]);
     assert!(heap.is_live(kept) && heap.is_old(kept));
     assert!(!heap.is_live(dropped), "an aged child no owner holds dies at a minor collection");
@@ -1400,16 +1419,16 @@ fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
     let packed = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::NULL]);
     let arena = heap.alloc_object_with_properties(Value::NULL, 2, &[link, Value::number(0.5)]);
     let extras = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::UNDEFINED]);
-    heap.object_record_mut(extras).unwrap().set_extensible(false);
+    heap.object_mut(extras).unwrap().set_extensible(false);
     let deleted = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::DELETED]);
-    assert!(heap.object(packed).unwrap().inline_properties().is_some());
-    assert!(heap.object(arena).unwrap().inline_properties().is_none());
+    // Every ordinary object is a class cell, so its fields are read through the cell view.
+    assert_eq!(heap.property_get_ref(heap.object(packed).unwrap(), 0), Some(Value::NULL));
+    assert_eq!(heap.property_get_ref(heap.object(arena).unwrap(), 1), Some(Value::number(0.5)));
     heap.track_slot_representations(&layouts);
     let nullable = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
     assert_eq!(heap.slot_type(1, 0), nullable);
     assert_eq!(heap.slot_type(2, 0), nullable);
     assert_eq!(heap.slot_type(2, 1), Type::NUMBER);
-    assert_eq!(heap.unrepresented_slots(), 0);
 
     // A fresh admission reflects live contents, not stale observation history.
     for object in [packed, arena, extras, deleted] { heap.property_set(object, 0, link); }
@@ -1421,7 +1440,6 @@ fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
     assert_eq!(heap.slot_type(2, 0), Type::DIRECT_OBJECT_FAMILY);
     assert_eq!(heap.slot_type(3, 0), Type::DIRECT_OBJECT_FAMILY);
     assert_eq!(heap.slot_type(3, 1), Type::NUMBER);
-    assert_eq!(heap.unrepresented_slots(), 0);
 }
 
 #[test]
@@ -1443,7 +1461,6 @@ fn raw_slot_admission_records_write_domain_before_exposing_storage() {
     // A reference-capable region logs its owner before its no-GC raw writes.
     heap.object_store_mut(object, object).unwrap();
     unsafe { pointer.write(child); }
-    assert_eq!(heap.unrepresented_slots(), 0);
 }
 
 #[test]
@@ -1464,14 +1481,13 @@ fn object_publication_admits_preinitialized_slots_after_census() {
             let published = publish(&mut heap, object);
             assert!(published.direct_object_index().is_some());
             assert_eq!(heap.slot_type(1, 0), Type::immediate(value), "{publisher}/{storage}");
-            assert_eq!(heap.unrepresented_slots(), 0, "{publisher}/{storage}");
-            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
+            assert_eq!(heap.property_get_ref(heap.object(published).unwrap(), 0), Some(value));
         }
     }
 }
 
 #[test]
-fn unfilled_object_records_only_the_values_that_fill_it() {
+fn unfilled_objects_admit_only_the_values_that_fill_them() {
     use crate::typed_ir::Type;
     let mut heap = Heap::new();
     heap.track_slot_representations(&[(0, None), (1, None)]);
@@ -1480,8 +1496,74 @@ fn unfilled_object_records_only_the_values_that_fill_it() {
     assert_eq!(heap.slot_type(1, 0), Type::NEVER);
     heap.fill_new_object_slot(object, 0, Value::NULL);
     assert_eq!(heap.slot_type(1, 0), Type::immediate(Value::NULL));
-    assert_eq!(heap.unrepresented_slots(), 0);
-    assert_eq!(heap.property_get(heap.object(object).unwrap(), 0), Some(Value::NULL));
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 0), Some(Value::NULL));
+}
+
+#[test]
+fn a_cell_past_the_largest_region_spills_and_round_trips_its_fields() {
+    // The largest region holds 31 fields inline (`class_space::region_capacity`); the rest spill into a run.
+    const FIELDS: usize = 40;
+    let mut heap = Heap::new();
+    let layouts: Vec<(usize, Option<(u32, usize)>)> = (0..=FIELDS)
+        .map(|length| (length, length.checked_sub(1).map(|parent| (parent as u32, parent))))
+        .collect();
+    heap.register_shape_layouts(&layouts);
+    let values: Vec<Value> = (0..FIELDS).map(|slot| Value::integer(slot as i32)).collect();
+    let object = heap.alloc_object_with_properties(Value::NULL, FIELDS as u32, &values);
+    heap.collect([object]);
+    assert!(heap.is_live(object));
+    for (slot, value) in values.iter().enumerate() {
+        assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), slot), Some(*value), "slot {slot}");
+    }
+    // A store to the last field, which is past the region's inline capacity, reads back.
+    heap.property_set(object, FIELDS - 1, Value::integer(-1));
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), FIELDS - 1), Some(Value::integer(-1)));
+}
+
+#[test]
+fn a_store_below_a_spilled_cells_spill_slot_stays_inline() {
+    // A store to an inline field of a cell that spills writes the cell (raytrace no-jit panicked: the run index
+    // `slot - spill` underflowed for a slot below the spill slot, and the store tried to grow the run).
+    const FIELDS: usize = 40;
+    let mut heap = Heap::new();
+    let layouts: Vec<(usize, Option<(u32, usize)>)> = (0..=FIELDS)
+        .map(|length| (length, length.checked_sub(1).map(|parent| (parent as u32, parent))))
+        .collect();
+    heap.register_shape_layouts(&layouts);
+    let values: Vec<Value> = (0..FIELDS).map(|slot| Value::integer(slot as i32)).collect();
+    let object = heap.alloc_object_with_properties(Value::NULL, FIELDS as u32, &values);
+    for slot in 0..FIELDS {
+        heap.property_set(object, slot, Value::integer(-(slot as i32)));
+    }
+    for slot in 0..FIELDS {
+        assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), slot), Some(Value::integer(-(slot as i32))), "slot {slot}");
+    }
+}
+
+#[test]
+fn deleting_the_last_added_key_returns_a_cell_to_its_parent_class() {
+    let mut heap = Heap::new();
+    register_field_shapes(&mut heap);
+    let object = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(1), Value::integer(2)]);
+    let granule = heap.live_class_cell(object).unwrap();
+    heap.class_cell_drop_last(granule, 1);
+    assert_eq!(heap.object(object).unwrap().shape(), 1);
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 0), Some(Value::integer(1)));
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 1), None);
+}
+
+#[test]
+fn a_dictionary_cell_reads_its_table() {
+    let mut heap = Heap::new();
+    register_field_shapes(&mut heap);
+    let object = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(1), Value::integer(2)]);
+    let granule = heap.live_class_cell(object).unwrap();
+    // The transition keeps the shape's length and moves the fields into the cell's table.
+    heap.cell_to_dictionary(granule, 2);
+    assert!(heap.live_dictionary_cell(object).is_some());
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 0), Some(Value::integer(1)));
+    heap.property_set(object, 1, Value::integer(5));
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 1), Some(Value::integer(5)));
 }
 
 #[test]
@@ -1507,16 +1589,13 @@ fn shape_departures_retire_readers_through_each_storage_path() {
             // No departure: a repeated shape and storage descriptor preserve the
             // shape assumption (physical storage needs its own proof).
             heap.set_object_shape(object, 1);
-            let (data, arena) = heap.object_and_arena_mut(object).unwrap();
-            data.set_properties(data.properties(), arena);
             assert!(reader.is_published());
             match change {
                 Change::Shape => heap.set_object_shape(object, 2),
                 Change::Replace => heap.initialize_object_properties(object, 2, &[Value::integer(3)]),
                 Change::Copy => {
                     let source = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(3)]);
-                    let source = heap.object(source).unwrap().clone();
-                    assert!(heap.copy_property_storage(&source, object));
+                    assert!(heap.copy_property_storage(source, object));
                 }
                 Change::Append => heap.property_add(object, Value::integer(3), 3),
                 Change::Remap => heap.remap_live_object_shapes(&[0, 2, 1, 3],
@@ -1581,8 +1660,7 @@ fn named_property_publication_retires_readers_for_every_record_family() {
             };
             assert!(!reader.is_published(), "{family:?}, generic={generic}");
             assert_eq!(heap.slot_type(1, 0), Type::NUMBER);
-            assert_eq!(heap.property_get(heap.object(published).unwrap(), 0), Some(value));
-            assert_eq!(heap.unrepresented_slots(), 0);
+            assert_eq!(heap.property_get_ref(heap.object(published).unwrap(), 0), Some(value));
             heap.track_slot_representations(&[(0, None), (1, None)]);
             assert_eq!(heap.slot_type(1, 0), Type::NUMBER, "census includes {family:?}");
         }
@@ -1670,119 +1748,3 @@ fn a_full_collection_sweeping_strings_on_a_worker_matches_the_serial_sweep() {
     assert_eq!(run(true), run(false));
 }
 
-#[test]
-fn reference_counts_match_the_heap_references_after_each_collection() {
-    use std::collections::{HashMap, HashSet};
-    let reachable = |roots: &[Value], fields: &HashMap<Value, Vec<Value>>| {
-        let (mut seen, mut stack) = (HashSet::new(), roots.to_vec());
-        while let Some(node) = stack.pop() {
-            if node.is_heap() && seen.insert(node) {
-                stack.extend(fields.get(&node).into_iter().flatten().copied());
-            }
-        }
-        seen
-    };
-    for seed in 1..=24_u64 {
-        let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
-        let mut next = move |bound: usize| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            (state % bound as u64) as usize
-        };
-        let mut heap = Heap::new();
-        // Two-slot objects keep their values inline; four-slot ones in an arena run.
-        heap.register_property_shape(1, 2, None);
-        heap.register_property_shape(2, 4, None);
-        heap.set_rc(true);
-        let mut fields: HashMap<Value, Vec<Value>> = HashMap::new();
-        let make = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, wide: bool| {
-            let node = if wide {
-                heap.alloc_object_with_properties(Value::NULL, 2, &[Value::NULL; 4])
-            } else {
-                heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL)
-            };
-            fields.insert(node, vec![Value::NULL; if wide { 4 } else { 2 }]);
-            node
-        };
-        let store = |heap: &mut Heap, fields: &mut HashMap<Value, Vec<Value>>, node: Value, slot: usize, value: Value| {
-            heap.property_set(node, slot, value);
-            fields.get_mut(&node).unwrap()[slot] = value;
-        };
-        let roots: Vec<Value> = (0..3).map(|index| make(&mut heap, &mut fields, index == 0)).collect();
-        for step in 0..600 {
-            let mut now: Vec<Value> = reachable(&roots, &fields).into_iter().collect();
-            now.sort_by_key(|value| value.to_bits());
-            match next(8) {
-                0 | 1 => {
-                    let node = make(&mut heap, &mut fields, next(3) == 0);
-                    let owner = now[next(now.len())];
-                    let slot = next(fields[&owner].len());
-                    store(&mut heap, &mut fields, owner, slot, node);
-                    store(&mut heap, &mut fields, node, 0, now[next(now.len())]);
-                }
-                2..=5 => {
-                    let owner = now[next(now.len())];
-                    let slot = next(fields[&owner].len());
-                    let value = if next(3) == 0 { Value::NULL } else { now[next(now.len())] };
-                    store(&mut heap, &mut fields, owner, slot, value);
-                }
-                full => {
-                    if full == 7 && next(4) == 0 {
-                        heap.collect(roots.iter().copied());
-                    } else {
-                        collect_minor(&mut heap, roots.iter().copied());
-                    }
-                    let live = reachable(&roots, &fields);
-                    for &node in &live {
-                        assert!(heap.is_live(node), "seed {seed} step {step}: a reachable node was freed");
-                        let object = heap.object(node).unwrap();
-                        for (slot, &value) in fields[&node].iter().enumerate() {
-                            assert_eq!(heap.property_get(object, slot), Some(value), "seed {seed} step {step}");
-                        }
-                    }
-                    fields.retain(|node, _| live.contains(node));
-                    let mismatches = heap.rc_mismatches();
-                    assert!(mismatches.is_empty(), "seed {seed} step {step}: counts differ from references: {mismatches:?}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn a_dropped_acyclic_old_structure_is_freed_by_the_next_minor_collection_under_counts() {
-    let mut heap = Heap::new();
-    heap.register_property_shape(1, 2, None);
-    heap.set_rc(true);
-    let root = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
-    let mut chain = Vec::new();
-    let mut owner = root;
-    for _ in 0..50 {
-        let node = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
-        heap.property_set(owner, 0, node);
-        chain.push(node);
-        owner = node;
-    }
-    // A second edge into the chain's middle, from a node that stays.
-    let keeper = heap.alloc_object_pair(Value::NULL, 1, Value::NULL, Value::NULL);
-    heap.property_set(root, 1, keeper);
-    heap.property_set(keeper, 0, chain[40]);
-    heap.collect([root]);
-    assert!(heap.rc_mismatches().is_empty());
-    heap.property_set(root, 0, Value::NULL);
-    collect_minor(&mut heap, [root]);
-    assert!(heap.rc_mismatches().is_empty());
-    for (index, &node) in chain.iter().enumerate() {
-        assert_eq!(heap.is_live(node), index >= 40, "node {index}");
-    }
-    assert!(heap.is_live(root) && heap.is_live(keeper));
-    // A zero-count record a root names stays.
-    heap.property_set(keeper, 0, Value::NULL);
-    collect_minor(&mut heap, [root, chain[45]]);
-    assert!(heap.is_live(chain[45]) && heap.is_live(chain[49]) && !heap.is_live(chain[40]));
-    assert!(heap.rc_mismatches().is_empty());
-    collect_minor(&mut heap, [root]);
-    assert!(chain.iter().all(|&node| !heap.is_live(node)));
-    assert!(heap.rc_mismatches().is_empty());
-}

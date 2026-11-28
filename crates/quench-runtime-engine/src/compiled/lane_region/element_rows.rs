@@ -3,12 +3,14 @@
 //! edge proved once, is read and written through that view; any other access is the row itself,
 //! over the frame's proofs of the array (`frame_elements`), with the exit, the join and the
 //! views a store retires left to this lowering.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::typed_elements::{typed_read_integer, TypedView, ViewKind};
 use quench_runtime::staged::{Operation, Stage, Step};
 use quench_runtime::staged::NumericStage as _;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The row of `instruction` where it is an element access whose operands this unit holds.
@@ -43,7 +45,7 @@ impl Lowering<'_, '_> {
     }
 
     /// An element read into `destination`: a hoisted array's through its view (a typed array's a
-    /// Number), any other the row. The element an observation typed (`number_reads`) is proved after it.
+    /// Number), any other the row. The element the solve proves after it is typed by that proof.
     fn element_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, quench_runtime::bytecode::Operand)) -> bool {
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
         let array = self.loop_array(pc, Some(base));
@@ -52,20 +54,19 @@ impl Lowering<'_, '_> {
             return true;
         }
         if let Some(array) = array.filter(|array| self.int32_read(*array, pc))
-            && self.int32_element_read(state, (destination, key), array, exit) { return true; }
+            && self.int32_element_read(state, pc, (destination, key), array, exit) { return true; }
         if let Some(array) = array.filter(|array| self.reads_int32(*array))
-            && self.integer_element_read(state, (destination, key), array, exit) { return true; }
+            && self.integer_element_read(state, pc, (destination, key), array, exit) { return true; }
         if let Some(array) = array.filter(|array| self.int_only.contains(&(array.header, array.source)))
-            && self.observed.at(pc).is_some_and(|ty| ty.is_int32())
+            && self.proven_element(pc).is_some_and(|ty| ty.is_int32())
             && self.proved_int_element_read(state, pc, (destination, key), array, exit) { return true; }
         if array.is_none() && self.typed_int_read(state, pc, (destination, base, key), exit) { return true; }
-        // An element read as a Number (`number_reads`) needs no hole test of its own: a hole is a NaN
+        // An element read the solve proves a Number needs no hole test of its own: a hole is a NaN
         // pattern, which the Number proof's one NaN test sends to the tag check that leaves.
-        let packed = self.observed.at(pc).is_some();
+        let packed = self.proven_element(pc).is_some_and(|ty| ty.is_subtype(Type::NUMBER));
         let within = self.ranges.in_bounds(pc);
-        self.held_view = array.map(|array| self.held_array(array, (packed, within)));
-        // A hoisted array's hole leaves, until the read has left often enough to be widened
-        // (`LoopTier::left_at`), whose recompile then takes the VM's read.
+        self.held_view = array.map(|array| self.held_array(array, (packed, within), self.ranges.integral_index(pc)));
+        // A hoisted array's read leaves at a hole (`hole_leaves`).
         self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
         let value = match (array, key.register_index()) {
             // A base no loop array holds, read by a register key: a string's unit (`string_or_row`).
@@ -78,12 +79,16 @@ impl Lowering<'_, '_> {
         if array.is_some_and(|array| matches!(array.views, ElementViews::Typed(_) | ElementViews::Double)) {
             self.set_number(state, destination, value);
         } else {
-            self.set_tagged(state, destination, value);
+            // A tagged element the solve proves a Number is defined with that proof, so its conversion below needs no test.
+            match self.proven_element(pc) {
+                Some(ty) if ty.is_subtype(Type::NUMBER) => self.define(state, destination, value, RegisterFact::definition(ty, Representation::Tagged)),
+                _ => self.set_tagged(state, destination, value),
+            }
         }
-        match self.observed.at(pc) {
+        match self.proven_element(pc) {
             Some(ty) if ty.is_int32() => { self.int(state, destination, exit); }
-            Some(_) => { self.number(state, destination, exit); }
-            None => {}
+            Some(ty) if ty.is_subtype(Type::NUMBER) => { self.number(state, destination, exit); }
+            _ => {}
         }
         true
     }
@@ -121,8 +126,11 @@ impl Lowering<'_, '_> {
         if !string_base || !unread || self.hoisted.contains_key(&next) || self.unit_leaders().contains(next) { return None; }
         let within = self.ranges.string_in_bounds(pc);
         let bits = self.tagged(state, base);
-        let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); quench_runtime::staged::value::is_direct_string(&mut stage, bits) };
-        emit_js_guard(&mut self.builder, is_string, exit);
+        // A base the solver types a string holds the string tag already: its test is made only where the type does not prove it.
+        if !super::tag_proofs::register_proves(state, base, Type::language(quench_runtime::ValueType::String)) {
+            let is_string = { let mut stage = super::super::object_slots::emit(&mut self.builder); quench_runtime::staged::value::is_direct_string(&mut stage, bits) };
+            emit_js_guard(&mut self.builder, is_string, exit);
+        }
         let key_word = self.tagged(state, index);
         let records = super::super::emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(super::super::JsStepDispatch, head.string_record_base));
         let unit = {
@@ -188,7 +196,7 @@ impl Lowering<'_, '_> {
         for register in operands.into_iter().flatten() { self.tagged(state, register); }
         let destination = match row { Operation::ElementRead { destination, .. } => Some(destination), _ => None };
         // The kind the interpreter's record observed (`body_views::typed_reads`) proves the view for that kind alone.
-        let kind = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new);
+        let kind = super::super::body_views::kind_at(self.kinds, pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new);
         if let Some(native) = kind { return self.typed_only(state, (base, bits, native), (row, destination, exit)); }
         let is_array = { let mut stage = super::super::object_slots::emit(&mut self.builder); quench_runtime::staged::value::is_direct_array(&mut stage, bits) };
         let (dense, typed, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
@@ -256,7 +264,7 @@ impl Lowering<'_, '_> {
     /// (`typed_read_integer`), any other's as its Number in a float register, with no Number word made and tested
     /// again. `false` where the read is not one, with nothing emitted.
     fn typed_int_read(&mut self, state: &mut State, pc: usize, (destination, base, key): (Register, Register, quench_runtime::bytecode::Operand), exit: ir::Block) -> bool {
-        let Some(native) = self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new) else { return false };
+        let Some(native) = super::super::body_views::kind_at(self.kinds, pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new) else { return false };
         let bits = self.tagged(state, base);
         if !native.is_int32() {
             // Any other native kind's element is read as the Number it is, into a float register (`typed_read`):
@@ -269,7 +277,7 @@ impl Lowering<'_, '_> {
             self.set_number(state, destination, number);
             return true;
         }
-        let Some(index) = self.operand_index(state, key, exit) else { return false };
+        let Some(index) = self.access_index(state, pc, key, exit) else { return false };
         let view = self.typed_view_kept(state, (base, bits, native), false, exit);
         let word = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
@@ -283,7 +291,7 @@ impl Lowering<'_, '_> {
 
     /// Whether the element access at `pc` takes `typed_only`: its record observed one native typed array kind.
     pub(super) fn typed_only_at(&self, pc: usize) -> bool {
-        self.observed.kind_at(pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new).is_some()
+        super::super::body_views::kind_at(self.kinds, pc).and_then(quench_runtime::staged::typed_elements::NativeKind::new).is_some()
     }
 
     /// `row` on `state`, leaving at `exit`, whose value (a read's) goes to `join`.
@@ -331,7 +339,7 @@ impl Lowering<'_, '_> {
     /// Whether the hoisted dense `array` holds int32s throughout its loop (`int32_loop`) and the
     /// read at `pc` is one the loop observed as an int32 (`int32_read_at`): such a read takes no tag test.
     fn int32_read(&self, array: LoopArray, pc: usize) -> bool {
-        let ArraySource::Register(source) = array.source else { return false };
+        let source = array.source;
         self.int32_loop(array) && self.int32_read_at(pc, source) && !self.generic.contains(&pc)
     }
 
@@ -340,7 +348,7 @@ impl Lowering<'_, '_> {
         let instruction = self.unit.instructions[pc];
         matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementRead { .. }))
             && instruction.operand_b().register_index() == Some(source)
-            && self.observed.at(pc).is_some_and(|ty| ty.is_int32())
+            && self.proven_element(pc).is_some_and(|ty| ty.is_int32())
     }
 
     /// Whether the hoisted dense `array` holds only int32s for its whole loop, so its element
@@ -352,7 +360,7 @@ impl Lowering<'_, '_> {
     /// Only an array the loop reads as int32s (`int32_read_at`) qualifies, so the guard never
     /// leaves for an array the loop would not read as one.
     pub(crate) fn int32_loop(&self, array: LoopArray) -> bool {
-        let ArraySource::Register(source) = array.source else { return false };
+        let source = array.source;
         array.writable && array.views == ElementViews::Dense && self.int32_stores(array, source)
             && (array.header..=array.back).any(|pc| self.int32_read_at(pc, source) && !self.generic.contains(&pc))
     }
@@ -374,9 +382,9 @@ impl Lowering<'_, '_> {
 
     /// An element read of a hoisted dense `array` that `int32_read` admits, into `destination`: the
     /// element's word, narrowed to its int32, past the bounds test alone (no hole, no tag test).
-    fn int32_element_read(&mut self, state: &mut State, (destination, key): (Register, quench_runtime::bytecode::Operand),
+    fn int32_element_read(&mut self, state: &mut State, pc: usize, (destination, key): (Register, quench_runtime::bytecode::Operand),
         array: LoopArray, exit: ir::Block) -> bool {
-        let Some(index) = self.operand_index(state, key, exit) else { return false };
+        let Some(index) = self.access_index(state, pc, key, exit) else { return false };
         let (values, length) = self.hoisted_view(array);
         let word = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
@@ -394,10 +402,10 @@ impl Lowering<'_, '_> {
     /// An element read of a hoisted typed array of an int32 kind (`reads_int32`) into `destination`
     /// as the int32 word it is: no Number is made of it and converted back. `false` where the
     /// access is not one, with nothing emitted.
-    fn integer_element_read(&mut self, state: &mut State, (destination, key): (Register, quench_runtime::bytecode::Operand),
+    fn integer_element_read(&mut self, state: &mut State, pc: usize, (destination, key): (Register, quench_runtime::bytecode::Operand),
         array: LoopArray, exit: ir::Block) -> bool {
-        let Some(index) = self.operand_index(state, key, exit) else { return false };
-        let frame_elements::Held::Typed(view) = self.held_array(array, (false, false)) else { return false };
+        let Some(index) = self.access_index(state, pc, key, exit) else { return false };
+        let frame_elements::Held::Typed(view) = self.held_array(array, (false, false), false) else { return false };
         let word = {
             let mut stage = super::super::object_slots::emit(&mut self.builder);
             let index = stage.uextend32(index);
@@ -429,7 +437,7 @@ impl Lowering<'_, '_> {
                 || quench_runtime::staged::meaning::means(&instruction, quench_runtime::staged::meaning::Meaning::Construct);
             if stores { return false; }
             if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })) {
-                if !self.observed.at(pc).is_some_and(|ty| ty.is_int32()) { return false; }
+                if !self.proven_element(pc).is_some_and(|ty| ty.is_int32()) { return false; }
                 reads = true;
             }
         }
@@ -444,7 +452,10 @@ impl Lowering<'_, '_> {
     fn proved_int_element_read(&mut self, state: &mut State, pc: usize, (destination, key): (Register, quench_runtime::bytecode::Operand),
         array: LoopArray, exit: ir::Block) -> bool {
         let Some(register) = key.register_index() else { return false };
-        let index = self.int(state, register, exit);
+        let index = match self.integral_index(state, pc, register) {
+            Some(index) => index,
+            None => self.int(state, register, exit),
+        };
         let (values, length) = self.hoisted_view(array);
         let within = self.ranges.in_bounds(pc);
         let word = {
@@ -460,17 +471,17 @@ impl Lowering<'_, '_> {
     /// Whether the loop's array `array` is a register its entering facts type as a string: such a
     /// base is no array, so its element reads take the string row and it is no hoisted view.
     pub(crate) fn string_base(&self, array: &LoopArray) -> bool {
-        let super::loop_arrays::ArraySource::Register(register) = array.source else { return false };
+        let register = array.source;
         self.facts.at(array.header).and_then(|types| types.get(usize::from(register)).copied())
             .is_some_and(|ty| ty.is_subtype(Type::language(quench_runtime::ValueType::String)))
     }
 
     /// The view the hoisted `array`'s entering edge proved, which its element rows read and write through.
-    fn held_array(&mut self, array: LoopArray, proved: (bool, bool)) -> frame_elements::Held {
+    fn held_array(&mut self, array: LoopArray, proved: (bool, bool), integral: bool) -> frame_elements::Held {
         let (values, length) = self.hoisted_view(array);
         match array.views {
             ElementViews::Dense => frame_elements::Held::Dense(super::super::DenseArrayView {
-                values, length, writable: array.writable, uncounted: array.writable, double: None }, proved),
+                values, length, writable: array.writable, uncounted: array.writable, double: None }, proved, integral),
             // A double backing's words are a `Float64Array`'s (`ElementViews::observed_kind`).
             ElementViews::Typed(_) | ElementViews::Double =>
                 frame_elements::Held::Typed(TypedView { values, length, kind: self.hoisted_kind(array), within: proved.1 }),
@@ -487,7 +498,7 @@ impl Lowering<'_, '_> {
         (value, base, key): (Register, Register, Register)) -> bool {
         let key_type = state.values[usize::from(key)].value.ty;
         if key_type != Type::NEVER && key_type.is_subtype(Type::language(quench_runtime::ValueType::String)) {
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         }
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Element);
@@ -501,7 +512,7 @@ impl Lowering<'_, '_> {
             Some(array) if array.views == ElementViews::Dense && self.left_here =>
                 self.dense_element_write(state, array, pc as u32, instruction, number, exit),
             held => {
-                self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc))));
+                self.held_view = held.map(|array| self.held_array(array, (false, self.ranges.in_bounds(pc)), self.ranges.integral_index(pc)));
                 let row = Operation::ElementWrite { value, base, key, strict: instruction.boolean_flag().unwrap_or(false) };
                 if held.is_some() { self.step(state, frame::Edges::ValueGuarded { miss: exit }, row); } else { self.row_or_typed(state, pc, base, exit, row); }
                 // A store through a held view leaves where it misses (`index_set_host`) and calls no

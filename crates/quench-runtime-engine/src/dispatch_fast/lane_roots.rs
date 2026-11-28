@@ -8,7 +8,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::generator_windows::{open_window_locals, cached_window_plan, store_window_plan};
 use quench_runtime::vm::activation::{FrameRecord, JobResume, JobRoot};
-use quench_runtime::vm::dispatch_frame::{ExecutingProgram, LaneExit};
+use quench_runtime::vm::dispatch_frame::{ExecutingProgram, LaneHandoff};
 
 /// The frame index of no frame: reads that look a frame up find none, and any other is a state
 /// a job's lane excludes while its activations run.
@@ -95,6 +95,7 @@ fn job_start<'a>(code: &'a ResidualProgram, job: JobRoot, window: &JobWindow, (p
 pub(crate) use quench_runtime::vm::engine_types::JobEnd;
 
 pub(crate) use quench_runtime::vm::engine_types::ParkedLane;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 
@@ -147,14 +148,6 @@ impl Vm {
         let LaneStart { code, program, root, registers, base, this, pending, executing, inline_calls, script_calls, script_constructs, floor } = start;
         // The root's receiver is its window's context word (`Registers::this`); its environment
         // and captures are the window's to write where it has its own (a frame's run has none).
-        // A run's start is where the lane resumes an activation it did not bind: its `this` is checked here (`note_lane_this`).
-        crate::dispatch_fast::note_lane_this(self, this, || match root {
-            LaneRoot::Frame(frame) => self.programs.views_in_lane(program)
-                .and_then(|views| views.get(self.frames[frame].function as usize))
-                .and_then(quench_runtime::vm::program_store::derived_lane_view)
-                .is_none_or(|view| view.this_rows),
-            LaneRoot::Job(_) => true,
-        });
         registers.set_this(this);
         registers.set_env(Value::DELETED);
         registers.set_capture(std::ptr::null());
@@ -162,7 +155,7 @@ impl Vm {
         let (views, constants) = self.programs.lane_tables(program);
         let (views, constants) = (std::ptr::from_ref(views), std::ptr::from_ref(constants));
         LaneContext {
-            binding: LaneBinding { object_base: self.heap_reads().object_record_base().unwrap_or(std::ptr::null()), resume: resume_lane_binding, retire: retire_lane_binding },
+            binding: LaneBinding { resume: resume_lane_binding, retire: retire_lane_binding },
             vm: self,
             code,
             program,
@@ -184,7 +177,6 @@ impl Vm {
             indirect: IndirectSlot::NONE,
             instance_address: (Value::DELETED.to_bits(), ProgramId::default(), 0),
             signatures: (ProgramId::default(), None),
-            backedges_left: self.credits_backedges_in_lane(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             // SAFETY: the VM holds its interrupt state for the whole run.
             fuel: if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH },
@@ -194,15 +186,12 @@ impl Vm {
             callee_resume: std::ptr::null(),
             callee_acc: Value::UNDEFINED,
             body_site: None,
-            late_settled: std::ptr::null(),
-            callee_warming: false,
             leaf: NO_LEAF_CALL,
             outer: NO_OUTER_WALK,
             root_walk: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: quench_runtime::tier_surface::ArrayStorageProofs::new(),
             region_payload: 0,
-            region_calls: 0,
         }
     }
 
@@ -218,8 +207,6 @@ impl Vm {
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
-        // The tier's diagnostics, which no proved call runs under (`Admission::DIAGNOSED`).
-        self.lane_stack.set_diagnosed(self.programs.js_jit_diagnostics_enabled());
         let epoch = self.cache_epochs.gc;
         let cx: *mut LaneContext = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);
@@ -276,14 +263,6 @@ impl Vm {
     /// restores the floor this run raised (`entered`).
     fn leave_lane(&mut self, outer: *mut (), entered: LaneFloor) {
         LANE_CONTEXT.with(|current| current.set(outer));
-        if !outer.is_null() {
-            // SAFETY: every active context has this repr(C) prefix. Its callback owns the
-            // actual Host type, which may differ from this nested run's Host.
-            let binding = unsafe { &*outer.cast::<LaneBinding>() };
-            if binding.object_base.is_null() {
-                unsafe { (binding.resume)(outer) };
-            }
-        }
         self.leave_lane_floor(entered);
     }
 
@@ -354,7 +333,7 @@ impl Vm {
     fn drive_job_window(&mut self, code: &ResidualProgram, job: JobRoot, window: JobWindow, resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> JobEnd {
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
-        let entered = self.enter_lane_floor(code, window.entry.program);
+        let entered = self.enter_lane_floor();
         let start = job_start(code, job, &window, (std::ptr::from_mut(pending), &raw mut executing), entered.cell);
         let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {
@@ -434,7 +413,7 @@ impl Vm {
         let frame = context.frame();
         self.frames[frame].pc = pc;
         let raised = self.lane_completion.take_raised();
-        JobEnd::Frames(self.run_frames_after_lane_exit(code, frame, pending, LaneExit { executing, raised }))
+        JobEnd::Frames(self.run_frames_after_lane_exit(code, frame, pending, LaneHandoff { executing, raised }))
     }
 }
 

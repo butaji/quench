@@ -165,7 +165,7 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
     Ok(Object::from_header(meta, auxiliary, payload))
 }
 
-fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
+pub(crate) fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
     let ObjectExtras {
         head: ObjectExtrasHead {
             inline_properties,
@@ -232,7 +232,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     Ok(())
 }
 
-fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
+pub(crate) fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     let prototype_lookup = prototype_lookup::read(reader)?;
     let inline = reader.values()?;
     let inline_properties = DisplacedInline(
@@ -724,7 +724,7 @@ impl Cell {
                 writer.u8(tag::REGEXP);
                 write_object(writer, object)?;
                 // The matcher is compiled again from the source and flags on restore.
-                let RegExpMeta { source, flags, legacy_constructor, matcher: _ } = &**meta;
+                let RegExpMeta { source, flags, legacy_constructor, matcher: _, static_frequency: _ } = &**meta;
                 source.write_snapshot(writer);
                 writer.str(&flags.text());
                 match legacy_constructor {
@@ -867,7 +867,7 @@ impl Cell {
                 };
                 // A restored RegExp owns its record; literal sites share theirs again from the
                 // program store (`ProgramStore::regexp_literal_meta`) on their next evaluation.
-                Self::RegExp { object: *object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher: Default::default() }) }
+                Self::RegExp { object: *object, meta: std::rc::Rc::new(RegExpMeta { source, flags, legacy_constructor, matcher: Default::default(), static_frequency: 0 }) }
             }
             tag::ERROR => Self::Error(reader.string()?),
             tag::PROMISE => Self::Promise(Box::new(crate::heap::PromiseCell::read_snapshot(reader)?)),

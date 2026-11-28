@@ -14,6 +14,7 @@ mod literal;
 mod replacement;
 use replacement::{ReplaceResult, has_substitution, result_length};
 mod legacy;
+pub(super) mod natives;
 pub(super) use legacy::LegacyRegExpSnapshot;
 use legacy::{LegacyRegExpMatch, LegacyStatics};
 
@@ -652,7 +653,7 @@ impl Vm {
         let (prototype, exec_slot) = self.regexp_builtin_layout_proof(receiver)?;
         let exec = self
             .heap
-            .property_get(self.object_data(prototype)?, exec_slot)?;
+            .property_get_ref(self.heap.object(prototype)?, exec_slot)?;
         if !self.is_native_function(exec, Native::RegExpExec) {
             return None;
         }
@@ -676,23 +677,23 @@ impl Vm {
         if !matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
             return None;
         }
-        let receiver_data = self.object_data(receiver)?;
+        let receiver_data = self.heap.object(receiver)?;
         let (proto, receiver_shape) = (receiver_data.proto(), receiver_data.shape());
         let realm = self.realm.globals;
         // A recorded proof names its realm's prototype, so a match needs no intrinsics lookup.
         if let Some(layout) = self.regexp_symbol_layouts.iter().find(|layout| {
             layout.symbol == symbol && layout.realm == realm && layout.prototype_object == proto
                 && layout.receiver == receiver_shape
-        }) && let (slot, Some(prototype_data)) = (layout.slot as usize, self.object_data(proto))
+        }) && let (slot, Some(prototype_data)) = (layout.slot as usize, self.heap.object(proto))
             && prototype_data.shape() == layout.prototype
         {
-            return self.heap.property_get(prototype_data, slot);
+            return self.heap.property_get_ref(prototype_data, slot);
         }
         let prototype = self.realm.intrinsics.regexp_intrinsics.get(&realm)?.prototype;
         if proto != prototype {
             return None;
         }
-        let prototype_shape = self.object_data(prototype)?.shape();
+        let prototype_shape = self.heap.object(prototype)?.shape();
         let slot = self.verify_regexp_symbol_layout(receiver, prototype, symbol)?;
         // A changed prototype shape invalidates every proof this realm made against the old one.
         self.regexp_symbol_layouts
@@ -709,7 +710,7 @@ impl Vm {
                 slot: slot as u32, steady: None,
             },
         );
-        self.heap.property_get(self.object_data(prototype)?, slot)
+        self.heap.property_get_ref(self.heap.object(prototype)?, slot)
     }
 
     /// Checks `regexp_proven_symbol_method`'s proof for the current shapes and returns the
@@ -723,7 +724,7 @@ impl Vm {
     ) -> Option<usize> {
         let key = PropertyKey::symbol(symbol);
         let shared = |object: Value| {
-            self.object_data(object)
+            self.heap.object(object)
                 .is_some_and(|data| !self.shape_is_dictionary(data.shape()))
         };
         if !shared(receiver) || !shared(prototype) || self.property_attributes(receiver, key).is_some()
@@ -741,11 +742,11 @@ impl Vm {
     /// flag accessor, and the prototype's accessors are the builtins. Returns the prototype
     /// and the slot of its `exec`, whose value the caller still reads.
     fn regexp_builtin_layout_proof(&mut self, receiver: Value) -> Option<(Value, usize)> {
-        let receiver_data = self.object_data(receiver)?;
+        let receiver_data = self.heap.object(receiver)?;
         let (proto, receiver_shape) = (receiver_data.proto(), receiver_data.shape());
         let realm = self.realm.globals;
         // A recorded proof names its realm's prototype, so a match needs no intrinsics lookup.
-        let proto_shape = self.object_data(proto).map(|data| data.shape());
+        let proto_shape = self.heap.object(proto).map(|data| data.shape());
         if let Some(layout) = self.regexp_builtin_layouts.iter().find(|layout| {
             layout.realm == realm
                 && layout.prototype_object == proto
@@ -758,7 +759,7 @@ impl Vm {
         if proto != prototype {
             return None;
         }
-        let prototype_shape = self.object_data(prototype)?.shape();
+        let prototype_shape = self.heap.object(prototype)?.shape();
         let exec_slot = self.verify_regexp_builtin_layout(receiver, prototype)?;
         // A changed prototype shape invalidates every proof this realm made against the old one.
         self.regexp_builtin_layouts
@@ -836,7 +837,7 @@ impl Vm {
     /// The slot of `receiver`'s own writable data `lastIndex`, proven once per receiver shape.
     #[inline(always)]
     fn regexp_last_index_slot(&mut self, receiver: Value) -> Option<usize> {
-        let shape = self.object_data(receiver)?.shape();
+        let shape = self.heap.object(receiver)?.shape();
         if let Some(&(_, slot)) = self
             .regexp_last_index_layouts
             .iter()
@@ -859,7 +860,7 @@ impl Vm {
             return Some((slot as usize, self.heap.property_get(object, slot as usize)?));
         }
         let slot = self.regexp_last_index_slot_miss(receiver, shape)?;
-        Some((slot, self.heap.property_get(self.object_data(receiver)?, slot)?))
+        Some((slot, self.heap.property_get_ref(self.heap.object(receiver)?, slot)?))
     }
 
     /// `regexp_last_index_slot` of a shape the layout cache does not hold: the slot of an own
@@ -889,8 +890,8 @@ impl Vm {
     ) -> Result<Value, JsError> {
         if let Some(slot) = self.regexp_last_index_slot(receiver)
             && let Some(value) = self
-                .object_data(receiver)
-                .and_then(|object| self.heap.property_get(object, slot))
+                .heap.object(receiver)
+                .and_then(|object| self.heap.property_get_ref(object, slot))
         {
             return Ok(value);
         }
@@ -1530,8 +1531,9 @@ impl Vm {
         if self.property_shape_slot(shape, exec).is_some() {
             return None;
         }
-        let prototype = self.object_data(intrinsics.prototype)?;
+        let prototype = self.heap.object(intrinsics.prototype)?;
         let exec_slot = self.property_shape_slot(prototype.shape(), exec)?;
+        // The slot's attributes are record data.
         if self.slot_attributes(prototype, exec_slot)?.accessor {
             return None;
         }
@@ -1651,7 +1653,7 @@ impl Vm {
         self.regexp_proven_symbol_method(receiver, match_symbol)?;
         let constructor_atom = self.intern_atom("constructor");
         let constructor_key = PropertyKey::string(constructor_atom);
-        let prototype = self.object_data(receiver)?.proto();
+        let prototype = self.heap.object(receiver)?.proto();
         let constructor_is_intrinsic = self.property_attributes(receiver, constructor_key).is_none()
             && self
                 .property_attributes(prototype, constructor_key)
@@ -2199,7 +2201,7 @@ impl Vm {
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let matcher = crate::heap::RegExpMatcher::compiled(matcher);
-        let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher });
+        let meta = Rc::new(crate::heap::RegExpMeta { source, flags, legacy_constructor, matcher, static_frequency: 0 });
         self.regexp_from_meta(prototype, meta)
     }
 
@@ -2237,7 +2239,7 @@ impl Vm {
         let last_index_atom = self.intern_atom("lastIndex");
         let attributes = PropertyAttributes { writable: true, enumerable: false, configurable: false, accessor: false, getter: None, setter: None };
         self.set_property_with_attributes(object, last_index_atom, Value::number(0.0), attributes)?;
-        if let Some(target) = self.object_data(object).map(Object::shape)
+        if let Some(target) = self.heap.object(object).map(|object| object.shape())
             && !self.shape_is_dictionary(source)
             && !self.shape_is_dictionary(target)
         {
@@ -2449,16 +2451,13 @@ impl Vm {
     #[inline(always)]
     fn regexp_search(&mut self, regex: &quench_regexp::Regex, input: &JsString, exec: steady::ExecStart,
         steady: Option<steady::SteadyMatch>) -> Option<quench_regexp::Match> {
-        let steady::ExecStart { stateful, sticky, start } = exec;
+        let steady::ExecStart { sticky, start, .. } = exec;
         let prefiltered = steady.is_some_and(|steady| steady.prefiltered);
         // An ASCII rope not yet flat is searched through a reused buffer and stays a rope:
         // the match is ranges, which the caller reads out by the same units.
         if let Some(Some(found)) = input.with_ascii_rope_bytes(|bytes| {
             let length = bytes.len();
-            if !prefiltered
-                && ((stateful && start > length)
-                    || regex.excludes_search(length, start, sticky, || bytes.get(start).map(|byte| u16::from(*byte))))
-            {
+            if !prefiltered && steady::search_excluded(regex, exec, length, || bytes.get(start).map(|byte| u16::from(*byte))) {
                 return Some(None);
             }
             ascii::ascii_search(regex, bytes, start, sticky, steady::captures_read(steady))
@@ -2469,10 +2468,7 @@ impl Vm {
         let unkept = input.unkept_flat();
         let input = &unkept;
         let units = input.units();
-        if !steady.is_some_and(|steady| steady.prefiltered)
-            && ((stateful && start > units.len())
-                || regex.excludes_search(units.len(), start, sticky, || (start < units.len()).then(|| units.at(start))))
-        {
+        if !prefiltered && steady::search_excluded(regex, exec, units.len(), || (start < units.len()).then(|| units.at(start))) {
             return None;
         }
         if let Some(found) = Self::regexp_search_ascii(regex, input, start, sticky, steady) {
@@ -2621,7 +2617,7 @@ impl Vm {
             .regexp_intrinsics
             .get(&self.realm.globals)?
             .result_template?;
-        let shape = self.object_data(template.anchor)?.shape();
+        let shape = self.heap.object(template.anchor)?.shape();
         Some((
             shape,
             RegExpResultSlots {
@@ -2651,7 +2647,7 @@ impl Vm {
             .and_then(|intrinsics| intrinsics.result_template);
         if let Some(template) = template {
             let shape = self
-                .object_data(template.anchor)
+                .heap.object(template.anchor)
                 .expect("RegExp result template anchor is an object")
                 .shape();
             let mut properties = [Value::UNDEFINED; REGEXP_RESULT_PROPERTY_COUNT];
@@ -2683,7 +2679,7 @@ impl Vm {
             return Ok(());
         }
         let proto = self
-            .object_data(result)
+            .heap.object(result)
             .expect("RegExp result is an array")
             .proto();
         let anchor = self.heap.alloc_object_with_properties(
@@ -2786,6 +2782,8 @@ impl Vm {
                 matcher
             }
         };
+        // A shared matcher takes every literal site's frequency that attaches it (`Regex::set_static_frequency`).
+        matcher.set_static_frequency(meta.static_frequency);
         Ok(Rc::clone(meta.matcher.0.get_or_init(|| matcher)))
     }
 

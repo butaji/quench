@@ -12,6 +12,7 @@ use quench_runtime::staged::array_search::{DenseNeedle, scan_dense};
 use quench_runtime::staged::region::Region;
 use quench_runtime::staged::{Domain, builtins, elements, strings};
 use quench_runtime::tier_surface::Native;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A builtin a call runs on its staged row.
 #[derive(Clone, Copy)]
@@ -85,8 +86,11 @@ impl Lowering<'_, '_> {
                     Some(string) => self.held_char_code_at(state, string, argument, within, exit),
                     None => self.char_code_at(state, receiver, argument, within, exit),
                 };
-                let integer = is_int_tagged(&mut self.builder, code);
-                emit_js_guard(&mut self.builder, integer, exit);
+                // The within row (`char_code_at_within`) answers an int32 by construction, so only the row that may answer NaN is tested.
+                if !within {
+                    let integer = is_int_tagged(&mut self.builder, code);
+                    emit_js_guard(&mut self.builder, integer, exit);
+                }
                 let int = self.raw_unary(Unary::Narrow(Lane::I32), code);
                 self.set_int(state, result, int);
             }
@@ -265,17 +269,21 @@ impl Lowering<'_, '_> {
         let (values, length) = match hoisted {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
-                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
+                let access = self.array_access();
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, access, exit);
                 (view.values, view.length)
             }
         };
-        // A loop's entry proved the prototypes once (`hoist_arrays`); an invalidation unsets the flag, and the next search re-checks.
-        match hoisted.and_then(|hoisted| self.prototype_clear.get(&hoisted.source).copied()) {
-            Some(checked) => self.prototypes_checked(base, checked, exit),
-            None => {
-                let clear = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
-                let clear = self.raw_compare_imm(Relation::NotEqual, clear, 0);
-                emit_js_guard(&mut self.builder, clear, exit);
+        // The closed world proves the prototypes hold no index (`holes_read_undefined`): no guard is emitted. Otherwise a
+        // loop's entry proved the prototypes once (`hoist_arrays`); an invalidation unsets the flag, and the next search re-checks.
+        if !self.holes_read_undefined() {
+            match hoisted.and_then(|hoisted| self.prototype_clear.get(&hoisted.source).copied()) {
+                Some(checked) => self.prototypes_checked(base, checked, exit),
+                None => {
+                    let clear = self.helper_call(LaneHelper::PrototypesHoldNoIndex, &[base]);
+                    let clear = self.raw_compare_imm(Relation::NotEqual, clear, 0);
+                    emit_js_guard(&mut self.builder, clear, exit);
+                }
             }
         }
         let populated = self.raw_compare_imm(Relation::NotEqual, length, 0);
@@ -315,7 +323,8 @@ impl Lowering<'_, '_> {
         let (values, length) = match hoisted {
             Some(hoisted) => self.hoisted_view(hoisted),
             None => {
-                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, exit);
+                let access = self.array_access();
+                let view = emit_dense_array_view(&mut self.builder, self.payload, base, false, access, exit);
                 (view.values, view.length)
             }
         };

@@ -54,7 +54,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let mut first = args.next().ok_or(USAGE)?;
-    // A leading JIT mode flag (`--no-jit`, `--b-jit`, ...) selects the process's tiers, as quench-node's does.
+    // A leading JIT mode flag (`--no-jit`) selects the process's tiers, as quench-node's does.
     if quench_runtime::JitMode::is_flag(&first) {
         let mut chosen = None;
         quench_runtime::JitMode::select(&mut chosen, &first)?;
@@ -71,7 +71,7 @@ fn run() -> Result<(), String> {
     let name = args.next().unwrap_or_else(|| "<eval>".into());
     let mut runtime = Runtime::new(SystemHost);
     let program = if generic {
-        Engine::specialize_unspecialized(&source, &name)
+        Engine::specialize(&source, &name)
     } else {
         Engine::specialize(&source, &name)
     }

@@ -61,11 +61,7 @@ fn indexed_composition<const DEPENDENT: bool, const STEPS: usize>(b: &mut Benche
             let ip = record.get();
             // SAFETY: the untimed call ended; live records and their held headers belong
             // to this view, and no VM execution mutates them during this inspection.
-            let handler = unsafe {
-                if (*ip).handler == loop_header_miss as Handler as *const () {
-                    (*header_site_in_lane(ip)).header_handler.get()
-                } else { (*ip).handler }
-            };
+            let handler = unsafe { (*ip).handler };
             handler == proved
         }).count();
         // merge: `sites` counts generic keyed read rows, not a fused site, so only presence is asserted.
@@ -263,11 +259,7 @@ fn fractional_stencil(b: &mut Bencher, pattern: StencilPattern, aliased: bool, s
             let ip = record.get();
             // SAFETY: validation has returned; the view owns these live records and
             // their loop headers. No VM execution runs during this inspection.
-            let handler = unsafe {
-                if (*ip).handler == loop_header_miss as Handler as *const () {
-                    (*header_site_in_lane(ip)).header_handler.get()
-                } else { (*ip).handler }
-            };
+            let handler = unsafe { (*ip).handler };
             for (index, (_, candidate, _)) in kinds.iter().enumerate() {
                 counts[index] += usize::from(handler == *candidate);
             }

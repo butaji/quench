@@ -1,12 +1,12 @@
-//! The `Unary` operators past oxc's numbering: a template part's string primitive and the
+//! The `Unary` operators past the parser's numbering: a template part's string primitive and the
 //! `typeof` tests and index, which no source operator spells.
 
 /// The `Unary` operator a template literal substitution compiles to when a later one follows:
 /// the substitution itself where ToString of it runs no guest code and raises nothing, else
 /// its ToString (ECMA-262 13.15.5.1 step 5), so every conversion that can be observed runs in
 /// source order and `StringConcat` converts only what cannot be. No source operator spells
-/// it; it extends oxc's operator numbering.
-pub const UNARY_TO_STRING_PRIMITIVE: u32 = oxc_ast::ast::UnaryOperator::Delete as u32 + 1;
+/// it; it extends the parser's operator numbering.
+pub const UNARY_TO_STRING_PRIMITIVE: u32 = crate::operator::UnaryOperator::Delete as u32 + 1;
 pub use super::typeof_names::{TYPEOF_NAMES, typeof_name_index};
 /// The `Unary` operators that compare `typeof` of their operand with a name in
 /// `TYPEOF_NAMES` (`typeof x === "function"`): this plus the name's index tests equality,

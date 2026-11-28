@@ -1,6 +1,7 @@
 //! Stable facts in a lane region: what its code folds under code dependencies, and the
 //! invalidation points where it learns that one changed.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -10,6 +11,7 @@ use quench_runtime::staged::property::StoreJoin;
 use quench_runtime::staged::{Region, ShapeFact, Stage};
 
 pub(crate) use quench_runtime::vm::engine_types::StableFacts;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The Stable facts a lowering folded so far.
 #[derive(Default)]
@@ -32,8 +34,6 @@ pub(crate) struct StableUses {
     layouts: quench_runtime::staged::HeldLayouts,
     /// Global slots whose observed type the code relied on, each once.
     slots: Vec<quench_runtime::code_dependencies::SlotDependency>,
-    /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
-    instanceofs: BTreeSet<quench_runtime::code_dependencies::InstanceofFact>,
     /// The program whose root constant the code folded, if any (`StableFacts::root_program`).
     pub(crate) root_program: Option<quench_runtime::vm::program_store::ProgramId>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
@@ -47,8 +47,8 @@ pub(crate) struct StableUses {
     specialized_loops: Vec<(usize, usize)>,
     /// The PC a run of the body starts at.
     pub(crate) start: usize,
-    /// Whether the code took the receiver as a direct object under the lane's `this` trust (`VmFacts::this_trusted`).
-    pub(crate) this_trust: bool,
+    /// The live cell keys the code trusts (`StableFacts::cells`), each once.
+    pub(crate) cells: BTreeSet<quench_runtime::typed_ir::FactKey>,
 }
 
 impl StableUses {
@@ -60,8 +60,9 @@ impl StableUses {
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: self.layouts.take(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
-            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take(),
-            views: self.views.take(), this_trust: std::mem::take(&mut self.this_trust) }
+            root_program: self.root_program.take(),
+            views: self.views.take(),
+            cells: std::mem::take(&mut self.cells).into_iter().collect() }
     }
 }
 
@@ -137,18 +138,6 @@ fn read_invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelper
 }
 
 impl Lowering<'_, '_> {
-    /// The encoded `prototype` link of the constructor in `constructor`, where the facts type it a
-    /// known function and the VM proved its `instanceof` Stable: held from here to the block's next
-    /// helper that may change one (`hold_stable`), under a dependency on the constructor's
-    /// `prototype` slot, its shape and its `@@hasInstance` holder.
-    pub(crate) fn hold_instanceof(&mut self, state: &mut State, exit: ir::Block, constructor: Operand) -> Option<u32> {
-        let identity = state.values[usize::from(constructor.register_index()?)].value.ty.function_identity()?;
-        let fact = (self.vm.online?.instanceofs)(identity)?;
-        self.hold_stable(state, exit);
-        self.stable.instanceofs.insert(fact);
-        Some(fact.link)
-    }
-
     /// The division this lowering specializes under: online where it may take code
     /// dependencies on the VM (`VmFacts::online`), offline for code shared across VMs.
     pub(crate) fn division(&self) -> Division {
@@ -182,10 +171,21 @@ impl Lowering<'_, '_> {
         self.read_invalidation(state, exit);
     }
 
+    /// Whether the Stable facts this lowering holds can change while its code runs, so that holding them needs
+    /// an invalidation point. The online division's facts always can. An AOT image's can only where its world
+    /// is not closed: a closed world's `AotFacts::live` is false for every key, and a global key is live in
+    /// every other world, so its probe answers for the whole world. Nothing can change a settled fact, so the
+    /// hold builds no word read, no guard and no exit.
+    pub(crate) fn fact_may_change(&self) -> bool {
+        self.vm.online.is_some() || self.vm.facts.is_none_or(|facts| !facts.closed())
+    }
+
     /// The invalidation point of `hold_stable`, made here: the online division's word, or an AOT
-    /// image's, whose closed-world facts (`VmFacts::closed`) are its dependencies.
+    /// image's, whose closed-world facts (`VmFacts::facts`) are its dependencies. Nothing where
+    /// `fact_may_change` is false.
     pub(crate) fn read_invalidation(&mut self, state: &mut State, exit: ir::Block) {
-        let closed = self.vm.closed.filter(|_| self.helpers.links()).map(|_| LINKED_WORD);
+        if !self.fact_may_change() { return; }
+        let closed = self.vm.facts.filter(|_| self.helpers.links()).map(|_| LINKED_WORD);
         let live = self.vm.online.map(|online| online.invalidation).or(closed).expect("only a division with Stable facts reads the word");
         read_invalidation_word(&mut self.builder, self.helpers, live, state, exit);
     }
@@ -264,10 +264,15 @@ impl Lowering<'_, '_> {
 
     /// Where no method cache names `atom` now, a store admitted while `specialized` holds:
     /// that is a Stable fact, which a cache naming it retires (`MethodCacheAtoms::name`), so the
-    /// store reads the invalidation word, not the cache's names.
+    /// store reads the invalidation word, not the cache's names. Where the closed world names `atom` at no method
+    /// call site (`AotFacts::uncached_atoms`) and the run makes no call, no program runs inside the run to name it:
+    /// the store is admitted with no word, the subscription above retiring the code once a cache names it.
     pub(crate) fn store_held_unnamed(&mut self, atom: Atom, specialized: ir::Value) -> Option<ir::Value> {
         let online = self.vm.online.filter(|online| !online.names(atom))?;
         self.stable.atoms.insert(atom);
+        if !self.native_calls && self.vm.facts.is_some_and(|facts| facts.uncached_atoms().contains(&atom)) {
+            return Some(specialized);
+        }
         let invalidated = invalidation_word(&mut self.builder, self.helpers, online.invalidation);
         let held = self.raw_compare_imm(Relation::Equal, invalidated, 0);
         Some(emit(&mut self.builder).all(specialized, held))
@@ -373,8 +378,12 @@ impl Lowering<'_, '_> {
         let inside = header..=end;
         // A branch table's entries are among its successors, so an edge it makes is seen here too.
         let entered_within = self.unit.instructions.iter().enumerate().any(|(pc, instruction)|
-            !inside.contains(&pc) && successors(pc, *instruction).into_iter()
-                .any(|target| (target > header && target <= end) || (target == header && pc > end)));
+            !inside.contains(&pc) && {
+                let mut enters_within_block = false;
+                quench_runtime::bytecode::for_each_instruction_successor(pc, *instruction, |target|
+                    enters_within_block |= (target > header && target <= end) || (target == header && pc > end));
+                enters_within_block
+            });
         !entered_within && !(header < self.stable.start && self.stable.start <= end)
     }
 

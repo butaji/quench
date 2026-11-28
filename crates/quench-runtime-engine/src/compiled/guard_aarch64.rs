@@ -3,6 +3,7 @@
 use crate::ext_traits::*;
 use super::{ACTIVE_CONTEXT, CallContext, GuardSupport, TERMINATED_STATUS, WasmEntry, trap_status};
 use std::sync::OnceLock;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 // AAPCS64 preserves x19..x28, fp/lr and the low halves of v8..v15.
 const PAIR_BYTES: usize = 2 * size_of::<u64>();

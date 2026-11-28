@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 /// the runtime's own.
 use super::super::CallContext;
 use quench_runtime::vm::wtf16::native_string as form;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 #[allow(dead_code)]
 #[path = "../../../../quench-bjit/stencils/layout.rs"]
 pub(crate) mod stencil_layout;
@@ -25,7 +26,6 @@ fn payload_offsets() -> Vec<(&'static str, usize, usize)> {
         ("cell_recovery", at!(super::super::entry_cell::EntryCell, recovery), m::CELL_RECOVERY_AT),
         ("cell_body", at!(super::super::entry_cell::EntryCell, body), m::CELL_BODY_AT),
         ("cell_counters", at!(super::super::entry_cell::EntryCell, counters), m::CELL_COUNTERS_AT),
-        ("raised_run", super::super::entry_cell::RAISED_RUN as usize, m::RAISED_RUN as usize),
         ("frame_bytes", super::super::FRAME_BYTES, m::ACTIVATION_BYTES),
         ("layout_table_base", quench_runtime::tier_surface::layouts::table_base().addr(), m::LAYOUT_TABLE_BASE as usize),
         ("short_units", form::SHORT_UNITS_OFFSET as usize, m::string_form::SHORT_UNITS_OFFSET as usize),
@@ -94,8 +94,8 @@ fn stencil_layout_matches() {
     assert_eq!(format!("{:?}", quench_runtime::tier_surface::NATIVE_TYPED_ARRAY_LAYOUT), format!("{:?}", mirror::NATIVE_TYPED_ARRAY_LAYOUT));
     assert_eq!(format!("{:?}", quench_runtime::tier_surface::NATIVE_ENVIRONMENT_LAYOUT), format!("{:?}", mirror::NATIVE_ENVIRONMENT_LAYOUT));
     let (cache, copy) = (quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT, mirror::NATIVE_FIELD_CACHE_LAYOUT);
-    assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset, cache.holder_id_offset],
-        [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset, copy.holder_id_offset]);
+    assert_eq!([cache.entry_size, cache.receiver_offset, cache.holder_offset, cache.slot_offset, cache.holder_cell_offset],
+        [copy.entry_size, copy.receiver_offset, copy.holder_offset, copy.slot_offset, copy.holder_cell_offset]);
     assert_eq!(
         [cache.receiver_complement, cache.holder_complement, cache.slot_complement, cache.own_holder],
         [copy.receiver_complement, copy.holder_complement, copy.slot_complement, copy.own_holder]

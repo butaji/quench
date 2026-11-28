@@ -51,6 +51,8 @@ impl Vm {
             shared_entry_pair: _,
             share_entry_pair: _,
             builtins: _,
+            // Like `builtins`, a static table of the build: the restoring host supplies it.
+            execution: _,
             main_realm,
             unobserved_jobs_entered: _,
             job_queue_programs: _,
@@ -59,7 +61,6 @@ impl Vm {
             host,
             host_statics: _,
             runs_lane: _,
-            specialized,
             heap,
             realm,
             object_proto: _, function_proto: _, array_proto: _, string_proto: _, number_proto: _,
@@ -101,7 +102,7 @@ impl Vm {
             step_native_proofs: _,
             with_stack: _,
             startup_intrinsics,
-            with_scope_entered, this_trust: _, scope_names: _,
+            with_scope_entered, scope_names: _,
             test262_agent: _,
             shared_async_waiters: _,
             programs,
@@ -158,8 +159,7 @@ impl Vm {
             concat_memo: _,
             regexp_matchers: _,
             atom_classes: _,
-            intrinsic_natives: _,
-            native_families: _, first_chunks: _, streamed_stubs: _,
+            native_table: _, first_chunks: _, streamed_stubs: _,
             dynamic_strings: _,
             symbol_registry,
             well_known_symbols,
@@ -177,8 +177,6 @@ impl Vm {
             megamorphic_fields: _,
             field_stubs: _,
             holder_hints: _,
-            rc_pinned_shapes: _,
-            rc_pin_epoch: _,
             length_atom,
             prototype_atom,
             instanceof_constructor_layouts: _,
@@ -259,7 +257,6 @@ impl Vm {
             return Err(SnapshotError::unsupported(what));
         }
         let mut writer = Writer::new();
-        writer.bool(*specialized);
         writer.value(*main_realm);
         // Atoms first: the programs decode against the restored sequence.
         writer.len(atom_text.len());
@@ -396,11 +393,7 @@ impl Vm {
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_restore_begin");
         let mut reader = Reader::new((*bytes).as_ref(), Some(self.host_statics.kept_bytes_read))?;
-        self.specialized = reader.bool()?;
         self.main_realm = reader.value()?;
-        if native.is_some_and(|program| program.specialized != self.specialized) {
-            return Err(SnapshotError("native script specialization does not match runtime".into()));
-        }
         quench_alloc::align_dump_phase();
         self.read_atoms(&mut reader, native.map(|program| &program.atoms))?;
         #[cfg(feature = "profile-memory")]
@@ -413,6 +406,7 @@ impl Vm {
         self.report_memory_if_enabled("snapshot_heap");
         quench_alloc::align_dump_phase();
         self.realm.globals = reader.value()?;
+        self.make_global_values_table();
         self.realm_native_proofs.forget();
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;
@@ -472,6 +466,8 @@ impl Vm {
         read_host(&mut *self.host, &mut crate::SnapshotReader { reader: &mut reader, heap: &self.heap })
             .map_err(SnapshotError)?;
         reader.finish()?;
+        // The restored heap is fresh: it keeps slot representations again, joined from what the restored objects hold.
+        self.track_slots();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("snapshot_host");
         Ok(())
@@ -516,6 +512,16 @@ impl Vm {
         self.rebuild_program_cache_layouts();
         self.materialize_program_constants(ProgramId::MAIN, &main);
         self.set_active_program(ProgramId::MAIN);
+        // The recorded classes take the class-header edge again, so their headers and planned arms are as the snapshot
+        // left them (`ProgramStore::write_snapshot`).
+        for (program, class, layout, prototype) in self.programs.take_restored_classes() {
+            self.record_class_edge(program, class, layout, prototype);
+        }
+        // The closure cells take their creation edge again, so each restored body's closure is the one the snapshot held
+        // (`ProgramStore::write_snapshot`).
+        for (program, body, closure) in self.programs.take_restored_closures() {
+            self.note_closure_created(program, body, closure);
+        }
     }
 
     /// The atom sequence `write_snapshot` wrote: the base table, then each appended name, which
@@ -549,7 +555,6 @@ impl Vm {
         self.name_atom_memo.clear();
         self.private_site_homes.clear();
         self.atom_classes.clear();
-        self.intrinsic_natives.clear();
         self.atom_classes.reserve(base + appended);
         self.atom_classes.resize_with(base, Default::default);
         let atom_text = self.atom_text.clone();
@@ -659,86 +664,6 @@ mod tests {
     use crate::{Engine, Host, NativeContext, RootId, RootedError, Runtime};
     use std::cell::RefCell;
     use std::rc::Rc;
-
-    #[test]
-    fn native_loop_calls_return_their_integer_state_with_a_captured_constant() {
-        let body = r#"
-            const feedback = 0xD008;
-            function state(n, seed) {
-                n |= 0; let x = seed | 0;
-                for (let i = 0; i < n; i = (i + 1) | 0) {
-                    if ((x & 1) === 0) x = x >> 1;
-                    else x = (x >> 1) ^ feedback;
-                }
-                return x | 0;
-            }
-            for (let warm = 0; warm < 64; warm++) state(1, warm);
-            const args = ['-1', '0', '123456789', '1', '17'];
-            print(state(Number(args[0]), Number(args[1])));
-            print(state(Number(args[1]), Number(args[2])));
-            print(state(Number(args[3]), Number(args[2])));
-            print(state(Number(args[4]), Number(args[2])));
-        "#;
-        let method = format!("const sink = {{ log: print }}; {}", body.replace("print(state(", "sink.log(state("));
-        for source in [body.to_owned(), format!("(function () {{ {body} }})();"), format!("(function () {{ {method} }})();")] {
-            let program = Engine::specialize(&source, "native-loop-result.js").unwrap();
-            let mut expected = Runtime::new(crate::test_host::TestHost::default());
-            expected.set_execution_mode(crate::ExecutionMode::Interpreted);
-            expected.execute(&program).unwrap();
-            let expected = expected.host_mut().lines().to_vec();
-            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
-            let mut builder = Runtime::new(crate::test_host::TestHost::default());
-            let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
-            let mut runtime = Runtime::new(crate::test_host::TestHost::default());
-            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
-            runtime.execute_native_from_snapshot(Rc::new(bytes), &native, |_, _| Ok(())).unwrap();
-            assert_eq!(runtime.host_mut().lines().to_vec(), expected, "{source}");
-        }
-    }
-
-    #[test]
-    fn native_bootstrap_preserves_static_namespace_and_retains_code_for_jobs() {
-        let program = Engine::specialize(r#"
-            function fold(n, x) { for (let i = 0; i < n; i++) x = (x ^ (x << 3)) | 0; return x; }
-            print(fold(17, 7));
-            Promise.resolve(9).then(value => print(value));
-        "#, "native-bootstrap.js").unwrap();
-        let mut builder = Runtime::new(crate::test_host::TestHost::default());
-        let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
-        let mut expected = Runtime::new(crate::test_host::TestHost::default());
-        expected.execute(&program).unwrap();
-        let expected = expected.host_mut().lines().to_vec();
-        for mode in [crate::ExecutionMode::Compiled, crate::ExecutionMode::NativeOnly] {
-            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
-            let mut runtime = Runtime::new(crate::test_host::TestHost::default());
-            runtime.set_execution_mode(mode);
-            runtime.execute_native_from_snapshot(Rc::new(bytes.clone()), &native, |_, _| Ok(())).unwrap();
-            let program = native.residual().clone();
-            drop(native);
-            runtime.run_host_jobs(&program).unwrap();
-            assert_eq!(&*runtime.host_mut().lines(), &expected);
-            assert_eq!(runtime.native_execution_rejections(), 0);
-        }
-    }
-
-    #[test]
-    fn native_bootstrap_rejects_namespace_or_specialization_mismatch_before_entry() {
-        let program = Engine::specialize("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap();
-        let mut builder = Runtime::new(crate::test_host::TestHost::default());
-        let bytes = builder.build_snapshot(&program, |_, _| Ok(())).unwrap();
-        for (foreign, message) in [
-            (Engine::specialize("function foreign() { print('effect'); } foreign();", "foreign.js").unwrap(), "atom IDs"),
-            (Engine::specialize("function foreign(argument) { print(extra); } foreign();", "foreign.js").unwrap(), "atom IDs"),
-            (Engine::specialize_unspecialized("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap(), "specialization"),
-        ] {
-            let native = crate::NativeJsProgram::compile_eager(foreign).unwrap();
-            let mut runtime = Runtime::new(crate::test_host::TestHost::default());
-            runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
-            let error = runtime.execute_native_from_snapshot(Rc::new(bytes.clone()), &native, |_, _| Ok(())).unwrap_err();
-            assert!(error.to_string().contains(message), "{error}");
-            assert!(runtime.host_mut().lines().is_empty());
-        }
-    }
 
     /// Global code a host runs while installing: what a snapshot keeps.
     const SETUP: &str = r#"

@@ -57,7 +57,7 @@ pub(crate) fn admit_depth<S: Stage>(stage: &mut S, count: S::Word, limit: S::Wor
 /// `admit_depth` on machine words, for the interpreter's re-entry of an array step's activation.
 #[inline(always)]
 pub fn concrete_below(count: u64, limit: u64) -> bool {
-    admit_depth(&mut super::Concrete::new(std::ptr::null()), count, limit, ()).is_some()
+    admit_depth(&mut super::Concrete::pure(), count, limit, ()).is_some()
 }
 
 /// A callback's admission: one more record (`admit_depth`) and `needed` words of the `free` the
@@ -73,7 +73,7 @@ pub(crate) fn admit_callback<S: Stage>(stage: &mut S, count: S::Word, limit: S::
 /// `admit_callback` on machine words (`lane_admit_prepared`).
 #[inline(always)]
 pub fn concrete_admit_callback(count: u64, limit: u64, free: u64, needed: u64) -> bool {
-    admit_callback(&mut super::Concrete::new(std::ptr::null()), count, limit, free, needed, ()).is_some()
+    admit_callback(&mut super::Concrete::pure(), count, limit, free, needed, ()).is_some()
 }
 
 /// Copies the `count` words at `source` to `destination`, both of the frame region. Writes
@@ -152,7 +152,7 @@ mod tests {
         let window = unsafe { words.as_mut_ptr().add(8) } as u64;
         let shape = CallbackWindow { registers: 4, passed: 1, argc: 3, keeps: true };
         let context = CallbackContext { this: 1, env: 2, capture: 3 };
-        let stage = &mut Concrete::new(std::ptr::null());
+        let stage = &mut Concrete::pure();
         fill_callback(stage, window, arguments.as_ptr() as u64, shape);
         install_callback(stage, window, context);
         assert_eq!(&words[8..], &[10, u, u, u, 10, 20, 30]);
@@ -165,7 +165,7 @@ mod tests {
         let mut words = [0_u64; 8 + 6];
         let window = unsafe { words.as_mut_ptr().add(8) } as u64;
         let shape = CallbackWindow { registers: 3, passed: 2, argc: 3, keeps: false };
-        let stage = &mut Concrete::new(std::ptr::null());
+        let stage = &mut Concrete::pure();
         fill_callback_words(stage, window, [7, 8, 9], shape);
         install_callback(stage, window, CallbackContext { this: 1, env: 2, capture: 3 });
         assert_eq!(&words[8..11], &[7, 8, u]);

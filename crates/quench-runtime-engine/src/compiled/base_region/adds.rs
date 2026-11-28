@@ -1,6 +1,7 @@
 //! The property-add rows of a function body: a `DefineField`, or a named field store whose site
-//! recorded an add, runs `staged::add`'s row (`Heap::Add`) over the transition the site's add cache
-//! holds. The lowering is a fast arm: a hit continues past the instruction, a miss enters the
+//! recorded a class-keyed add, runs the class add row (`Heap::AddClass`) over the transition the site's add
+//! cache holds. An add no class keys, or a store to `this`, has no row and takes the helper step (S7j4a).
+//! The lowering is a fast arm: a hit continues past the instruction, a miss enters the
 //! helper step behind the row (`DefineField`, which has one) or leaves at the instruction (a store,
 //! which has none, `Step::Guard`).
 //!
@@ -13,26 +14,23 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use quench_runtime::staged::Form;
 use quench_runtime::staged::add_plan::AddSite;
 use quench_bjit::{padded_holes, HOLES};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
-/// What one add instruction runs: the site's transition, the storage form it can take
-/// (`Transition::form`) and whether the receiver is the activation's `this`.
+/// What one add instruction runs: the class-keyed transition of its site.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct Add {
     pub(crate) site: AddSite,
-    pub(crate) form: Form,
-    pub(crate) this: bool,
 }
 
 /// An object register's frame offset travels in `ADD_OBJECT_BITS` bits of hole 2.
 const _: () = assert!((Register::MAX as u64) * SLOT < 1 << numeric::site_bits::ADD_OBJECT_BITS);
 
 impl Add {
-    /// The heap row that runs it.
+    /// The heap row that runs it: the class-keyed add in its live cell (`Heap::AddClass`).
     pub(crate) fn heap(self) -> Heap {
-        Heap::Add { form: self.form, this: self.this }
+        Heap::AddClass
     }
 
     /// The chain whose prototypes' layouts the code holds for the chain proof, where the add has one.
@@ -40,13 +38,13 @@ impl Add {
         self.site.link.map(|link| quench_runtime::code_dependencies::PrototypeChain { link, depth: self.site.depth })
     }
 
-    /// The row's holes: the before and after layouts, the value operand's frame offset, and the slot
-    /// with the prototype link and the object register's frame offset (`numeric::site_bits::ADD_*`).
+    /// The row's holes: the before-key and after-class of the class transition, the value operand's frame offset, and the
+    /// slot with the prototype link and the object register's frame offset (`numeric::site_bits::ADD_*`).
     pub(crate) fn holes(self, object: u64, value: u64) -> [u64; HOLES] {
         use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
         let transition = self.site.transition;
-        let [before, after] = transition.layouts.map(u64::from);
-        let layouts = before | after << ADD_AFTER_AT;
+        let [_, after] = transition.layouts.map(u64::from);
+        let layouts = u64::from(transition.before) | after << ADD_AFTER_AT;
         let site = u64::from(transition.slot) | u64::from(self.site.link.unwrap_or_default()) << ADD_LINK_AT | object << ADD_OBJECT_AT;
         padded_holes([layouts, value, site])
     }
@@ -64,7 +62,7 @@ fn receiver(instruction: WideInstruction) -> Option<Register> {
     if is_define(instruction) { Some(instruction.register_b()) } else { instruction.field_store_register() }
 }
 
-/// The add `instruction` runs where its site recorded a transition that a row may hold: the atom
+/// The add `instruction` runs where its site recorded a class-keyed transition a row may hold: the atom
 /// is unnamed by method caches, the receiver is no result of the frame's own completion, and the
 /// storage form can take the slot.
 pub(crate) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
@@ -77,7 +75,11 @@ pub(crate) fn of(known: Known, instruction: WideInstruction) -> Option<Add> {
     let atom = instruction.atom_index();
     if !known.stores_in_place(atom) { return None; }
     let site = adds(instruction.cache_site_index(), atom, !defines)?;
-    Some(Add { site, form: site.transition.form()?, this: receiver(instruction).is_none() })
+    // Every ordinary object is a class cell from birth, so an object's add is class-keyed. An add no class
+    // keys is a non-object receiver's: the general path adds it. The class row names its object register:
+    // a store to `this` has none.
+    let keyed = site.transition.is_class_keyed() && site.transition.form().is_some() && receiver(instruction).is_some();
+    keyed.then_some(Add { site })
 }
 
 /// The registers an add row names: the value in `a`, the receiver through `base`.
@@ -114,7 +116,7 @@ mod tests {
     use numeric::site_bits::{ADD_AFTER_AT, ADD_LINK_AT, ADD_OBJECT_AT};
 
     fn add(link: Option<u32>) -> Add {
-        Add { site: AddSite { transition: Transition { before: 5, after: 9, slot: 2, layouts: [5, 9] }, link, depth: 3 }, form: Form::Arena, this: false }
+        Add { site: AddSite { transition: Transition { before: 5, after: 9, slot: 2, layouts: [5, 9] }, link, depth: 3 } }
     }
 
     /// The holes carry what `heap_rows::add_row` unpacks: shapes, value offset, slot, link and object offset.
@@ -134,16 +136,12 @@ mod tests {
         assert_eq!(add(None).chain(), None);
     }
 
-    /// The row library holds the row of every form of both receivers, chained or not.
+    /// The class-keyed add's row is in the catalog, chained or not.
     #[test]
-    fn every_form_has_a_row_of_each_receiver_and_chain() {
-        for form in base_rows::FORMS {
-            for this in [false, true] {
-                for chained in [false, true] {
-                    let row = HeapRow { heap: Heap::Add { form, this }, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: chained };
-                    assert!(base_rows::stencil(row).is_ok(), "{row:?}");
-                }
-            }
+    fn the_class_add_row_is_a_catalog_row_chained_or_not() {
+        for chained in [false, true] {
+            let row = HeapRow { heap: Heap::AddClass, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: chained };
+            assert!(base_rows::stencil(row).is_ok(), "{row:?}");
         }
     }
 }

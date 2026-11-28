@@ -1,5 +1,7 @@
 //! The property rows on the concrete stage, against the heap's own object model.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::ic::IcOp;
 use super::property::{read_with, Arm, FieldPlan, Owner, PlanSource, StoreArm, StoreJoin, StorePlan};
 use super::test_words::ANSWER;
@@ -8,6 +10,9 @@ use crate::bytecode::{FieldBase, Operand};
 use crate::heap::{Heap, Object};
 use crate::typed_ir::Type;
 use crate::{Value, ValueType};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The plans of a test site: `lookup`'s read, cache site `store`'s store.
 struct Plans {
@@ -20,10 +25,9 @@ impl PlanSource for Plans {
     fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> { Some(self.store) }
 }
 
-/// A frame over a few registers and the heap's object records, whose callouts log their name.
+/// A frame over a few registers, whose callouts log their name.
 struct Host<'p> {
     registers: Vec<u64>,
-    records: u64,
     plans: &'p Plans,
     answers: bool,
     log: Vec<&'static str>,
@@ -33,8 +37,8 @@ struct Host<'p> {
 }
 
 impl<'p> Host<'p> {
-    fn new(records: u64, plans: &'p Plans, registers: Vec<u64>) -> Self {
-        Self { registers, records, plans, answers: true, log: Vec::new(), proven: None, proved: Vec::new() }
+    fn new(plans: &'p Plans, registers: Vec<u64>) -> Self {
+        Self { registers, plans, answers: true, log: Vec::new(), proven: None, proved: Vec::new() }
     }
 
     fn call(&mut self, name: &'static str) -> bool {
@@ -71,7 +75,6 @@ impl crate::staged::CallFrame<Concrete> for Host<'_> {}
 impl<'p> PropertyFrame<Concrete> for Host<'p> {
     type Plans = &'p Plans;
     fn plans(&self) -> &'p Plans { self.plans }
-    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { Some(self.records) }
     fn proven_shape(&mut self, _stage: &mut Concrete, _owner: Owner) -> Option<(u32, crate::staged::ShapeFact)> {
         self.proven.map(|shape| (shape, crate::staged::ShapeFact::entry_guard()))
     }
@@ -84,10 +87,6 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     }
     fn field_store_host(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _value: u64, _miss: ()) -> Option<()> {
         self.call("field_store_host").then_some(())
-    }
-    fn field_store_bound(&mut self, _stage: &mut Concrete, _owner: Owner, _object: u64, _site: (u32, u16), _value: (u64, Type),
-        _miss: ()) -> Option<()> {
-        self.call("field_store_bound").then_some(())
     }
     fn entry_slot_store(&mut self, _stage: &mut Concrete, _site: u16, _value: u64, _miss: ()) -> Option<()> {
         self.call("entry_slot_store").then_some(())
@@ -103,8 +102,8 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
 impl ElementFrame<Concrete> for Host<'_> {}
 
 impl NumericFrame<Concrete> for Host<'_> {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numbers") }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numbers") }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!("no numbers") }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { unreachable!("no numbers") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn int_fact(&self) {}
@@ -141,13 +140,11 @@ fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
     (object, shape)
 }
 
-pub fn records(heap: &Heap) -> u64 { heap.object_record_base().map_or(0, |base| base as u64) }
-
 /// `plan` read from `object` on the concrete stage, by a frame that holds no proof.
 fn read(heap: &Heap, plan: FieldPlan<'static>, object: Value) -> Option<Value> {
     let plans = Plans { read: plan, store: NO_STORE };
-    let mut frame = Host::new(records(heap), &plans, vec![0]);
-    let mut stage = Concrete::new(heap.property_values_base());
+    let mut frame = Host::new(&plans, vec![0]);
+    let mut stage = Concrete::over(heap);
     read_with(&mut stage, &mut frame, (Owner::Temporary, false), object.to_bits(), plan, ()).map(Value::from_bits)
 }
 
@@ -192,9 +189,9 @@ fn a_nested_chain_reads_each_link_from_the_previous_value() {
 /// The step of `operation` on a host frame, with its log.
 fn run(answers: bool, operation: Operation<u64, ()>) -> (Option<u64>, Vec<&'static str>) {
     let plans = Plans { read: FieldPlan::Host { atom: 1, site: 2 }, store: StorePlan::Add };
-    let mut frame = Host::new(0, &plans, vec![Value::integer(1).to_bits(); 4]);
+    let mut frame = Host::new(&plans, vec![Value::integer(1).to_bits(); 4]);
     frame.answers = answers;
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let word = match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => Some(word),
         Step::Unresolved => None,
@@ -228,8 +225,8 @@ fn a_store_plan_chooses_the_adding_or_the_vm_store_and_stores_the_value_it_was_g
     for (plan, name) in [(add, "field_add"), (host, "field_store_host")] {
         let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
         let value = Value::integer(4).to_bits();
-        let mut frame = Host::new(0, &plans, vec![0, Value::integer(1).to_bits(), value]);
-        let mut stage = Concrete::new(std::ptr::null());
+        let mut frame = Host::new(&plans, vec![0, Value::integer(1).to_bits(), value]);
+        let mut stage = Concrete::pure();
         let stored = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3, strict: false });
         assert!(matches!(stored, Step::Value(word) if word == value));
         assert_eq!(frame.log, [name]);
@@ -257,9 +254,9 @@ fn the_property_instructions_decode_to_their_operations() {
 /// and the shapes its guards recorded.
 fn read_owned_by(heap: &Heap, plan: FieldPlan<'static>, object: Value, proven: Option<u32>) -> (Option<Value>, Vec<u32>) {
     let plans = Plans { read: plan, store: NO_STORE };
-    let mut frame = Host::new(records(heap), &plans, vec![0]);
+    let mut frame = Host::new(&plans, vec![0]);
     frame.proven = proven;
-    let mut stage = Concrete::new(heap.property_values_base());
+    let mut stage = Concrete::over(heap);
     let lookup = FieldLookup::Atom { atom: 0, base: FieldBase::register(1), cache_site: 0 };
     frame.registers = vec![0, object.to_bits()];
     let word = match step(&mut stage, &mut frame, Operation::GetField { base: FieldBase::register(1), lookup, destination: 0 }) {
@@ -288,8 +285,8 @@ fn a_guard_is_recorded_as_the_owners_proof_and_a_proven_shape_is_not_tested_agai
 fn store_step(heap: &mut Heap, plan: StorePlan<'static>, registers: Vec<u64>, operation: Operation<u64, ()>)
     -> (Option<Value>, Vec<&'static str>) {
     let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
-    let mut frame = Host::new(records(heap), &plans, registers);
-    let mut stage = Concrete::storing(&*heap);
+    let mut frame = Host::new(&plans, registers);
+    let mut stage = Concrete::over(&*heap);
     let word = match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => Some(Value::from_bits(word)),
         _ => None,
@@ -306,11 +303,11 @@ fn store(heap: &mut Heap, plan: StorePlan<'static>, object: Value, value: Value)
 #[test]
 fn an_arm_is_the_slots_type_or_the_test_of_the_type_that_keeps_its_representation() {
     let arm = |slot_ty, fact| StoreArm::of((5, 2), slot_ty, fact);
-    let plain = |holds| Some(StoreArm { shape: 5, slot: 2, holds, raw_double: false, unformed: false, layout: false });
-    assert_eq!(arm(Type::NUMBER, Type::INT32), plain(None), "the slot holds the value's type");
-    assert_eq!(arm(Type::INT32, Type::NUMBER), plain(Some(Type::INT32)), "a Number may widen an int32 slot: test the int32");
+    let plain = |holds, class| Some(StoreArm { shape: 5, slot: 2, holds, class, image: false });
+    assert_eq!(arm(Type::NUMBER, Type::INT32), plain(None, Type::NUMBER), "the slot holds the value's type");
+    assert_eq!(arm(Type::INT32, Type::NUMBER), plain(Some(Type::INT32), Type::INT32), "a Number may widen an int32 slot: test the int32");
     let objects = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
-    assert_eq!(arm(objects, Type::ANY), plain(Some(objects)), "an object slot admits objects and its nullish");
+    assert_eq!(arm(objects, Type::ANY), plain(Some(objects), objects), "an object slot admits objects and its nullish");
     assert_eq!(arm(Type::language(ValueType::String), Type::INT32), None, "no value stores in place without widening");
     assert_eq!(StorePlan::of(&[], StoreJoin::Add), StorePlan::Add);
     assert_eq!(StorePlan::of(&[], StoreJoin::Host), StorePlan::Host);
@@ -320,7 +317,7 @@ fn an_arm_is_the_slots_type_or_the_test_of_the_type_that_keeps_its_representatio
 fn a_widening_arm_stores_the_values_its_type_admits_in_place_and_leaves_the_rest_to_the_vm() {
     let mut heap = heap_of(1);
     let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
-    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: Some(Type::INT32), raw_double: false, unformed: false, layout: false }]));
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: Some(Type::INT32), class: Type::INT32, image: false }]));
     let plan = StorePlan::of(arms, StoreJoin::Host);
     let (word, log) = store(&mut heap, plan, object, Value::integer(9));
     assert_eq!((word, log), (Some(Value::integer(9)), Vec::new()));
@@ -337,7 +334,7 @@ fn several_arms_store_through_the_one_that_holds_the_receivers_shape() {
     let (second, second_shape) = object_of(&mut heap, &[Value::integer(2), Value::integer(3)]);
     let (third, _) = object_of(&mut heap, &[]);
     let arms: &'static [StoreArm] = Box::leak(Box::new([
-        StoreArm { shape: first_shape, slot: 0, holds: None, raw_double: false, unformed: false, layout: false }, StoreArm { shape: second_shape, slot: 1, holds: None, raw_double: false, unformed: false, layout: false }]));
+        StoreArm { shape: first_shape, slot: 0, holds: None, class: Type::ANY, image: false }, StoreArm { shape: second_shape, slot: 1, holds: None, class: Type::ANY, image: false }]));
     let plan = StorePlan::of(arms, StoreJoin::Host);
     assert_eq!(store(&mut heap, plan, first, Value::integer(10)).1, Vec::<&str>::new());
     assert_eq!(read(&heap, own(first_shape, 0, 1), first), Some(Value::integer(10)));
@@ -350,23 +347,22 @@ fn several_arms_store_through_the_one_that_holds_the_receivers_shape() {
 }
 
 #[test]
-fn bound_and_entry_plans_reach_their_frame_callouts_and_a_bound_join_completes_what_no_arm_takes() {
+fn an_entry_plan_reaches_its_frame_callout_and_an_arm_takes_its_shape() {
     let mut heap = heap_of(1);
     let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
     let (other, _) = object_of(&mut heap, &[]);
-    assert_eq!(store(&mut heap, StorePlan::Bound, object, Value::integer(1)).1, ["field_store_bound"]);
     assert_eq!(store(&mut heap, StorePlan::Entry, object, Value::integer(1)).1, ["entry_slot_store"]);
-    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, raw_double: false, unformed: false, layout: false }]));
-    let plan = StorePlan::of(arms, StoreJoin::Bound);
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, class: Type::ANY, image: false }]));
+    let plan = StorePlan::of(arms, StoreJoin::Host);
     assert_eq!(store(&mut heap, plan, object, Value::integer(2)).1, Vec::<&str>::new(), "the arm takes its shape");
-    assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_bound"], "the join the plan names");
+    assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_host"], "the join the plan names");
 }
 
 #[test]
 fn a_word_no_register_names_stores_through_the_sites_plan_with_the_fact_it_is_given() {
     let mut heap = heap_of(1);
     let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
-    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, raw_double: false, unformed: false, layout: false }]));
+    let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, class: Type::ANY, image: false }]));
     let plan = StorePlan::of(arms, StoreJoin::Host);
     let word = Value::integer(5);
     let operation = Operation::StoreField { base: Some(1), value: word.to_bits(), fact: Type::INT32, atom: 7, site: 3 };
@@ -390,28 +386,3 @@ fn a_layout_plan_stores_in_place_under_its_layout_id_and_leaves_any_other_receiv
     assert_eq!(read(&heap, own(shape, 0, 1), object), Some(Value::integer(9)));
 }
 
-/// Under reference counts every store into a record the last collection left marked logs, an
-/// immediate overwrite too (it deletes an edge): the gate and the typed store's immediate skip
-/// (`slot_store::gate_open`) both refuse it, while without counts an immediate store passes both
-/// unlogged.
-#[test]
-fn an_immediate_store_into_a_marked_record_logs_under_counts_and_passes_without() {
-    for counts in [false, true] {
-        let mut heap = heap_of(2);
-        let held = heap.alloc_object(Object::new(Value::NULL));
-        let (object, _) = object_of(&mut heap, &[held, Value::integer(1)]);
-        if counts {
-            heap.set_rc(true);
-        }
-        heap.collect([object]);
-        let record_id = object.to_bits() as u32;
-        let number = Value::integer(5).to_bits();
-        let watch = heap.store_watch_word() as u64;
-        assert_eq!(watch & crate::staged::layout_offsets::STORE_WATCH_COUNTS != 0, counts, "the gate word names counts");
-        let mut stage = Concrete::storing(&heap);
-        assert_eq!(stage.immediate_store_open(), !counts, "counts: {counts}");
-        assert_eq!(stage.store_gate(StagedRecordSpace::Object, u64::from(record_id), number), !counts, "counts: {counts}");
-        let open = super::slot_store::gate_open(&mut stage, record_id as u64, (number, Type::INT32), ());
-        assert_eq!(open.is_some(), !counts, "a proved-immediate store skips the gate only without counts");
-    }
-}

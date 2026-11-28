@@ -44,3 +44,26 @@ impl Vm {
         })
     }
 }
+
+/// The Intl and Temporal natives the core runs itself: `IntlInitialize`, and the constructors
+/// that refuse a call without `new`. Every other Intl and Temporal native is the layer's.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::IntlInitialize => Some(intl_initialize),
+        Native::IntlPluralRules
+        | Native::IntlSegmenter
+        | Native::IntlDisplayNames
+        | Native::IntlDurationFormat
+        | Native::IntlListFormat => Some(intl_requires_new),
+        _ => layer_hooks::intl_entry(native),
+    }
+}
+
+fn intl_initialize(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let (global, object_prototype) = (vm.realm.globals, vm.object_proto);
+    layer_hooks::install_intl_for_realm(vm, p, global, object_prototype).map(|()| Value::UNDEFINED)
+}
+
+fn intl_requires_new(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "constructor requires new".into()))
+}

@@ -50,7 +50,7 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_hot_loop
 fn quench_engine_vm_runs_call_in_lane(view: *const LaneView) -> bool { <Vm as DispatchFastVm6>::runs_call_in_lane(view) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_runs_call_in_lane = quench_engine_vm_runs_call_in_lane;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_tier_may_run(this: &Vm, tiers: &[crate::compiled::admission::Tier]) -> bool { <Vm as CompiledVm4>::tier_may_run(this, tiers) }
+fn quench_engine_vm_tier_may_run(this: &Vm, tiers: &[crate::compiled::admission::Tier]) -> bool { quench_runtime::vm::tier_policy::tiers_run(this.execution_mode, this.memory_policy(), tiers) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_tier_may_run = quench_engine_vm_tier_may_run;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_view_any_in_lane(this: &Vm, program: ProgramId, function: u32) -> Option<*const LaneView> { <Vm as DispatchFastVm2>::view_any_in_lane(this, program, function) }
@@ -80,9 +80,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_complete
 fn quench_engine_vm_record_native_execution_rejection(this: &mut Vm) -> () { <Vm as CompiledVm4>::record_native_execution_rejection(this) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_record_native_execution_rejection = quench_engine_vm_record_native_execution_rejection;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_runs_windows_in_lane(this: &Vm) -> bool { <Vm as DispatchFastVm2>::runs_windows_in_lane(this) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_runs_windows_in_lane = quench_engine_vm_runs_windows_in_lane;
-#[unsafe(no_mangle)]
 fn quench_engine_vm_wasm_table_step(this: &mut Vm, f: usize, i: WideInstruction) -> Result<(), JsError> { <Vm as CompiledWasmTableOpsStageVm>::wasm_table_step(this, f, i) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_wasm_table_step = quench_engine_vm_wasm_table_step;
 #[unsafe(no_mangle)]
@@ -103,9 +100,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_innermos
 #[unsafe(no_mangle)]
 fn quench_engine_vm_run_lane_job(this: &mut Vm, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> Result<JobEnd, JobResume> { <Vm as DispatchFastLaneRootsVm>::run_lane_job(this, code, job, frame, resume) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_run_lane_job = quench_engine_vm_run_lane_job;
-#[unsafe(no_mangle)]
-fn quench_engine_vm_specialized_operations_enabled(this: &Vm, program: &ResidualProgram) -> bool { <Vm as DispatchFastVm2>::specialized_operations_enabled(this, program) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_specialized_operations_enabled = quench_engine_vm_specialized_operations_enabled;
 #[unsafe(no_mangle)]
 fn quench_engine_vm_call_stored_setter(this: &mut Vm, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError> { <Vm as DispatchFastSettersVm>::call_stored_setter(this, p, site, setter, object, value) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_call_stored_setter = quench_engine_vm_call_stored_setter;
@@ -163,13 +157,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_set_exec
 fn quench_engine_vm_enable_lane_methods(this: &mut Vm) -> () { <Vm as CompiledVm4>::enable_lane_methods(this) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_enable_lane_methods = quench_engine_vm_enable_lane_methods;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_compile_wasm_eagerly(this: &mut Vm) -> () {
-    use crate::compiled::admission::{specialize, UnitFacts, UnitKind, UnitRequest};
-    let facts = UnitFacts { wasm_first_entry: <Vm as CompiledVm4>::wasm_compile_at_first_entry(this), ..UnitFacts::default() };
-    if let Some(unit) = specialize(UnitRequest { kind: UnitKind::WasmEager, facts }).compiled() { <Vm as CompiledVm4>::compile_wasm_eagerly(this, unit) }
-}
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_compile_wasm_eagerly = quench_engine_vm_compile_wasm_eagerly;
-#[unsafe(no_mangle)]
 fn quench_engine_vm_native_execution_rejections(this: &Vm) -> u64 { <Vm as CompiledVm4>::native_execution_rejections(this) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_native_execution_rejections = quench_engine_vm_native_execution_rejections;
 #[unsafe(no_mangle)]
@@ -194,31 +181,16 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_direct_m
 fn quench_engine_fn_in_place_in_loop(native: Native) -> bool { crate::dispatch_fast::in_place_in_loop(native) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_in_place_in_loop = quench_engine_fn_in_place_in_loop;
 #[unsafe(no_mangle)]
-fn quench_engine_fn_note_int_speculation_retired() -> bool { crate::dispatch_fast::int_kinds::note_retired() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_note_int_speculation_retired = quench_engine_fn_note_int_speculation_retired;
-#[unsafe(no_mangle)]
 fn quench_engine_fn_retire_running_lane_context() -> () { crate::dispatch_fast::retire_running_lane_context() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_retire_running_lane_context = quench_engine_fn_retire_running_lane_context;
 #[unsafe(no_mangle)]
-fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: &dyn Fn(Value) -> bool) -> bool { crate::compiled::direct_callee::names_dead_callee(inlined, direct, live) }
+fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: &dyn Fn(Value) -> bool) -> bool { crate::compiled::direct_callee::names_dead_callee(inlined, direct, live) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_names_dead_callee = quench_engine_fn_names_dead_callee;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_lane_miss_report(events: &quench_runtime::vm::tier_events::TierEvents) -> String { crate::dispatch_fast::lane_body_stats::miss_report(events) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_lane_miss_report = quench_engine_fn_lane_miss_report;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_lane_unlowered_report() -> String { crate::dispatch_fast::lane_body_stats::unlowered_report() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_lane_unlowered_report = quench_engine_fn_lane_unlowered_report;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_census() -> (u64, u64, u64) { crate::compiled::base_region::census() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_census = quench_engine_fn_census;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_jit_wasm_selective_enabled() -> bool { crate::compiled::jit_wasm_selective_enabled() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_jit_wasm_selective_enabled = quench_engine_fn_jit_wasm_selective_enabled;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str { crate::js_compiled::candidate_rejection_reason(program, function_id) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_candidate_rejection_reason = quench_engine_fn_candidate_rejection_reason;
 #[unsafe(no_mangle)]
-fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize, op: Op, lands: bool) -> () { crate::dispatch_fast::name_probe::settle_name_record(view, pc, op, lands) }
+fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize) -> () { crate::dispatch_fast::name_probe::settle_name_record(view, pc) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_settle_name_record = quench_engine_fn_settle_name_record;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_native_js_lane_helpers() -> *const () { crate::compiled::native_js_lane_helpers() }
@@ -228,7 +200,7 @@ fn quench_engine_fn_native_js_operation_entry_for(opcode: usize) -> Option<Nativ
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_native_js_operation_entry_for = quench_engine_fn_native_js_operation_entry_for;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_declare_regions(function: &mut ir::Function) -> () { crate::compiled::regions::declare_regions(function) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_declare_regions = quench_engine_fn_declare_regions;
+const _: quench_runtime::vm::jit_backend::signatures::quench_engine_fn_declare_regions = quench_engine_fn_declare_regions;
 
 #[unsafe(no_mangle)]
 fn quench_engine_vm_nested_lane_run(this: &mut Vm, innermost: [Value; 2], run: &mut dyn FnMut(&mut Vm)) {
@@ -241,6 +213,11 @@ fn quench_engine_vm_restore_native_snapshot(this: &mut Vm, bytes: quench_runtime
     <Vm as crate::engine_prelude::NativeProgramVm>::restore_native_snapshot(this, bytes, native, read_host)
 }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_restore_native_snapshot = quench_engine_vm_restore_native_snapshot;
+#[unsafe(no_mangle)]
+fn quench_engine_vm_install_native_main(this: &mut Vm, native: &NativeJsProgram) -> Result<(), JsError> {
+    <Vm as crate::engine_prelude::NativeProgramVm>::install_native_main(this, native)
+}
+const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_install_native_main = quench_engine_vm_install_native_main;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_define_lane_helper_symbols() { crate::compiled::define_lane_helper_symbols() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_define_lane_helper_symbols = quench_engine_fn_define_lane_helper_symbols;

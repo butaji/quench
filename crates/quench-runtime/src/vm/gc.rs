@@ -9,6 +9,31 @@ use std::sync::atomic::{AtomicU64, Ordering};
 // table is dead, amortizing the rebuild and cache invalidation across GCs.
 const SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR: usize = 2;
 
+/// Which realm roots a collection takes. `Full` roots the whole realm, as every collection of a
+/// running program does. `Closed` roots a realm value only where the closed world reaches it (the
+/// values of `seen`, `Vm::close`), so a dump frees the realm the program cannot reach.
+#[derive(Clone, Copy)]
+enum Roots<'a> {
+    Full,
+    Closed(&'a rustc_hash::FxHashSet<Value>),
+}
+
+/// Retains the entries of realm tables whose values the collection kept (`live`), so no entry
+/// names a freed record. Each argument is a table with `retain` in the `FxHashMap` shape.
+macro_rules! retain_live_values {
+    ($live:ident; $($table:expr),* $(,)?) => {
+        $( $table.retain(|key, value| $live(*key) && $live(*value)); )*
+    };
+}
+
+/// Nulls the realm fields of a closed collection whose values were freed (`Value::UNDEFINED`
+/// reads as no object, and the closed world never reaches one of them).
+macro_rules! null_dead_values {
+    ($live:ident; $($field:expr),* $(,)?) => {
+        $( if !$live($field) { $field = Value::UNDEFINED; } )*
+    };
+}
+
 /// The closure reads of the VM's programs, which a full collection traces closure
 /// environments through (`heap::EnvironmentTrace`).
 struct ProgramClosureReads<'a> {
@@ -337,12 +362,35 @@ impl Vm {
         self.collect_due(program);
     }
 
+    /// The general dispatch's service after an op that may allocate (`frame_arm::GeneralArm`): where
+    /// the op continued and a collection is due, the frame's PC is published as the next instruction
+    /// and the debt is serviced: every live value is a frame root then. Allocation itself never collects;
+    /// only this, the job boundaries and a byte-debt poll do. An op that cannot allocate never comes here.
+    #[inline(always)]
+    pub(crate) fn serviced(&mut self, frame: usize, pc: usize, program: &ResidualProgram, result: Result<StepResult, JsError>) -> Result<StepResult, JsError> {
+        if matches!(result, Ok(StepResult::Continue)) && self.heap.should_collect() {
+            self.frames[frame].pc = pc;
+            self.frames[frame].pc_is_resume = false;
+            self.collect_due(program);
+        }
+        result
+    }
+
+    /// The poll form (frame entry, tail call, back edges): collects only byte debt
+    /// (`Heap::byte_due`). Cell debt is serviced after the next op that may allocate (`serviced`).
+    #[inline(always)]
+    pub(crate) fn poll_byte_debt(&mut self, program: &ResidualProgram) {
+        if self.heap.byte_due() {
+            self.collect_due(program);
+        }
+    }
+
     /// An allocation threshold passed: a collection, full when pacing says so.
     #[cold]
     #[inline(never)]
     fn collect_due(&mut self, program: &ResidualProgram) {
         let full = self.heap.should_full_collect();
-        self.collect_inner(program, full);
+        self.collect_inner(program, full, Roots::Full, None);
     }
 
     #[cold]
@@ -420,12 +468,68 @@ impl Vm {
         self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
     }
 
+    #[quench_macros::test_visible]
     pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
-        self.collect_inner(program, full);
+        self.collect_inner(program, full, Roots::Full, None);
     }
 
-    /// A stop-the-world collection, full or minor.
-    fn collect_inner(&mut self, _program: &ResidualProgram, full: bool) {
+    /// A full collection of a closed world's dump (C5 D3): the realm keeps only what the closure
+    /// reaches (`close`), and the realm values it frees leave their fields and tables
+    /// (`prune_closed_realm`). The program's own state stays rooted whatever the closure says,
+    /// and so does the input chain the dump resumes (`resume`, C5 D1c).
+    pub fn collect_for_image(
+        &mut self,
+        program: &ResidualProgram,
+        programs: &[&ResidualProgram],
+        roots: super::reachable_realm::RealmRoots<'_>,
+        resume: Option<&super::activation::FrameRecord>,
+    ) -> Result<(), JsError> {
+        let globals = roots.globals;
+        let closure = self.close(program, programs, super::reachable_realm::RealmRoots { globals, natives: roots.natives })?;
+        // The global names the program reads, and the ones the runtime reads by name, stay bound.
+        let kept = globals
+            .iter()
+            .map(|name| &**name)
+            .chain(super::reachable_realm::RUNTIME_GLOBALS.iter().copied())
+            .chain(["String", "Number", "Boolean", "BigInt"])
+            .chain([crate::bytecode::ITERATOR_CLOSE_BINDING, crate::bytecode::WITH_ENTER_BINDING, crate::bytecode::WITH_EXIT_BINDING])
+            .filter_map(|name| self.lookup_atom(name))
+            .collect::<rustc_hash::FxHashSet<Atom>>();
+        self.unlink_unreached_globals(&closure, &kept);
+        let seen = closure.seen;
+        self.collect_inner(program, true, Roots::Closed(&seen), resume);
+        Ok(())
+    }
+
+    /// Deletes the global object's own string-keyed properties the closure does not read: no reached
+    /// read admits the key (`admitted`, `setter_admitted`) and the program or runtime does not name it
+    /// (`kept`). The program cannot observe such a deletion, and the values only those keys reached
+    /// become unreachable, so a closed collection frees them.
+    fn unlink_unreached_globals(&mut self, closure: &super::reachable_realm::Closure, kept: &rustc_hash::FxHashSet<Atom>) {
+        let globals = self.realm.globals;
+        let Some(shape) = self.heap.object(globals).map(|object| object.shape()) else {
+            return;
+        };
+        for key in self.shape_keys(shape) {
+            let PropertyKey::String(atom) = key else { continue };
+            if kept.contains(&atom) || self.admitted(closure, globals, key) || self.setter_admitted(closure, key) {
+                continue;
+            }
+            if self.property_attributes(globals, key).is_some_and(|attributes| !attributes.configurable) {
+                continue;
+            }
+            if let Some((_, slot)) = self.object_property_slot(globals, key) {
+                self.delete_shape_slot(globals, slot, key);
+            }
+        }
+    }
+
+    /// A stop-the-world collection, full or minor. `policy` decides which realm roots enter
+    /// (`Roots`); a minor collection only ever runs under `Roots::Full`.
+    fn collect_inner(&mut self, _program: &ProgramRecord, full: bool, policy: Roots<'_>, resume: Option<&super::activation::FrameRecord>) {
+        // A marked holder's fields moved, which made this collection due (`Heap::holder_fields_moved`): its held
+        // field entries end here, before any later op reads them.
+        self.drop_moved_holder_entries();
         // A deferred lane activation's registers are no roots; its frame is.
         self.materialize_deferred_lane();
         // The active for-in names words a collection may move or free.
@@ -505,22 +609,28 @@ impl Vm {
         // costs each root a step through every nesting level. They go into the previous
         // collection's mark stack, which holds as many already.
         let mut roots = self.heap.take_mark_stack();
-        // Under counts, a minor collection may free any old record nothing counted names. The
-        // edges the VM writes once (program constants, kept atom strings, startup roots, shape
-        // edges) are taken as a minor would take them, where they may name young records, and
-        // their records are pinned (`Heap::rc_pin`) so no epoch frees them; when counts
-        // restarted, which drops pins, every one is taken and pinned again.
-        let rc = self.heap.rc_active();
-        let repin = rc && self.rc_pin_epoch != self.heap.rc_pin_epoch();
-        let all_roots = full || repin;
-        let mut pins = Vec::new();
-        self.programs.extend_roots(if rc { &mut pins } else { &mut roots }, all_roots, self.heap.promotion_age());
+        self.programs.extend_roots(&mut roots, full, self.heap.promotion_age());
         self.heap.extend_folded_roots(&mut roots);
         roots.extend(self.wasm_js.roots());
         roots.extend(self.native_roots.live().iter().copied());
         roots.extend(self.typed_array_protos);
+        // The global object and the fields the program's own state uses are rooted in every collection.
+        roots.extend([self.realm.globals, self.reused_iterator_result, self.shared_entry_pair, self.spare_await_state]);
+        // The active realm's top-level lexical bindings, then every inactive realm's: the program's own state.
+        roots.extend(self.realm.global_lexical_bindings.values().copied());
+        roots.extend(
+            self.realm
+                .global_lexical_states
+                .iter()
+                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
+                .flat_map(|(global, state)| {
+                    std::iter::once(*global).chain(state.bindings.values().copied())
+                }),
+        );
+        // The realm roots from here to the end of the iterator prototypes enter a closed collection
+        // only where its closure reaches them (`Roots::Closed`).
+        let realm_start = roots.len();
         roots.extend([
-            self.realm.globals,
             self.object_proto,
             self.function_proto,
             self.promise_proto,
@@ -550,21 +660,7 @@ impl Vm {
             self.async_generator_proto,
             self.async_from_sync_iterator_proto,
             self.regexp_proto,
-            self.reused_iterator_result,
-            self.shared_entry_pair,
-            self.spare_await_state,
         ]);
-        // The active realm's top-level lexical bindings, then every inactive realm's.
-        roots.extend(self.realm.global_lexical_bindings.values().copied());
-        roots.extend(
-            self.realm
-                .global_lexical_states
-                .iter()
-                .chain(self.realm.parked.iter().map(|parked| (&parked.global, &parked.state)))
-                .flat_map(|(global, state)| {
-                    std::iter::once(*global).chain(state.bindings.values().copied())
-                }),
-        );
         roots.extend(
             self.realm
                 .intrinsics
@@ -746,9 +842,6 @@ impl Vm {
                 .flat_map(|(realm, prototype)| [*realm, *prototype]),
         );
         roots.extend(self.natives.roots());
-        roots.extend(Some(self.main_realm).filter(|realm| !realm.is_null()));
-        let kept_atoms = self.heap.kept_atom_roots(all_roots);
-        (if rc { &mut pins } else { &mut roots }).extend(kept_atoms);
         roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
             |(realm, prototypes)| {
                 [
@@ -760,6 +853,21 @@ impl Vm {
                 ]
             },
         ));
+        // The realm roots end here: the closed collection's filter applies to this segment only.
+        if let Roots::Closed(seen) = policy {
+            let mut kept = realm_start;
+            for index in realm_start..roots.len() {
+                let value = roots[index];
+                if value.heap_reference().is_none() || seen.contains(&value) {
+                    roots[kept] = value;
+                    kept += 1;
+                }
+            }
+            roots.truncate(kept);
+        }
+        roots.extend(Some(self.main_realm).filter(|realm| !realm.is_null()));
+        let kept_atoms = self.heap.kept_atom_roots(full);
+        roots.extend(kept_atoms);
         roots.extend(self.test262_agent.roots());
         roots.extend(self.shared_async_waiters.iter().map(|w|w.promise));
         self.host_frame_roots(&mut roots);
@@ -808,6 +916,10 @@ impl Vm {
         let lane_start = roots.len();
         self.lane_stack.extend_roots(&self.programs, &mut roots);
         self.lane_roots.iter().for_each(|parked| parked.extend_roots(&self.programs, &mut roots));
+        // The input chain an image dump resumes is a root of its own: the dump owns it, not the heap.
+        if let Some(chain) = resume {
+            chain.extend_roots(&mut roots);
+        }
         let heap = &self.heap;
         let mut kept = lane_start;
         for index in lane_start..roots.len() {
@@ -824,11 +936,10 @@ impl Vm {
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values());
         roots.extend(self.typeof_names);
-        // Old startup roots stay marked until a full collection, which takes them all. Under
-        // counts they are pinned when taken, as a minor collection may free old records too.
-        if all_roots || !self.startup_roots_old() {
+        // Old startup roots stay marked until a full collection, which takes them all.
+        if full || !self.startup_roots_old() {
             let startup = self.startup_intrinsic_roots();
-            if rc { pins.extend(startup) } else { roots.extend(startup) }
+            roots.extend(startup);
         }
         for frame in &self.frames {
             // A missing map means the function uses a register form the liveness pass cannot
@@ -891,39 +1002,6 @@ impl Vm {
             owned_root_filter: &owned_root_filter,
             _shape_borrow: std::marker::PhantomData,
         };
-        // A minor collection under counts (which re-marks the zero-count old records anything
-        // uncounted names, `Heap::rc_pre_mark`) takes every edge the VM holds outside the heap
-        // as a root; the edges of the shapes made since the last minor collection are pinned
-        // instead, being written once, but an owned dictionary's change in place, so they are
-        // roots every time.
-        if !full && rc {
-            let pinned = if repin { 0 } else { self.rc_pinned_shapes.min(shape_count) };
-            for shape in 0..pinned {
-                if shape_lookup::is_owned_dictionary(&self.shapes[shape]) {
-                    shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut roots);
-                }
-            }
-            for shape in pinned..shape_count {
-                shape_trace.append_shape_edges(GcTraceKind::Collection, shape as u32, false, &mut pins);
-            }
-            self.rc_pinned_shapes = shape_count;
-        }
-        if !full && rc {
-            roots.extend(owned_roots.values().flatten().copied());
-            if let Some(strings) = &self.dynamic_strings {
-                roots.extend(strings.values().copied());
-            }
-            roots.extend(self.holder_hints.holder.iter().flat_map(|hint| [hint.holder, hint.value]));
-            roots.extend(self.holder_hints.getter.iter().map(|hint| hint.holder));
-            roots.extend(self.holder_hints.own.iter().flat_map(|hint| [hint.holder, hint.value]));
-            roots.extend(self.private_homes.iter().flat_map(|(key, home)| [key.environment, *home]));
-            self.private_site_homes.for_each_value(|value| roots.push(value));
-        }
-        if rc {
-            self.heap.rc_pin(&pins);
-            self.rc_pin_epoch = self.heap.rc_pin_epoch();
-        }
-        roots.append(&mut pins);
         let parallel_trace =
             |trace_kind: GcTraceKind, owner: Value, shape: u32, prototype: bool, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, prototype, roots);
@@ -961,6 +1039,10 @@ impl Vm {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let after_collection_started = std::time::Instant::now();
         let mut live_shapes = shape_trace.live_shapes();
+        // The closed-world dump's realm pruning runs once the shape trace has been read (it borrows the VM's shape tables).
+        if let Roots::Closed(_) = policy {
+            self.prune_closed_realm();
+        }
         // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
         live_shapes.extend(self.startup_intrinsics.sealed_shapes());
         // Heap weak fields are pruned during collection. Prune the VM-owned
@@ -971,8 +1053,7 @@ impl Vm {
         // no cleanup allocation can yet reuse a dead function locator.
         unsafe { self.programs.retire_dead_native_calls(|callee| heap.is_live(callee)); }
         self.programs.prune_owned_script_realms(|realm| heap.weak_value(realm).is_some());
-        // Under reference counts a minor collection frees old closures too.
-        self.prune_function_values(full || self.heap.rc_active());
+        self.prune_function_values(full);
         self.prune_module_functions();
         self.prune_wasm_exported_functions();
         // A home stays reachable through its environment; entries of swept environments go
@@ -998,15 +1079,11 @@ impl Vm {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
             self.compact_live_shapes(live_shapes);
-            // Compaction renumbers the shapes: pins taken stay, but which shapes they cover is
-            // not known by index any more.
-            self.rc_pinned_shapes = 0;
         } else {
             self.retain_live_method_caches();
         }
         self.prune_first_chunks();
-        let heap = &self.heap;
-        self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        self.lane_stack.forget_dead_callees();
         // A lane run this collection interrupts continues under the new epoch: what its
         // stack resolved before names cells the sweep freed (`LaneStack::retire_after_collection`).
         let generation_key = (self.cache_epochs.gc, self.realm.globals);
@@ -1045,6 +1122,66 @@ impl Vm {
         }
     }
 
+    /// After a closed collection's sweep (`Roots::Closed`): the realm fields the sweep freed read as
+    /// none, and the intrinsics tables and the native table drop or clear each freed entry, so no
+    /// edge names a freed record. The fields and tables are listed once, here.
+    fn prune_closed_realm(&mut self) {
+        let heap = &self.heap;
+        let live = |value: Value| value.heap_reference().is_none() || heap.is_live(value);
+        null_dead_values!(live;
+            self.object_proto, self.function_proto, self.promise_proto, self.promise_constructor, self.array_proto,
+            self.array_buffer_proto, self.shared_array_buffer_proto, self.array_iterator_proto, self.typed_array_proto,
+            self.data_view_proto, self.map_proto, self.set_proto, self.shadow_realm_proto, self.map_iterator_proto,
+            self.set_iterator_proto, self.weak_map_proto, self.weak_set_proto, self.weak_ref_proto,
+            self.finalization_registry_proto, self.iterator_proto, self.string_iterator_proto,
+            self.regexp_string_iterator_proto, self.generator_proto, self.iterator_helper_proto,
+            self.wrap_for_valid_iterator_proto, self.async_iterator_proto, self.async_generator_proto,
+            self.async_from_sync_iterator_proto, self.regexp_proto,
+        );
+        // Tables keyed by realm whose entries hold one value.
+        retain_live_values!(live;
+            self.realm.intrinsics.intl_number_format_constructors, self.realm.intrinsics.intl_number_format_prototypes,
+            self.realm.intrinsics.intl_number_format_fallback_symbols, self.realm.intrinsics.intl_collator_constructors,
+            self.realm.intrinsics.intl_collator_prototypes, self.realm.intrinsics.intl_plural_rules_prototypes,
+            self.realm.intrinsics.intl_datetime_format_constructors, self.realm.intrinsics.intl_datetime_format_prototypes,
+            self.realm.intrinsics.intl_datetime_format_fallback_symbols, self.realm.intrinsics.intl_display_names_constructors,
+            self.realm.intrinsics.intl_display_names_prototypes, self.realm.intrinsics.intl_duration_format_constructors,
+            self.realm.intrinsics.intl_duration_format_prototypes, self.realm.intrinsics.intl_list_format_constructors,
+            self.realm.intrinsics.intl_list_format_prototypes, self.realm.intrinsics.intl_relative_time_format_prototypes,
+            self.realm.intrinsics.intl_segmenter_prototypes, self.realm.intrinsics.intl_segment_iterator_prototypes,
+            self.realm.intrinsics.intl_segments_prototypes, self.realm.intrinsics.intl_locale_prototypes,
+        );
+        self.realm.intrinsics.promise_constructors.retain(|realm, constructor| live(*realm) && live(*constructor));
+        // Tables keyed by (realm, native).
+        self.realm.intrinsics.builtin_prototypes.retain(|(realm, _), prototype| live(*realm) && live(*prototype));
+        self.realm.intrinsics.function_constructors.retain(|(realm, _), constructor| live(*realm) && live(*constructor));
+        // Tables whose entries hold several values: an entry is kept only when all of them are live.
+        self.realm.intrinsics.error_intrinsics.retain(|realm, intrinsics| {
+            live(*realm)
+                && live(intrinsics.constructor)
+                && live(intrinsics.stack_getter)
+                && live(intrinsics.stack_setter)
+                && live(intrinsics.call_site_constructor)
+                && live(intrinsics.call_site_prototype)
+                && intrinsics.host_formatter.map_or(true, |formatter| live(formatter))
+        });
+        self.realm.intrinsics.regexp_intrinsics.retain(|realm, intrinsics| {
+            if let Some(exec) = intrinsics.builtin_exec.get() {
+                if !live(exec) {
+                    intrinsics.builtin_exec.set(None);
+                }
+            }
+            live(*realm)
+                && live(intrinsics.constructor)
+                && live(intrinsics.prototype)
+                && intrinsics.result_template.map_or(true, |template| live(template.anchor))
+        });
+        self.realm.intrinsics.iterator_prototypes.retain(|realm, prototypes| {
+            live(*realm) && live(prototypes.helper) && live(prototypes.wrapper) && live(prototypes.generator) && live(prototypes.async_generator)
+        });
+        self.natives.forget_dead(&live);
+    }
+
     /// A home stays reachable through its environment; entries of swept environments go
     /// before their slots can name new cells.
     fn prune_dead_private_homes(&mut self) {
@@ -1057,8 +1194,8 @@ impl Vm {
     /// watches of prototype hints whose holder died.
     fn forget_dead_parked_lanes_and_hints(&mut self) {
         let heap = &self.heap;
-        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
-        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees(|value| heap.is_live(value)));
+        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees());
+        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees());
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));
     }
 
@@ -1380,13 +1517,13 @@ mod tests {
         let length_reconfigured = append_compacted_shape(&mut shapes, &mut transitions, reconfigured,
             ShapeTransition::FunctionLengthReconfigured, 0);
         let created = append_compacted_shape(&mut shapes, &mut transitions, length_reconfigured,
-            ShapeTransition::Constructed { constructor: Value::heap(17), new_target_is_base: false }, 0);
+            ShapeTransition::Constructed { constructor: Value::heap(17), class: 17, new_target_is_base: false }, 0);
         let with_field = append_compacted_shape(&mut shapes, &mut transitions, created,
             ShapeTransition::Add { key: PropertyKey::string(9), slot: 0, attributes: DEFAULT_DATA_ATTRIBUTES }, 1);
         let mut rebuilt = vec![Shape::root()];
         let shape = rebuild_shape(&shapes, &[], with_field, &mut rebuilt,
             &mut Vec::new(), &mut crate::vm::shape_transitions::ShapeTransitionIndex::default());
-        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), false)), true));
+        assert_eq!(provenance::shape_names(&rebuilt, shape), (Some(7), Some((Value::heap(17), 17, false)), true));
         assert!(provenance::shape_function_length_reconfigured(&rebuilt, shape));
         assert_eq!(rebuilt[shape as usize].storage_len(), 1);
         assert_eq!(super::active_shape_attributes(&rebuilt, shape).len(), 1);

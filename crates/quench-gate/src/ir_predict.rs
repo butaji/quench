@@ -22,10 +22,10 @@ const TEST: &str = "ir_predict";
 const REPORT: &str = "ir-predict.txt";
 /// An ir-budget report whose tier table supplies measured default-mode counts.
 const MEASURED: &str = "QUENCH_IR_PREDICT_MEASURED";
-/// The tier table's header in an ir-budget report: `op no-jit b-jit default C d/C breaks`.
-const TIER_HEADER: [&str; 4] = ["op", "no-jit", "b-jit", "default"];
+/// The tier table's header in an ir-budget report: `op no-jit default aot C d/C breaks`.
+const TIER_HEADER: [&str; 4] = ["op", "no-jit", "default", "aot"];
 /// The tier table's default-mode column.
-const DEFAULT_COLUMN: usize = 3;
+const DEFAULT_COLUMN: usize = 2;
 
 /// The fewest pairs a correlation is stated over: two points always lie on a line.
 const FEWEST_PAIRS: usize = 3;
@@ -136,7 +136,7 @@ mod tests {
     fn predictions_join_their_twins_and_measurements() {
         let rows = c_bound::parse_rows("NumberOperation::Arithmetic int_add\nNumberOperation::BitwiseNot - none\nNumberOperation::Math math_sqrt\n");
         let c: BTreeMap<String, f64> = [("int_add".to_owned(), 4.0)].into_iter().collect();
-        let measured = tier_defaults("x\nop   no-jit  b-jit  default  C  d/C  breaks\nint_add  1.7  1.7  5.0  4.0  0.4x\n\nint_add 9 9 9\n");
+        let measured = tier_defaults("x\nop   no-jit  default  aot  C  d/C  breaks\nint_add  1.7  5.0  4.0  4.0  0.4x\n\nint_add 9 9 9\n");
         assert_eq!(measured.get("int_add"), Some(&5.0));
         let joined = join(&rows, PREDICTIONS, &c, &measured);
         assert_eq!(joined.len(), 2);

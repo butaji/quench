@@ -2,8 +2,8 @@
 //! as JSONP responses and generated data files are. Their literal's syntax tree takes
 //! several times the text's size (the 7.3 MB SeaMonster inspector payload builds a tree of
 //! about 80 MB), so OXC parses the script with the literal replaced by an empty one of the
-//! same kind and length, and the code generator builds the value from the JSON text in the
-//! program's source (`LiteralStep::Json`), as JSC's `LiteralParser` takes JSONP scripts.
+//! same kind and length, and the code generator builds the value from the JSON text it keeps as a
+//! string constant (`LiteralStep::Json`), as JSC's `LiteralParser` takes JSONP scripts.
 //! The JSON grammar is a subset of the literal grammar with the same values, but for a
 //! `__proto__` key, which a literal takes as its prototype (`json_literal_length`).
 

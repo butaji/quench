@@ -32,11 +32,6 @@ pub fn invalidation_is_set(invalidation: &crate::code_dependencies::Invalidation
     invalidation.is_set()
 }
 
-/// `Priors::repaying_length`: the fewest straight-line bytecodes whose interpretation repays an entry.
-pub fn repaying_length(priors: &crate::vm::tier_policy::Priors, share: u64) -> usize {
-    priors.repaying_length(share)
-}
-
 /// `ResidualProgram::with_record`: `read` on the function record at `index`.
 pub fn with_record<R>(program: &ResidualProgram, index: usize, read: impl FnOnce(&crate::bytecode::Function) -> R) -> R {
     program.with_record(index, read)

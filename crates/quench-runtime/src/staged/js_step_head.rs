@@ -16,16 +16,13 @@ pub struct JsStepHead<V> {
     /// The activation's local slots and their count (`native_locals`, `local_count`).
     pub native_locals: *mut V,
     pub local_count: usize,
-    /// The heap facts generated field reads use (`emit_js_own_field_get`): the object
-    /// record reservation, the property value arena and its length, and the field cache
-    /// entries of `program_id`'s sites; zero where absent. A callout may grow or compact any
-    /// of them, so each is read again after one (`refresh_heap_bases`).
-    pub object_record_base: usize,
+    /// The class space's base (`Heap::class_space_base`): a direct object's cell is at this plus its
+    /// granule times 8, and its header's high half is the record id (R4-B2b). Zero where absent; refreshed
+    /// with the other record bases.
+    pub class_base: usize,
     /// The function record reservation, whose records' own fields reads take
     /// (`ObjectHeader::prove_readable`); zero where absent.
     pub function_record_base: usize,
-    pub object_mark_blocks: usize,
-    pub object_mark_block_count: usize,
     /// Canonical allocator header in this entry's live VM. Its address is fixed
     /// through callouts; growth/compaction update its base/length in place.
     pub property_buffer: usize,
@@ -49,7 +46,7 @@ pub struct JsStepHead<V> {
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
     pub returned_pc: usize,
     /// A lane run's lane stack, where a direct call places its callee's registers and its
-    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
+    /// native frame (`DirectBody`): the words that hold the values' and the activations'
     /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
     /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
     pub lane_values_top: usize,
@@ -72,14 +69,13 @@ pub struct JsStepHead<V> {
     /// The word of the storage the running lane body's environment-owned locals live in, which its
     /// environment rows read through (`staged::environment::environment_slot`).
     pub environment_storage: u64,
-    /// The empty allocations' inputs (`heap_rows::empty_row`, `lane_region::frame_calls`): the object space's
-    /// record cursor and the empty object's captured template (layout, payload and the prototype it was
-    /// captured under), then the same for the array space and the zero-length array. A template word of zero
-    /// means none is captured, and a cursor of zero that the space has none; either sends the allocation to
-    /// its helper.
-    pub object_cursor: usize,
-    pub empty_object_layout: u64,
-    pub empty_object_payload: u64,
+    /// The empty allocations' inputs (`heap_rows::empty_row`, `lane_region::frame_calls`): the region 1 class cell
+    /// cursor (`Heap::native_cell_cursor(1)`), which an empty object's class cell is claimed from, and the empty
+    /// object's captured class (its header word, which names its shape and prototype link) with the prototype it was
+    /// captured under; then the same for the array space and the zero-length array. A class or template word of zero
+    /// means none is captured, and a cursor of zero that the space has none; either sends the allocation to its helper.
+    pub empty_object_cursor: usize,
+    pub empty_object_class: u64,
     pub empty_object_proto: u64,
     pub array_cursor: usize,
     pub empty_array_layout: u64,
@@ -110,7 +106,7 @@ pub struct JsStepHead<V> {
     /// the table's top word. (reconciled with u-jit F5 on merge)
     pub body_table: usize,
     pub body_top: usize,
-    /// The DirectCallee descriptor of each native frame, indexed as `body_table` (the u-jit half of F5).
+    /// The DirectBody descriptor of each native frame, indexed as `body_table` (the u-jit half of F5).
     pub native_table: usize,
     /// The return of an emitted call whose native header Rust observed, spilled into a record or linked
     /// (`LaneStack::pop_observed_header`): `extern "C" fn(vm, residual) -> u64`, which the b-jit direct
@@ -121,6 +117,14 @@ pub struct JsStepHead<V> {
     /// refreshed with the other bases, as a callout may move the block list.
     pub array_mark_blocks: usize,
     pub array_mark_block_count: usize,
+    /// The class cells' mark blocks and counts, as (blocks, count) pairs of two words by cell region: entry `r`
+    /// is at byte `16 * r`, region 0 (the stubs, which keep no class mark) is zero. A store of a reference into a
+    /// class cell reads its region's entry (`staged::barrier::class_unmarked`); refreshed with the other bases.
+    pub class_mark_lists: [usize; 12],
+    /// The class space's spill arena base (`heap::spill`): the address of its first word, which a spilled class field's
+    /// run offset is added to (`staged::entry::class`). Refreshed with the other record bases; a move of the arena
+    /// changes `native_layout_epoch`, so a reader takes it again.
+    pub spill_base: usize,
     /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
     /// refreshed with the other record bases, and the address of the process's buffer-relocation count
     /// (`buffer_relocations_address`): what a typed array's view proof reads

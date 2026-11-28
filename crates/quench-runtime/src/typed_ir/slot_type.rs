@@ -1,5 +1,5 @@
 //! Compact types of slot contents, joined by every store before it lands (`ValueArena::owner_types`).
-use super::{Representation, Type, TypeKind};
+use super::{Type, TypeKind};
 use crate::{Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +44,7 @@ impl SlotType {
     pub fn from_type(ty: Type) -> Self {
         let ty = ty.without_object_shape().machine();
         match ty.0 {
-            TypeKind::Int(_) => Self::Int32,
+            TypeKind::Int(range) => if range.fits_int32() { Self::Int32 } else { Self::Number },
             TypeKind::DirectObjectFamily => Self::DirectObject,
             TypeKind::NullableDirectObjectFamily(bits) => {
                 if bits == Type::language(ValueType::Null).kinds() { Self::DirectObjectOrNull }
@@ -56,7 +56,7 @@ impl SlotType {
             _ if ty == Type::language(ValueType::Null) => Self::Null,
             _ if ty == Type::language(ValueType::Undefined) => Self::Undefined,
             _ if ty == Type::NULLISH => Self::Nullish,
-            _ if ty == Type::language(ValueType::String) => Self::String,
+            _ if ty.string_fact().is_some() => Self::String,
             _ if ty == Type::language(ValueType::Boolean) => Self::Boolean,
             _ => Self::Tagged,
         }
@@ -118,17 +118,6 @@ impl SlotType {
                 (_, 0) => Self::Number,
                 _ => Self::Tagged,
             },
-        }
-    }
-
-    /// How an arena word holds a value of this type: an int32 as the tagged word, a Number as the
-    /// IEEE double (`encode_slot`), anything else as the `Value`. A projection, not a stored fact.
-    #[inline(always)]
-    pub(crate) const fn rep(self) -> Representation {
-        match self {
-            Self::Int32 => Representation::Int32,
-            Self::Number => Representation::Float64,
-            _ => Representation::Tagged,
         }
     }
 

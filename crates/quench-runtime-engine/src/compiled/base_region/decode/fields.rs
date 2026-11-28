@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The byte offset of the field cache entry of `site` in the program's table.
 fn entry_offset(site: u16) -> u64 {
@@ -21,6 +22,19 @@ fn folded_read(known: Known, site: u16) -> Option<(Folded, u64)> {
     let inherited = load.inherited?;
     let ([(link, value)], Some(chain)) = (inherited.values(), inherited.chains().next()) else { return None };
     (!load.function_shape).then_some((Folded { shape: load.shape, link: *link, holder: load.holder?, depth: chain.depth }, value.to_bits()))
+}
+
+/// The inline-cache operands of one own flat entry (`Decoded::ic`): the shape-keyed `ic_hole`, or a class-keyed entry's
+/// key (`class | CLASS_KEY`) and field index, with the holder cell's granule where the read is held (`IcHeldClass`).
+fn ic_entry(load: crate::compiled::object_slots::NativeFieldLoad) -> IcEntry {
+    match load.class {
+        // fixed classes: lane_region/fixed_cells.rs (a fixed receiver takes its union slot, not this row)
+        Some(class) => IcEntry::Class {
+            key_slot: u64::from(quench_runtime::staged::field_cache_layout::CLASS_KEY | class) | u64::from(load.slot) << u32::BITS,
+            holder: load.holder.and(load.holder_cell),
+        },
+        None => IcEntry::Shape(ic_hole(load)),
+    }
 }
 
 /// The row of a named field read of a register (or of the receiver, `this`, which the payload
@@ -64,7 +78,7 @@ fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Op
             Decoded {
                 hole,
                 slot: second.is_none().then(|| own_slot_type(known, first)).flatten(),
-                ic: load.map(ic_hole),
+                ic: load.map(ic_entry),
                 typed: load.and_then(typed_slot),
                 ..row
             }
@@ -119,9 +133,9 @@ pub(crate) fn field_store_row(known: Known, instruction: WideInstruction) -> Opt
     let value = Some(Source::Register(instruction.register_a()));
     let site = instruction.cache_site_index();
     // A store of a Number into a slot that holds Numbers tries its inline-cache row first (`Decoded::ic`).
-    // A raw-double slot takes no tagged write: neither row writes its binary64 word, so it stores through the gate.
-    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| !load.raw_double && stores_number(load.ty)).map(ic_hole)).flatten();
-    let slot = own_slot_load(known, site).filter(|load| !load.raw_double);
+    // A class-keyed store takes no row yet: its slot's type is not the class cell's (`stores_number`).
+    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| load.class.is_none() && stores_number(load.ty)).map(ic_entry)).flatten();
+    let slot = own_slot_load(known, site);
     Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: slot.map(|load| load.ty), slot_shape: slot.map(|load| load.shape), ic, ..Decoded::heap(heap, None, value, None) })
 }
 
@@ -134,24 +148,24 @@ fn stores_number(ty: quench_runtime::typed_ir::Type) -> bool {
         && (quench_runtime::typed_ir::Type::NUMBER.is_subtype(ty) || ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER))
 }
 
-/// The one own load cache `site` proves: what an
-/// inline-cache row (`Heap::IcGet`, `Heap::IcSet`) patches into its code.
+/// The one own load cache `site` proves: what an inline-cache row (`Heap::IcGet`, `Heap::IcSet`, or a class row
+/// `Heap::IcGetClass` and `Heap::IcHeldClass`, whose receiver is the live class cell) patches into its code.
 fn own_flat_load(known: Known, site: u16) -> Option<crate::compiled::object_slots::NativeFieldLoad> {
     let loads = known.reads?(site);
     let [load] = loads[..] else { return None };
-    // The row reads and writes either storage form, as the record's inline flag says.
-    (load.holder.is_none() && load.valid() && load.inherited.is_none() && !load.function_shape).then_some(load)
+    // The row reads and writes either storage form, as the record's inline flag says. A class-keyed held read
+    // names its holder by granule (`IcEntry::Class`), so its holder shape is no guard.
+    ((load.holder.is_none() || load.class.is_some()) && load.valid() && load.inherited.is_none() && !load.function_shape).then_some(load)
 }
 
 /// The dependency that proves the one own flat entry's slot holds one type a read may keep: a Number type
 /// (`NativeFieldLoad::ty` a subtype of Number), whose words are tagged so each is an int word or a double
 /// whatever the receiver's storage form, or exactly `DIRECT_OBJECT_FAMILY`, whose words are direct object
-/// words (`SlotDependency::ty` names which, so the consumer branches on it). A raw-double slot (`raw_double`)
-/// is left to the tested read: its words are binary64 bits, which a non-canonical NaN may leave outside the
-/// double tag range.
+/// words (`SlotDependency::ty` names which, so the consumer branches on it).
 fn typed_slot(load: crate::compiled::object_slots::NativeFieldLoad) -> Option<quench_runtime::code_dependencies::SlotDependency> {
-    let kept = load.ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) || load.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY;
-    (!load.raw_double && kept).then(|| load.slot_dependency()).flatten()
+    // A class-keyed slot is a live class cell's field, which the shape's slot type does not record: no dependency of the shape.
+    let kept = load.class.is_none() && (load.ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER) || load.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY);
+    kept.then(|| load.slot_dependency()).flatten()
 }
 
 /// An inline-cache row's entry operands in one word: the exact shape below 32 bits, the slot's byte
@@ -168,7 +182,7 @@ fn own_slot_type(known: Known, site: u16) -> Option<quench_runtime::typed_ir::Ty
 /// The one own load cache `site` proves, whose shape and slot type a store's admission stands on.
 fn own_slot_load(known: Known, site: u16) -> Option<crate::compiled::object_slots::NativeFieldLoad> {
     let [load] = known.reads?(site)[..] else { return None };
-    (load.holder.is_none() && load.valid()).then_some(load)
+    (load.holder.is_none() && load.valid() && load.class.is_none()).then_some(load)
 }
 
 /// Whether `instruction` is a field store a row makes (`field_store_row`).

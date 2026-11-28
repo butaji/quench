@@ -1,9 +1,11 @@
 //! Admission on value identities (JL10, `admit_lifetime_roles`): the fallback that splits each
 //! register into its webs where the register analysis rejects a loop for a reused register.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The webs and analysis identities of a loop, and the instructions it is admitted on.
 struct Renaming {

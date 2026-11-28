@@ -4,6 +4,16 @@
 use crate::ext_traits::*;
 use super::*;
 
+#[quench_macros::ext(ClosureOperandsOps1)]
+impl ClosureOperands {
+    /// The closure environment and captures pointer its activation's window holds
+    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CalleeRecord::env`, `capture`).
+    #[inline(always)]
+    pub(crate) fn context_words(&self) -> (u64, u64) {
+        (self.env.to_bits(), self.capture.expose_provenance() as u64)
+    }
+}
+
 #[quench_macros::ext(DispatchFastClosureTargetsVm)]
 impl Vm {
     /// Whether plain calls of `body` (`plan`) may settle in the caller's lane: of the running
@@ -26,9 +36,9 @@ impl Vm {
         (!takes_with_chain).then_some(target)
     }
 
-    /// `known`, a function's target, for its closure `callee` of `env`: only the closure's facts read.
+    /// `known`, a function's body target, for its closure `callee` of `env`: only the closure's operands read.
     pub(crate) fn closure_target(&mut self, code: &ResidualProgram, program: ProgramId, callee: Value, env: Value,
-        known: ScriptCallTarget) -> Option<ScriptCallTarget> {
+        known: FunctionTarget) -> Option<ScriptCallTarget> {
         let capture = if known.view.is_null() { std::ptr::null() } else { self.target_capture(code, program, env) };
         // An arrow's `this` is its own closure's environment's, like `capture`.
         let (this_binding, lexical_this) = match known.this_binding {
@@ -37,10 +47,14 @@ impl Vm {
                 Some(this) => (ThisBinding::Lexical, this),
                 None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
             },
-            // A sloppy function's plain `this`, the global object, is its function's.
-            binding => (binding, known.lexical_this),
+            // A sloppy function's plain `this` is the realm's global object, which the generation names.
+            ThisBinding::Sloppy => (ThisBinding::Sloppy, self.realm.globals),
+            ThisBinding::Strict => (ThisBinding::Strict, Value::UNDEFINED),
         };
-        Some(ScriptCallTarget { callee, env, capture, this_binding, lexical_this, ..known })
+        Some(ScriptCallTarget {
+            body: FunctionTarget { this_binding, ..known },
+            closure: ClosureOperands { callee, env, lexical_this, capture },
+        })
     }
 
     /// `callee`'s entry, made from the one `linked` names where that holds another closure of
@@ -51,11 +65,11 @@ impl Vm {
     #[inline(never)]
     pub(crate) fn relink_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let entry = *self.lane_stack.script_targets.entries.get(linked)?;
-        if !entry.admission.admits(self.lane_stack.admission) {
+        if !entry.body.admission.admits(self.lane_stack.admission) {
             return None;
         }
         let (program, function, env) = self.same_realm_user_target(callee)?;
-        if program != entry.program() || function != entry.function {
+        if program != entry.body.program() || function != entry.body.function {
             return None;
         }
         if let Some(target) = self.sibling_closure_target(&entry, callee, env) {
@@ -80,19 +94,19 @@ impl Vm {
     pub(crate) fn relink_known_closure(&mut self, callee: Value, linked: usize) -> Option<usize> {
         let (function, env) = callee.as_known_closure()?;
         let entry = self.lane_stack.script_targets.entries.get(linked)?;
-        if !entry.admission.admits(self.lane_stack.admission)
-            || entry.function != function
-            || !entry.this_binding.binds_receiver()
+        if !entry.body.admission.admits(self.lane_stack.admission)
+            || entry.body.function != function
+            || !entry.body.this_binding.binds_receiver()
         {
             return None;
         }
-        let capture = if entry.view.is_null() {
-            entry.capture
+        let capture = if entry.body.view.is_null() {
+            entry.closure.capture
         } else {
-            if entry.capture.is_null() {
+            if entry.closure.capture.is_null() {
                 return None;
             }
-            let stores = entry.capture.addr() & CAPTURE_STORES;
+            let stores = entry.closure.capture.addr() & CAPTURE_STORES;
             let Some(quench_runtime::tier_surface::EnvironmentRecord { slots, .. }) = self.heap_reads().environment(env) else {
                 return None;
             };
@@ -103,9 +117,9 @@ impl Vm {
             storage.map_addr(|address| address | stores)
         };
         let entry = &mut self.lane_stack.script_targets.entries[linked];
-        entry.callee = callee;
-        entry.env = env;
-        entry.capture = capture;
+        entry.closure.callee = callee;
+        entry.closure.env = env;
+        entry.closure.capture = capture;
         Some(linked)
     }
 
@@ -118,15 +132,15 @@ impl Vm {
         // A sibling over the entry's own environment, as closures made over their maker's
         // parent are (`Vm::maker_free_environment`), shares every fact the entry read of it:
         // its captures and an arrow's lexical `this`.
-        if env == entry.env {
-            return Some(ScriptCallTarget { callee, ..*entry });
+        if env == entry.closure.env {
+            return Some(ScriptCallTarget { closure: ClosureOperands { callee, ..entry.closure }, ..*entry });
         }
         let mut target = self.sibling_capture_target(entry, callee, env)?;
         // An arrow's `this` is its own environment's: read for the new one, as
         // `closure_target` does, with every other fact kept.
         // An arrow that reads none of its maker's implicit bindings keeps the entry's.
-        if entry.forms & TARGET_READS_IMPLICIT != 0 {
-            (target.this_binding, target.lexical_this) = match self.captured_lexical_this(env) {
+        if entry.body.forms & TARGET_READS_IMPLICIT != 0 {
+            (target.body.this_binding, target.closure.lexical_this) = match self.captured_lexical_this(env) {
                 Some(this) if this.is_deleted() => return None,
                 Some(this) => (ThisBinding::Lexical, this),
                 None => (ThisBinding::CallerReceiver, Value::UNDEFINED),
@@ -141,13 +155,13 @@ impl Vm {
         // A closure of the same function over the same environment, as an immediately
         // invoked function expression makes at each run of its enclosing body: every fact
         // of the entry holds for it but its identity.
-        if entry.view.is_null() || env == entry.env {
-            return Some(ScriptCallTarget { callee, env, ..*entry });
+        if entry.body.view.is_null() || env == entry.closure.env {
+            return Some(ScriptCallTarget { closure: ClosureOperands { callee, env, ..entry.closure }, ..*entry });
         }
-        if entry.capture.is_null() {
+        if entry.closure.capture.is_null() {
             return None;
         }
-        let Some(quench_runtime::tier_surface::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap_reads().reachable_environment(entry.env) else {
+        let Some(quench_runtime::tier_surface::EnvironmentRecord { function: old, scope: old_scope, .. }) = self.heap_reads().reachable_environment(entry.closure.env) else {
             return None;
         };
         let (old, old_program) = (*old, old_scope.program());
@@ -158,11 +172,11 @@ impl Vm {
             return None;
         }
         let storage = slots.dense_storage()?;
-        let stores = entry.capture.addr() & CAPTURE_STORES;
+        let stores = entry.closure.capture.addr() & CAPTURE_STORES;
         if stores != 0 {
             self.write_barrier(env);
         }
-        Some(ScriptCallTarget { callee, env, capture: storage.map_addr(|address| address | stores), ..*entry })
+        Some(ScriptCallTarget { closure: ClosureOperands { callee, env, capture: storage.map_addr(|address| address | stores), ..entry.closure }, ..*entry })
     }
 }
 
@@ -171,19 +185,18 @@ impl Vm {
 /// constructor its first resolution's, and any other the activation or leaf its shape allows.
 pub(crate) fn target_entry(body: &quench_runtime::bytecode::Function, plan: &quench_runtime::bytecode::CallPlan, shape: &TargetBody, (settles, environment, cross): (bool, bool, bool)) -> CallEntry {
     if settles {
-        CallEntry::Settles
+        CallEntry::framed(Framed::Settles)
     } else if body.is_class_constructor {
         shape.entry
     } else if environment {
-        CallEntry::Environment
-    } else if body.rest {
-        CallEntry::Gathers
-    } else if plan.keeps_arguments {
-        CallEntry::Keeps
+        CallEntry::framed(Framed::Environment)
+    } else if let Some(form) = quench_runtime::compile::body_forms::forwarding_form(body, plan) {
+        // A rest body gathers (`Gathers`), a keeping plan keeps its arguments (`Keeps`): `forwards()`.
+        CallEntry::framed(form)
     } else if cross {
-        // A leaf runs as one across programs too (`cross_leaf_call_in_lane`); no other
-        // body form's answer reads another program's caches.
-        shape.leaf.map_or(CallEntry::Activates, CallEntry::leaf)
+        // A leaf of another program is a leaf too; no other body form's answer reads another
+        // program's caches.
+        shape.leaf.map_or(CallEntry::framed(Framed::Activates), CallEntry::leaf)
     } else {
         // Leaf-ness is the view's, fixed with its returns (`TargetBody::leaf`).
         shape.leaf.map_or(shape.entry, CallEntry::leaf)

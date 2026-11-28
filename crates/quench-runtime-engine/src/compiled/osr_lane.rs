@@ -51,7 +51,7 @@ pub(crate) unsafe fn bind_captures(
 ) {
     // Every region binds a view, even one whose own instructions name no capture: its window's captures word is
     // otherwise whatever the activation's push left there (an interpreter push writes none), and a base region's
-    // rows may read it all the same (richards under `--b-jit` read capture 34 through a deleted marker). One that
+    // rows may read it all the same (richards under the b-jit tier read capture 34 through a deleted marker). One that
     // calls may also test a captured callee's identity at its entry (`CAPTURE_IDENTITY_ROW`).
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.
@@ -88,10 +88,9 @@ pub(crate) unsafe fn bind_frame(
         dispatch.local_count = usize::from(body.locals);
         dispatch.body = body as *const _;
         dispatch.residual = Rc::as_ptr(residual) as usize;
-        // A region's inline-cache stores run in place only where the VM and the program run
-        // specialized, the fact its rows were planned under (`start_osr_region`'s `stores`).
-        // A rebound dispatch's base refresh set it from the same program.
-        if !rebound { dispatch.stores_specialized = usize::from(vm.specialized && residual.specialized); }
+        // A region's inline-cache stores run in place, the fact its rows were planned under
+        // (`start_osr_region`'s `stores`). A rebound dispatch's base refresh set it.
+        if !rebound { dispatch.stores_specialized = 1; }
     }
     // A dispatch with views read its bases as the activation was made, and nothing since moved them.
     if dispatch.layout_seen == u64::MAX { dispatch.refresh_object_bases(vm); }
@@ -167,6 +166,5 @@ pub(crate) unsafe fn enter(
         std::panic::resume_unwind(panic);
     }
     let exit = super::entry_protocol::exit(&descriptor, returned, || dispatch.returned_pc);
-    // A leave with native frames on the lane stack is read in the innermost of them.
-    RegionRun { exit, nested: vm.lane_stack.native_depth() != 0 }
+    RegionRun { exit }
 }

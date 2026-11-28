@@ -1,6 +1,6 @@
 //! How a value is held in machine form.
 
-use crate::typed_ir::{IntRange, Type};
+use crate::typed_ir::Type;
 
 /// How a value is held in machine form. It is also how the word of an arena slot encodes its
 /// value: a static projection of the slot owner's type (`SlotType::rep`), not a fact stored apart
@@ -36,9 +36,17 @@ impl Representation {
         ty != Type::NEVER
             && match self {
                 Self::Int32 => ty.is_subtype(Type::INT32),
-                Self::Int64 => ty.int_range().is_some_and(|range| IntRange::EXACT.contains(range)),
+                Self::Int64 => ty.int_range().is_some_and(|range| range.fits_exact_double()),
                 Self::Float64 => ty.is_subtype(Type::NUMBER),
                 Self::Tagged => true,
             }
     }
+}
+
+/// The narrowest representation that accepts every value of `ty`: `Tagged` for `NEVER` and for any
+/// type no unboxed view holds.
+#[inline]
+pub fn repr(ty: Type) -> Representation {
+    [Representation::Int32, Representation::Int64, Representation::Float64]
+        .into_iter().find(|representation| representation.accepts(ty)).unwrap_or(Representation::Tagged)
 }

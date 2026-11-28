@@ -1,7 +1,6 @@
-//! Whether a program can receive source first known at execution. This is the
-//! one decision for every producer (Node AOT, the test262 emitter): a program
-//! that can reach dynamic source needs the interpreter and JIT linked beside its
-//! native code, and one that cannot is linked execution-only.
+//! Where a program can receive source first known at execution: the sites of its
+//! source that may add code (`SourceDemands`). Which of them run is decided by the
+//! closed-world solve (`compile::aot_facts::gate`), not by the source alone.
 
 use super::{constructors, NativeSourceKey};
 use crate::Engine;
@@ -256,8 +255,8 @@ impl<'a> Visit<'a> for Hazards<'_> {
 impl Engine {
     /// Literal constructor sources and every site that may receive source first
     /// known at execution (see [`SourceDemands`]), over the caller's authoritative scopes.
-    pub fn source_demands(program: &Program<'_>, scoping: &Scoping, specialized: bool) -> SourceDemands {
-        let (keys, function) = constructors::analyze(program, scoping, specialized);
+    pub fn source_demands(program: &Program<'_>, scoping: &Scoping) -> SourceDemands {
+        let (keys, function) = constructors::analyze(program, scoping);
         let mut hazards = Hazards { scoping, numeric: NumericBindings::symbols(program, scoping), eval: Vec::new(), reflective: Vec::new(), computed: Vec::new() };
         hazards.visit_program(program);
         for sites in [&mut hazards.eval, &mut hazards.reflective] { sites.sort_unstable(); sites.dedup(); }
@@ -265,14 +264,14 @@ impl Engine {
         SourceDemands { keys, eval: hazards.eval, function, reflective: hazards.reflective, computed: hazards.computed }
     }
 
-    /// Whether a standalone Script or Module may receive source first known at
-    /// execution. Source that does not parse cannot be proved closed.
-    /// Without the source routes (`source_routes`) the answer is the conservative one.
+    /// Whether a standalone Script or Module has a site that may receive source first known at execution, whether or not the
+    /// site runs. Source that does not parse cannot be proved closed. Without the source routes (`source_routes`) the answer
+    /// is the conservative one.
     pub fn source_requires_dynamic_source(source: &str, kind: crate::SourceKind) -> bool {
         Self::standalone_source_demands(source, kind).is_none_or(|demands| demands.requires_dynamic_source())
     }
 
-    /// The demands (`source_demands`) of a standalone Script or Module; `None` where it does not
+    /// The demands (`source_demands`) of a standalone Script or Module, every site in the source. `None` where it does not
     /// parse, or without the source routes (`source_routes`), which link the parser.
     pub fn standalone_source_demands(source: &str, kind: crate::SourceKind) -> Option<SourceDemands> {
         crate::compile::source_routes::routes().and_then(|routes| (routes.standalone_source_demands)(source, kind))
@@ -287,7 +286,7 @@ impl Engine {
         let parsed = oxc_parser::Parser::new(&allocator, source, source_type).parse();
         if !parsed.diagnostics.is_empty() { return None; }
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-        Some(Self::source_demands(&parsed.program, semantic.semantic.scoping(), true))
+        Some(Self::source_demands(&parsed.program, semantic.semantic.scoping()))
     }
 }
 
@@ -308,7 +307,7 @@ mod tests {
             "Reflect.construct(Function, [s])", "Reflect.apply(f, null, [])",
             "let i = 0; i = 'constructor'; o[i]()", "let i = 0; i += 'x'; o[i]()", "var i = 0; var i = s; o[i]()",
             "let i = 0; [i] = a; o[i]()", "let i = 0; ({ i } = a); o[i]()", "let i = 0; i ||= s; o[i]()", "let i; o[i]()",
-            "function f(i) { return o[i](); }", "var i = 0; with (o) { o[i](); }", "for (let k in o) o[k]()", "o[`eval`]",
+            "function f(i) { return o[i](); } f(0);", "var i = 0; with (o) { o[i](); }", "for (let k in o) o[k]()", "o[`eval`]",
         ] {
             assert!(requires(source), "{source}");
         }
@@ -332,11 +331,18 @@ mod tests {
     }
 
     #[test]
+    fn every_site_counts_whether_or_not_it_runs() {
+        // Which sites run is the closed-world solve's decision (`compile::aot_facts::gate`), not the source's.
+        assert!(requires("(function () { function dead() { return eval('1'); } })();"));
+        assert!(requires("function f() { return eval('1'); } var k = 'f', g = globalThis[k];"));
+    }
+
+    #[test]
     fn demands_separate_literal_sources_from_dynamic_sites() {
         let allocator = oxc_allocator::Allocator::default();
         let parsed = oxc_parser::Parser::new(&allocator, "Function('return 1'); Function(s); eval(t);", oxc_span::SourceType::script()).parse();
         let semantic = oxc_semantic::SemanticBuilder::new().build(&parsed.program);
-        let demands = Engine::source_demands(&parsed.program, semantic.semantic.scoping(), true);
+        let demands = Engine::source_demands(&parsed.program, semantic.semantic.scoping());
         assert_eq!((demands.keys.len(), demands.function.len(), demands.eval.len()), (1, 1, 1));
         assert!(demands.requires_dynamic_source());
     }

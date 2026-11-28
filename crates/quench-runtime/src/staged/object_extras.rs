@@ -10,15 +10,15 @@ use super::object_encoding::INLINE_PROPERTY_COUNT;
 /// The fields native code reads of an object's extras, in declaration order (`#[repr(C)]`).
 #[repr(C)]
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ObjectExtrasHead<Inline, Elements> {
+pub struct ObjectExtrasHead<Inline, Elements> {
     /// The object's inline property values, displaced from its payload by the extras pointer.
-    pub(crate) inline_properties: Inline,
+    pub inline_properties: Inline,
     /// An array's storage position, displaced from its first payload word.
-    pub(crate) arena_start: u32,
+    pub arena_start: u32,
     /// An array's element backing, displaced from its payload word (`ArrayObject`); empty for any
     /// other object.
-    pub(crate) elements: Elements,
+    pub elements: Elements,
 }
 
 /// The head with the stencil's words: the inline values as words, the element backing as two words.
-pub(crate) type ObjectExtrasWords = ObjectExtrasHead<[u64; INLINE_PROPERTY_COUNT], [u32; 2]>;
+pub type ObjectExtrasWords = ObjectExtrasHead<[u64; INLINE_PROPERTY_COUNT], [u32; 2]>;

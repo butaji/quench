@@ -17,11 +17,12 @@ use quench_runtime::staged::machine::{MachineAccess, MachineStage, MachineVector
 use quench_runtime::staged::wasm_memory::effective_address;
 use quench_runtime::staged::wasm_memory_vector::{load_vector, store_vector};
 use quench_runtime::staged::wasm::Width;
-use quench_runtime::staged::wasm_simd::{Lanes, Native, Simd, WasmSimd, simd, simd_scalar};
+use quench_runtime::staged::wasm_simd::{Lanes, Native, Simd, SimdWasmSimdExt, WasmSimd, simd, simd_scalar};
 use quench_runtime::wasm::V128_BYTES;
 use quench_runtime::wasm::simd::SimdKernel;
 use cranelift_codegen::ir::{self, types};
 use cranelift_frontend::Variable;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl WasmSimd for Emitter<'_, '_> {
     type Value = ir::Value;

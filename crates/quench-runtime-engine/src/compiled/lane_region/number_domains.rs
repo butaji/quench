@@ -4,15 +4,13 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The machine view a block entry keeps a register of fact type `ty` in: the unboxed view of
 /// a Number type, tagged bits for any other. Entry states and edges both take it from the
 /// target's fact (`facts.at`), so an edge conforms to exactly what its target reads.
 pub(crate) fn target_representation(ty: Type) -> Representation {
-    let ty = ty.machine();
-    if ty == Type::INT32 { Representation::Int32 }
-    else if ty == Type::NUMBER { Representation::Float64 }
-    else { Representation::Tagged }
+    repr(ty.machine())
 }
 
 /// `index`'s tagged bits boxed from its unboxed view in `representation`: the one boxing of a
@@ -67,7 +65,7 @@ impl Lowering<'_, '_> {
         // loader resolves; any other linking lowering has no symbol for it, so the record leaves and
         // the lane computes it (the image's `wrapUp` otherwise branched into that process's binary).
         if self.helpers.links() && !self.helpers.names_symbols() {
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         }
         let int = self.proved_int(state, [left, right]) && !self.left_here;
@@ -103,5 +101,14 @@ mod tests {
         let other = Type::language(quench_runtime::ValueType::BigInt);
         assert_eq!(target_representation(Type::INT32.join(other)), Representation::Tagged);
         assert_eq!(target_representation(Type::NUMBER.join(Type::ANY)), Representation::Tagged);
+        let wide = Type::int(quench_runtime::typed_ir::IntRange { min: 0, max: i64::from(u32::MAX) });
+        assert_eq!(target_representation(wide), Representation::Int64);
+        assert_eq!(target_representation(Type::int(quench_runtime::typed_ir::IntRange::WORD)), Representation::Float64);
     }
+}
+
+/// Whether `ty` is the Number class itself, NaN-free or not (`Type::NUMBER`, `Type::NOT_NAN_NUMBER`): a double
+/// whose range the facts do not narrow to integers.
+pub(crate) fn is_double(ty: Type) -> bool {
+    ty.int_range().is_none() && ty.machine() == Type::NUMBER
 }

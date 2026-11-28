@@ -2,7 +2,7 @@
 //! link: the part of `get_property_with_receiver` that needs no exotic handling.
 
 use super::super::object::AtomClass;
-use super::super::{Atom, JsError, PropertyKey, ResidualProgram, Value, Vm};
+use super::super::{Atom, JsError, ObjectRef, PropertyKey, ResidualProgram, Value, Vm};
 use std::ops::ControlFlow;
 
 /// Where `Vm::ordinary_chain_read` stopped.
@@ -49,7 +49,7 @@ impl Vm {
         }
         let key = PropertyKey::string(atom);
         loop {
-            let Some(data) = self.heap.object_record(object) else {
+            let Some(data) = self.heap.ordinary_view(object) else {
                 return Some(ChainRead::Exotic(object));
             };
             if data.has_exotic_access() {
@@ -85,15 +85,15 @@ impl Vm {
         match self.symbol_load_proofs.answer(data.layout_id(), key) {
             // SAFETY: the proof recorded this slot for an own data property of this shape.
             Some(SymbolLoadAnswer::Own(slot)) => {
-                return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked(data, slot as usize) }));
+                return Some(ChainRead::Value(unsafe { self.heap.property_get_unchecked_view(data, slot as usize) }));
             }
             Some(SymbolLoadAnswer::Inherited { hops, slot }) if inherits => {
                 let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
-                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                    Some(id) if id != 0 => return None,
                     _ => self.proof_holder(data, hops)?,
                 };
                 // SAFETY: the chain epoch keeps the holder and the shape its slot was recorded in.
-                if let Some(value) = unsafe { self.heap.property_get_shaped(holder, slot as usize) } {
+                if let Some(value) = unsafe { self.heap.property_get_shaped_view(holder, slot as usize) } {
                     return Some(ChainRead::Value(value));
                 }
             }
@@ -105,7 +105,7 @@ impl Vm {
             // without the walk.
             Some(SymbolLoadAnswer::Getter { hops, slot }) if inherits || hops == 0 => {
                 let holder = match key.key32().and_then(|key32| self.symbol_load_proofs.holder(data.layout_id(), key32)) {
-                    Some(id) if id != 0 => self.heap.object_record_by_id(id - 1),
+                    Some(id) if id != 0 => return None,
                     _ => self.proof_holder(data, hops)?,
                 };
                 if let Some(attributes) = self.slot_attributes(holder, slot as usize)
@@ -126,7 +126,7 @@ impl Vm {
     }
 
     /// What the shape-held property at `slot` of `data`, the record of `object`, reads as.
-    fn chain_slot_read(&self, object: Value, data: &crate::heap::Object, slot: usize) -> ChainRead {
+    fn chain_slot_read(&self, object: Value, data: ObjectRef<'_>, slot: usize) -> ChainRead {
         if self.shape_may_have_accessors(data.shape())
             && let Some(attributes) = self.slot_attributes(data, slot)
             && attributes.accessor
@@ -142,7 +142,7 @@ impl Vm {
     /// exotic link.
     pub fn reflect_chain_read(&mut self, target: Value, key: Value) -> Option<ChainRead> {
         // An ordinary record first, the common target (a proxy's): no array probe.
-        if self.heap.object_record(target).is_some() {
+        if self.heap.ordinary_view(target).is_some() {
             let atom = self.lookup_string_atom(key)?;
             if self.is_private_name(atom) {
                 return None;

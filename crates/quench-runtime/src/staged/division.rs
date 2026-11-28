@@ -11,6 +11,9 @@ use smallvec::SmallVec;
 use super::{GlobalBinding, NumberOperation, Operation};
 use crate::bytecode::Operand;
 use crate::typed_ir::{BindingTime, Division};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The most operands one staged operation names.
 const MAX_OPERANDS: usize = 8;
@@ -90,14 +93,30 @@ fn number(operation: &NumberOperation) -> OperandTimes {
         Math { source, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", operand(*source)), ("operation", BYTECODE)]),
         Extreme { left, right, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("left", operand(*left)), ("right", operand(*right)), ("maximum", BYTECODE)]),
         Imul { left, right, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("left", operand(*left)), ("right", operand(*right))]),
+        Power { base, exponent, .. } => SmallVec::from_slice(&[("destination", REGISTER), ("base", operand(*base)), ("exponent", operand(*exponent))]),
     }
 }
 
-impl<W, P> Operation<W, P> {
+/// `Operation`'s division, as an extension trait (`OperationDivisionExt`): the inherent impl
+/// of this file moved onto a trait, because quench-staged owns `Operation`.
+pub trait OperationDivisionExt<W, P> {
+    /// This operation's operands with their binding times.
+    fn operand_times(&self) -> OperandTimes;
+    /// The control and value operations' operands (`operand_times`).
+    fn control_operand_times(&self) -> OperandTimes;
+    /// The heap operations' operands (`operand_times`).
+    fn heap_operand_times(&self) -> OperandTimes;
+    /// The keyed operations' operands (`heap_operand_times`).
+    fn keyed_operand_times(&self) -> OperandTimes;
+    /// The allocation and safepoint operations' operands (`keyed_operand_times`).
+    fn make_operand_times(&self) -> OperandTimes;
+}
+
+impl<W, P> OperationDivisionExt<W, P> for Operation<W, P> {
     /// This operation's operands with their binding times: register indices and local slots
     /// are locations, constants, atoms, jump targets and flags are fixed by the bytecode,
     /// cache sites are feedback, a proof's facts are Stable, and a stage word is Dynamic.
-    pub(crate) fn operand_times(&self) -> OperandTimes {
+    fn operand_times(&self) -> OperandTimes {
         match self {
             Self::Move { .. } | Self::LogicalNot { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("source", REGISTER)]),
             Self::LoadConst { .. } => SmallVec::from_slice(&[("destination", REGISTER), ("constant", BYTECODE)]),

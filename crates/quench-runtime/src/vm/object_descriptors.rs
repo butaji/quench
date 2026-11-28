@@ -78,14 +78,14 @@ impl Vm {
     /// The fields of `descriptor` read through its shape's `DescriptorLayout`, or `None` when
     /// it is not an ordinary object whose prototype ends the chain, or its shapes have none.
     fn laid_out_descriptor_fields(&mut self, descriptor: Value) -> Option<[Option<Value>; DESCRIPTOR_FIELDS]> {
-        let plain = |object: &Object| {
+        let plain = |object: ObjectRef<'_>| {
             !object.is_module_namespace()
                 && object.deferred_module().is_none()
                 && !object.has_side_descriptors()
         };
-        let data = self.heap.ordinary_object(descriptor).filter(|data| plain(data))?;
+        let data = self.heap.ordinary_view(descriptor).filter(|data| plain(*data))?;
         let shape = data.shape();
-        let prototype = self.heap.ordinary_object(data.proto()).filter(|data| plain(data))?;
+        let prototype = self.heap.ordinary_view(data.proto()).filter(|data| plain(*data))?;
         if !prototype.proto().is_null() {
             return None;
         }
@@ -98,11 +98,11 @@ impl Vm {
                 layout
             }
         };
-        let data = self.heap.ordinary_object(descriptor)?;
+        let data = self.heap.ordinary_view(descriptor)?;
         let mut fields = [None; DESCRIPTOR_FIELDS];
         for (field, slot) in fields.iter_mut().zip(layout.slots) {
             if let Some(slot) = slot {
-                *field = Some(self.heap.property_get(data, slot as usize)?);
+                *field = Some(self.heap.property_get_ref(data, slot as usize)?);
             }
         }
         Some(fields)
@@ -114,7 +114,7 @@ impl Vm {
         if self.shape_is_dictionary(shape) || self.shape_is_dictionary(prototype_shape) {
             return None;
         }
-        let data = self.heap.ordinary_object(descriptor)?;
+        let data = self.heap.ordinary_view(descriptor)?;
         let mut slots = [None; DESCRIPTOR_FIELDS];
         for (slot, atom) in slots.iter_mut().zip(self.descriptor_field_atoms()) {
             let key = PropertyKey::string(atom);
@@ -523,8 +523,8 @@ impl Vm {
             }
         }
         let value = if self
-            .object_data(target)
-            .is_some_and(Object::is_module_namespace)
+            .heap.object(target)
+            .is_some_and(|object| object.is_module_namespace())
         {
             self.module_namespace_value(p, target, atom)?
         } else {
@@ -537,8 +537,8 @@ impl Vm {
             .property_attributes(target, PropertyKey::string(atom))
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let writable = self
-            .object_data(target)
-            .is_some_and(Object::is_module_namespace)
+            .heap.object(target)
+            .is_some_and(|object| object.is_module_namespace())
             || attributes.writable;
         Ok(Some((
             value,
@@ -575,7 +575,7 @@ impl Vm {
     /// kind is bound by the caller, so presence reads no descriptor metadata.
     /// Exotics keep their shared descriptor operation; effectful lookups decline.
     fn plain_own_query<const ENUMERABLE: bool>(&mut self, p: &ResidualProgram, object: Value, key: Value) -> Option<Option<bool>> {
-        match self.heap.ordinary_object(object) {
+        match self.heap.ordinary_view(object) {
             Some(data) => {
                 if data.is_module_namespace() || data.deferred_module().is_some() {
                     return None;
@@ -587,8 +587,8 @@ impl Vm {
             }
             None => {
                 if matches!(self.heap.get(object), Some(Cell::Proxy { .. }))
-                    || !self.object_data(object)
-                        .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none())
+                    || !self.heap.object(object)
+                        .is_some_and(|data| !data.is_module_namespace() && data.deferred_module().is_none()) // record-only: deferred module
                 {
                     return None;
                 }

@@ -261,7 +261,6 @@ v_math_sin_cos 243
 v_ml_dot_sigmoid 249
 v_navier_lin_solve 49
 v_nbody_step 74
-v_new_point 23
 v_nullish 22.5
 v_num_tostring 97
 v_obj_keys_loop 265

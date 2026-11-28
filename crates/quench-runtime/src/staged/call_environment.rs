@@ -1,7 +1,7 @@
 //! Composite call row of the environment call family (call protocol v2): composed from the staged
 //! protocol rows (`protocol`), Stage-generic, no alloc or std, so every tier runs the same rows.
 //!
-//! An environment callee (`CallEntry::Environment`) runs on a window that holds, after its
+//! An environment callee (`CallEntry::framed(Framed::Environment)`) runs on a window that holds, after its
 //! `registers` words, the environment's entries (`ENTRY_*`, `ENTRY_WORDS` words), then its
 //! `locals`, then every value the call passed (kept for legacy reflection). The words below
 //! register 0 are the frame context (`frame::CONTEXT_*`); an environment activation keeps a full
@@ -57,7 +57,7 @@ pub(crate) fn admit_environment<S: Stage>(stage: &mut S, (activations, limit): (
 /// `admit_environment` on machine words: the interpreter's admission of an environment window.
 #[inline(always)]
 pub fn concrete_admit_environment(activations: u64, limit: u64, free: u64, needed: u64) -> bool {
-    admit_environment(&mut super::Concrete::new(std::ptr::null()), (activations, limit), (free, needed), ()).is_some()
+    admit_environment(&mut super::Concrete::pure(), (activations, limit), (free, needed), ()).is_some()
 }
 
 /// Lays out the environment entries at `entries` (the word after the window's registers) over
@@ -220,7 +220,7 @@ mod tests {
         let mut words = [0_u64; CONTEXT + 2 + ENTRY_WORDS as usize + 3 + 3];
         let registers = unsafe { words.as_mut_ptr().add(CONTEXT) } as u64;
         let shape = EnvironmentShape { registers: 2, live: 1, locals: 3, captured: 0b10 };
-        let local = enter_environment(&mut Concrete::new(std::ptr::null()), registers, shape,
+        let local = enter_environment(&mut Concrete::pure(), registers, shape,
             EnvironmentPassed { arguments: passed.as_ptr() as u64, count: 3, bound: 2, in_registers: 0, rest: None, self_binding: Some((2, 99)) },
             WindowContext { this: 7, env: 8, capture: 9 });
         let entries = registers + 2 * 8;
@@ -242,7 +242,7 @@ mod tests {
         let mut words = [0_u64; CONTEXT + 3 + ENTRY_WORDS as usize + 3 + 3];
         let registers = unsafe { words.as_mut_ptr().add(CONTEXT) } as u64;
         let shape = EnvironmentShape { registers: 3, live: 3, locals: 3, captured: 0b100 };
-        let local = enter_environment(&mut Concrete::new(std::ptr::null()), registers, shape,
+        let local = enter_environment(&mut Concrete::pure(), registers, shape,
             EnvironmentPassed { arguments: passed.as_ptr() as u64, count: 3, bound: 3, in_registers: 2, rest: None, self_binding: None },
             WindowContext { this: 7, env: 8, capture: 9 });
         let w = &words[CONTEXT..];

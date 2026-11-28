@@ -34,7 +34,7 @@ impl Vm {
     /// The slot of `object`'s private field `brand`.
     #[inline]
     pub fn private_field_slot(&self, object: Value, brand: PrivateBrand) -> Option<usize> {
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
         self.property_shape_slot(data.shape(), private_field_key(brand))
     }
 
@@ -42,14 +42,14 @@ impl Vm {
     /// method's or accessor's brand included).
     #[inline]
     pub fn private_field(&self, object: Value, brand: PrivateBrand) -> Option<Value> {
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
         let slot = self.property_shape_slot(data.shape(), private_field_key(brand))?;
-        self.heap.property_get(data, slot)
+        self.heap.property_get_ref(data, slot)
     }
 
     /// Whether `object` carries private name `brand`, a field or a method's or accessor's.
     pub fn has_private_name(&self, object: Value, brand: PrivateBrand) -> bool {
-        self.object_data(object).is_some_and(|data| {
+        self.heap.object(object).is_some_and(|data| {
             self.property_shape_slot(data.shape(), private_field_key(brand)).is_some()
                 || self.property_shape_slot(data.shape(), private_brand_key(brand)).is_some()
         })
@@ -80,7 +80,7 @@ impl Vm {
     }
 
     fn add_private_slot(&mut self, object: Value, key: PropertyKey, value: Value) -> bool {
-        let Some(shape) = self.object_data(object).map(|data| data.shape()) else {
+        let Some(shape) = self.heap.object(object).map(|data| data.shape()) else {
             return false;
         };
         if self.property_shape_slot(shape, key).is_some() {
@@ -105,7 +105,7 @@ impl Vm {
         object: Value,
         atom: Atom,
     ) -> Option<usize> {
-        let shape = self.object_data(object)?.shape();
+        let shape = self.heap.object(object)?.shape();
         // A site whose name belongs to a class evaluated once answers from the shape alone.
         if self.private_classes.unique_name(atom)
             && let Some(slot) = self.private_site_homes.unique_field_slot(site, shape)
@@ -148,7 +148,7 @@ impl Vm {
         atom: Atom,
     ) -> Option<Value> {
         let slot = self.site_private_field_slot(code, site, scope, object, atom)?;
-        self.heap.property_get(self.object_data(object)?, slot)
+        self.heap.property_get_ref(self.heap.object(object)?, slot)
     }
 
     /// Whether a site may record `shape` for a private slot: a shape no edit in place
@@ -158,16 +158,16 @@ impl Vm {
     }
 
     /// The own-field entry (`FieldCache::own`) of the private field site `site` read last
-    /// under the home `environment` finds: a call memo's step (`MemoLeaf`), which holds while
-    /// the memo's callee, and so its environment and home, does.
+    /// under the home `environment` finds, which holds while the callee, and so its environment
+    /// and home, does.
     pub fn site_private_field_entry(&self, site: usize, environment: Value) -> Option<FieldCache> {
         let (shape, slot) = self.private_site_homes.field_entry(site, environment)?;
-        Some(FieldCache::own(shape, u16::try_from(slot).ok()?))
+        Some(FieldCache::own(shape, u32::try_from(slot).ok()?))
     }
 
     /// The private names `object` carries, each once, fields and methods alike.
     pub(super) fn private_names(&self, object: Value) -> Vec<PrivateBrand> {
-        let Some(data) = self.object_data(object) else {
+        let Some(data) = self.heap.object(object) else {
             return Vec::new();
         };
         let mut brands = Vec::new();

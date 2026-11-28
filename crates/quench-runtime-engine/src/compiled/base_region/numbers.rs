@@ -18,6 +18,7 @@ use crate::ext_traits::*;
 use super::repr::{variant_of, Variant};
 use super::*;
 use quench_runtime::dataflow::BitSet;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The frame slots (original registers) that hold a Number on every path into a row.
 type Held = BitSet;
@@ -27,7 +28,7 @@ type Held = BitSet;
 fn leaves_on_other(kind: Kind) -> bool {
     matches!(kind, Kind::Add | Kind::Sub | Kind::Mul | Kind::Div | Kind::And | Kind::Or | Kind::Xor | Kind::Shl | Kind::Shr
         | Kind::UShr | Kind::Neg | Kind::Rem | Kind::Sqrt | Kind::Floor | Kind::Ceil | Kind::Trunc | Kind::Abs | Kind::Round
-        | Kind::Min | Kind::Max | Kind::Imul | Kind::Clz32 | Kind::Fround | Kind::Sign | Kind::AddNoOverflow | Kind::SubNoOverflow)
+        | Kind::Min | Kind::Max | Kind::Imul | Kind::Clz32 | Kind::Pow | Kind::Fround | Kind::Sign | Kind::AddNoOverflow | Kind::SubNoOverflow)
 }
 
 /// Whether the entry at `row` checks the web `web` as a Number: the rule `entry_rows` applies to a live web.
@@ -52,13 +53,13 @@ fn entry_state(span: &Span, homes: &Homes, webs: &Webs, reads: &EntryReads, row:
 
 /// Per row, whether the checked operand of a `checked` row is a Number on every path into it.
 ///
-/// `reached` marks the rows control reaches, `kinds` is each row's site feedback (`variant_of`), `reads`
+/// `reached` marks the rows control reaches, `sites` is each row's site (`variant_of`), `reads`
 /// the entry guards the rows keep (`entry_reads`), and `entries` the first row of each caller PC a resume
 /// stub enters at (none for a body, which only its entry enters).
 pub(crate) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
-    reads: &EntryReads, kinds: &[Option<OperandKinds>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
+    reads: &EntryReads, sites: &[Option<Site>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
     let state = solve(span, decoded, ending, entries, |row| entry_state(span, homes, webs, reads, row),
-        |k, held| transfer(homes, &decoded[k], kinds.get(k).and_then(Option::as_ref), held));
+        |k, held| transfer(homes, &decoded[k], sites.get(k).copied().flatten(), held));
     decoded.iter().enumerate().map(|(k, row)| {
         let (true, Some(Source::Register(web))) = (reached.contains(k) && row.checked, row.a) else { return false };
         state[k].as_ref().is_some_and(|held| held.contains(usize::from(homes.orig[usize::from(web)])))
@@ -194,7 +195,7 @@ fn int_transfer(homes: &Homes, row: &Decoded, held: &Held) -> Held {
 
 /// The state after `row` from `held`. A copy keeps its source's Number-ness; a numeric row's result is a
 /// Number where the row leaves on any other operand; anything else writes an unknown value.
-fn transfer(homes: &Homes, row: &Decoded, kinds: Option<&OperandKinds>, held: &Held) -> Held {
+fn transfer(homes: &Homes, row: &Decoded, site: Option<Site>, held: &Held) -> Held {
     let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
     let source = |source: Option<Source>| match source {
         Some(Source::Register(web)) => held.contains(slot(web)),
@@ -206,7 +207,7 @@ fn transfer(homes: &Homes, row: &Decoded, kinds: Option<&OperandKinds>, held: &H
     } else if matches!(row.kind, Kind::Move | Kind::Const) {
         source(row.a)
     } else {
-        leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
+        leaves_on_other(row.kind) && variant_of(row.kind, site) != Variant::Concat
     };
     let mut out = held.clone();
     for written in [row.dst, row.also].into_iter().flatten() {
@@ -250,54 +251,82 @@ impl EntryReads {
 /// Whether the row checks each operand it reads, so it reads no fact an entry guard provides: a bare numeric
 /// row (`Decoded::number`, nothing else set) whose stencil leaves on any other operand (`leaves_on_other`), and
 /// which is no `Concat` variant.
-pub(crate) fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+pub(crate) fn self_checking(row: &Decoded, site: Option<Site>) -> bool {
     let bare = row.heap.is_none() && row.step.is_none() && row.global.is_none() && row.base.is_none() && row.also.is_none()
-        && row.atom.is_none() && row.folded.is_none() && row.instanceof.is_none() && row.lexical.is_none() && row.add.is_none()
-        && row.name.is_none() && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && row.cell.is_none() && !row.class_read
-        && !row.proven && !row.checked && !row.admitted && !row.recheck;
-    bare && leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
+        && row.atom.is_none() && row.folded.is_none() && row.lexical.is_none() && row.add.is_none()
+        && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && row.cell.is_none() && !row.class_read
+        && !row.checked;
+    bare && leaves_on_other(row.kind) && variant_of(row.kind, site) != Variant::Concat
 }
 
-/// The slots of `from` in `into`.
-fn union(into: &mut Held, from: &Held) {
-    for slot in from.iter() {
-        into.insert(slot);
+/// The backward problem of `entry_reads`: a row's state is the slots live on entry to the rows after it, and its
+/// edges are the rows it follows (its predecessors), which `solve` gives the row's live-in.
+struct LiveIn<F> {
+    edges: Vec<Vec<usize>>,
+    /// A row's live-in from its live-out: the slots it writes end, the slots it reads begin.
+    step: F,
+}
+
+impl<F: Fn(usize, &Held) -> Held> quench_runtime::dataflow::Dataflow for LiveIn<F> {
+    type State = Held;
+
+    fn blocks(&self) -> usize {
+        self.edges.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.edges[block]
+    }
+
+    /// Every row is entered with nothing live after it, so each one runs.
+    fn entry_state(&self, _block: usize) -> Option<Held> {
+        Some(Held::new())
+    }
+
+    fn join(&self, into: &mut Held, incoming: &Held) -> bool {
+        let mut grew = false;
+        for slot in incoming.iter() {
+            grew |= into.insert(slot);
+        }
+        grew
+    }
+
+    fn transfer(&mut self, block: usize, state: &Held) -> Held {
+        (self.step)(block, state)
     }
 }
 
 /// The entry reads of a region's rows: a backward analysis of the slots a native read reaches before a write.
 /// A self-checking row reads nothing an entry must prove; any other row reads all its registers, and a row writes
 /// its destinations, which end the entry value there.
-pub(crate) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds: &[Option<OperandKinds>], kept: &[Register]) -> EntryReads {
+pub(crate) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, sites: &[Option<Site>], kept: &[Register]) -> EntryReads {
     let count = decoded.len();
     let capacity = homes.orig.len().max(1);
     let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
-    let mut live: Vec<Held> = vec![Held::with_capacity(capacity); count];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for k in (0..count).rev() {
-            let row = &decoded[k];
-            let mut before = Held::with_capacity(capacity);
-            for next in row.successors(k, count, span) {
-                if let Next::Row(n) = next {
-                    union(&mut before, &live[n]);
-                }
-            }
-            for written in [row.dst, row.also].into_iter().flatten() {
-                before.remove(slot(written));
-            }
-            if !self_checking(row, kinds.get(k).and_then(Option::as_ref)) {
-                for read in row.registers() {
-                    before.insert(slot(read));
-                }
-            }
-            if !before.iter().eq(live[k].iter()) {
-                live[k] = before;
-                changed = true;
+    let mut edges = vec![Vec::new(); count];
+    for (k, row) in decoded.iter().enumerate() {
+        for next in row.successors(k, count, span) {
+            if let Next::Row(n) = next {
+                edges[n].push(k);
             }
         }
     }
+    let live_in = |k: usize, live_out: &Held| {
+        let row = &decoded[k];
+        let mut before = live_out.clone();
+        for written in [row.dst, row.also].into_iter().flatten() {
+            before.remove(slot(written));
+        }
+        if !self_checking(row, sites.get(k).copied().flatten()) {
+            for read in row.registers() {
+                before.insert(slot(read));
+            }
+        }
+        before
+    };
+    let mut problem = LiveIn { edges, step: live_in };
+    let states = quench_runtime::dataflow::solve(&mut problem);
+    let live = states.into_iter().enumerate().map(|(k, live_out)| (problem.step)(k, &live_out.unwrap_or_default())).collect();
     EntryReads { numbers: slots(capacity, span.number_registers().iter().copied()), kept: slots(capacity, kept.iter().copied()), live }
 }
 

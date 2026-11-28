@@ -3,7 +3,7 @@
 //! the opcode table.
 
 use super::wasm_float::{Float, convert, float_binary, is_float_comparison};
-use super::wasm_operation::WasmOperation;
+use super::wasm_operation::{WasmOperation, wasm_operation_of};
 use super::wasm_tests::Probe;
 use super::{ConcreteWasm, machine::MachineStage};
 use crate::bytecode::Op;
@@ -11,7 +11,11 @@ use crate::wasm::conversion::ScalarConversionOperator as Conversion;
 use crate::wasm::float::{
     F32BinaryOperator, F32UnaryOperator, F64BinaryOperator as Binary, F64UnaryOperator as Unary,
 };
+use crate::wasm::WasmValueScalarExt;
 use crate::{WasmTrap, WasmType, WasmValue};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 const SIGNALING_NAN_PAYLOAD: u32 = 1;
 
@@ -291,7 +295,7 @@ fn the_other_conversions_ask_for_nothing_else() {
 fn the_table_names_every_float_and_conversion_operator() {
     for operator in (0..).map_while(F32BinaryOperator::from_tag) {
         assert_eq!(
-            WasmOperation::of(Op::WasmF32Binary, operator as u32),
+            wasm_operation_of(Op::WasmF32Binary, operator as u32),
             Some(WasmOperation::FloatBinary {
                 operator: operator.widen(),
                 float: Float::F32
@@ -300,7 +304,7 @@ fn the_table_names_every_float_and_conversion_operator() {
     }
     for operator in every_binary() {
         let operation =
-            WasmOperation::of(Op::WasmF64Binary, operator as u32).expect("a float operator");
+            wasm_operation_of(Op::WasmF64Binary, operator as u32).expect("a float operator");
         assert_eq!(
             operation,
             WasmOperation::FloatBinary {
@@ -313,19 +317,19 @@ fn the_table_names_every_float_and_conversion_operator() {
     }
     for operator in every_unary() {
         let operation =
-            WasmOperation::of(Op::WasmF64Unary, operator as u32).expect("a float operator");
+            wasm_operation_of(Op::WasmF64Unary, operator as u32).expect("a float operator");
         assert_eq!(operation.result_type(), operator.apply(0.0).ty());
     }
     for operator in every_conversion() {
         let operation =
-            WasmOperation::of(Op::WasmScalarConvert, operator as u32).expect("a conversion");
+            wasm_operation_of(Op::WasmScalarConvert, operator as u32).expect("a conversion");
         assert_eq!(operation, WasmOperation::Convert { operator });
         assert_eq!(operation.operand_type(), operator.source_type());
         assert_eq!(operation.result_type(), operator.result_type());
     }
-    assert_eq!(WasmOperation::of(Op::WasmF32Binary, u32::MAX), None);
-    assert_eq!(WasmOperation::of(Op::WasmF64Unary, u32::MAX), None);
-    assert_eq!(WasmOperation::of(Op::WasmScalarConvert, u32::MAX), None);
+    assert_eq!(wasm_operation_of(Op::WasmF32Binary, u32::MAX), None);
+    assert_eq!(wasm_operation_of(Op::WasmF64Unary, u32::MAX), None);
+    assert_eq!(wasm_operation_of(Op::WasmScalarConvert, u32::MAX), None);
 }
 
 #[test]

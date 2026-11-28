@@ -14,6 +14,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// `vm_call_callout`, the `CALL_VM` row's callout: (context, defined function index,
 /// argument words, result word) -> status, 0 when the call returned.
@@ -26,7 +27,6 @@ pub(crate) unsafe extern "C" fn vm_call_callout(
     // SAFETY: the row passes the context its entry was called with, whose VM is suspended in
     // that call, and the argument and result words of this call.
     let context = unsafe { &mut *context };
-    note_compiled_callout(context.known_callouts);
     let vm_pointer = context.vm.cast::<Vm>();
     let (program, env) = (context.program, context.env);
     // The VM's own code runs outside compiled code: no guard fault is ours.

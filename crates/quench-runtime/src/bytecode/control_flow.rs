@@ -72,6 +72,30 @@ pub fn for_each_instruction_successor(
     }
 }
 
+/// The PCs that begin basic blocks of `instructions`: the entry, every jump and branch-table
+/// target, and the instruction after a jump. Exception handler edges are not counted.
+pub fn instruction_leaders(instructions: &[WideInstruction]) -> crate::dataflow::BitSet {
+    let len = instructions.len();
+    let mut leaders = crate::dataflow::BitSet::with_capacity(len);
+    if len > 0 {
+        leaders.insert(0);
+    }
+    for (pc, &instruction) in instructions.iter().enumerate() {
+        let layout = instruction.op().control_flow_layout();
+        if layout == ControlFlowLayout::BranchTable || layout.jumps() {
+            for_each_instruction_successor(pc, instruction, |target| {
+                if target < len {
+                    leaders.insert(target);
+                }
+            });
+            if layout.jumps() && pc + 1 < len {
+                leaders.insert(pc + 1);
+            }
+        }
+    }
+    leaders
+}
+
 /// The PCs of `instructions` control reaches from `starts` by ordinary successors.
 pub fn reachable_from(instructions: &[WideInstruction], starts: impl IntoIterator<Item = usize>) -> crate::bitset::BitSet {
     let mut reached = crate::bitset::BitSet::new(instructions.len());
@@ -246,6 +270,16 @@ impl Successors {
         table
     }
 
+    /// A table over code that is not a `Function`'s: each pc's successors at
+    /// `starts[pc]..starts[pc + 1]` in `targets`, with `edges` saying how each is reached.
+    pub fn from_parts(starts: &[usize], targets: &[usize], edges: &[ControlEdge]) -> Self {
+        Self {
+            starts: starts.iter().map(|&start| pc_index(start)).collect(),
+            targets: targets.iter().map(|&target| pc_index(target)).collect(),
+            edges: edges.to_vec(),
+        }
+    }
+
     /// The successor table of `function`'s code as it stands.
     pub(crate) fn of_code(function: &Function) -> Self {
         let mut table = Self::default();
@@ -262,16 +296,6 @@ impl Successors {
     /// Where each pc's successors begin in `targets`, with one entry past the last pc.
     pub(crate) fn starts(&self) -> &[u32] {
         &self.starts
-    }
-
-    /// How control reaches each of `targets`, in the same order.
-    pub(crate) fn edges(&self) -> &[ControlEdge] {
-        &self.edges
-    }
-
-    /// Every pc's successor targets, in pc order.
-    pub(crate) fn targets(&self) -> &[u32] {
-        &self.targets
     }
 
     /// Whether each pc of a function of `len` instructions (and its end, at `len`) starts a basic block:
@@ -329,4 +353,11 @@ impl Function {
 /// or before it, which `backward` (`Function::backward_transfers`) lists.
 pub fn may_repeat(backward: &[(usize, usize)], pc: usize) -> bool {
     backward.iter().any(|&(target, source)| target <= pc && pc <= source)
+}
+
+/// How many loops the instruction at `pc` is in: the backward transfers of `backward` whose span
+/// (`target..=source`) holds it. A call site's loop depth weighs its callee's static frequency
+/// (`CallGraph::frequency`).
+pub fn loop_depth(backward: &[(usize, usize)], pc: usize) -> u32 {
+    backward.iter().filter(|&&(target, source)| target <= pc && pc <= source).count() as u32
 }

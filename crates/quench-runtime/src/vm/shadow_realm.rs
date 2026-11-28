@@ -18,7 +18,7 @@ impl Vm {
 
     pub(super) fn install_shadow_realm_for_realm(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         global: Value,
         constructor: Value,
         object_prototype: Value,
@@ -131,22 +131,6 @@ impl Vm {
             },
         );
         Ok(())
-    }
-
-    pub(super) fn shadow_realm_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::ShadowRealmEvaluate => self.shadow_realm_evaluate(p, this, args),
-            Native::ShadowRealmImportValue => self.shadow_realm_import_value(p, this, args),
-            Native::ShadowRealmImportValueFulfilled => self.shadow_realm_import_fulfilled(p, args),
-            Native::ShadowRealmWrappedFunction => self.call_shadow_wrapped_function(p, args),
-            _ => Err(JsError("invalid ShadowRealm native".into())),
-        }
     }
 
     fn shadow_realm_evaluate(
@@ -517,7 +501,7 @@ impl Vm {
         let constructor = self.get_property(p, caller, function_atom)?;
         let prototype_atom = self.prototype_atom();
         let function_prototype = self.get_property(p, constructor, prototype_atom)?;
-        if let Some(object) = self.object_data_mut(wrapper) {
+        if let Some(mut object) = self.heap.object_mut(wrapper) {
             object.set_proto(function_prototype);
         }
         self.set_function_metadata_value(wrapper, name_atom, name)?;
@@ -603,4 +587,37 @@ impl Vm {
         };
         error.unwrap_or_else(|error| error)
     }
+}
+
+/// The ShadowRealm natives' entries, one standalone function per native.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    let entry: native_table::NativeFn = match native {
+        Native::ShadowRealm => shadow_realm_called,
+        Native::ShadowRealmEvaluate => shadow_realm_evaluate_native,
+        Native::ShadowRealmImportValue => shadow_realm_import_value_native,
+        Native::ShadowRealmImportValueFulfilled => shadow_realm_import_value_fulfilled_native,
+        Native::ShadowRealmWrappedFunction => shadow_realm_wrapped_function_native,
+        _ => return None,
+    };
+    Some(entry)
+}
+
+fn shadow_realm_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "ShadowRealm constructor requires 'new'".into()))
+}
+
+fn shadow_realm_evaluate_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.shadow_realm_evaluate(p, this, args)
+}
+
+fn shadow_realm_import_value_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.shadow_realm_import_value(p, this, args)
+}
+
+fn shadow_realm_import_value_fulfilled_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.shadow_realm_import_fulfilled(p, args)
+}
+
+fn shadow_realm_wrapped_function_native(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_shadow_wrapped_function(p, args)
 }

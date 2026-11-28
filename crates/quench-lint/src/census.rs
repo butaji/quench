@@ -37,7 +37,11 @@ enum Source {
 #[derive(Clone, Copy)]
 enum Extract {
     Syntax(fn(&syn::File) -> usize),
+    /// A syntax count that depends on the file's path (the one home of a fact type is exempt).
+    SyntaxAt(fn(&str, &syn::File) -> usize),
     Text(fn(&str) -> usize),
+    /// Counts the opcode table's rows (`quench_opcodes::ROWS`), its data rather than its text.
+    Rows(fn(&[quench_opcodes::Row]) -> usize),
 }
 
 struct Metric {
@@ -50,12 +54,12 @@ struct Metric {
 const COMPILED: &str = "crates/quench-runtime-engine/src/compiled";
 const LOWERING_FRAGMENTS: &[&str] = &["lower", "region"];
 const RUNTIME: &str = "crates/quench-runtime/src";
+/// The opcode table's home: the source an `Extract::Rows` metric names (its rows are counted as data).
+const OPCODE_TABLE: &str = "crates/quench-opcodes/src/table.rs";
 const ENGINE: &str = "crates/quench-runtime-engine/src";
-/// The expensive fallbacks the corpus reaches (quench-gate step `fallbacks`), one `kind operation (reason)` per line.
-const FALLBACKS: &str = "crates/quench-tier-corpus/fallbacks.txt";
 const TIER_ORDER: &str = "crates/quench-tier-corpus/tier_order.txt";
 const TIER_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions.txt";
-const DEFAULT_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions_default.txt";
+const AOT_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions_aot.txt";
 const LANE_DISPATCH: &str = "crates/quench-runtime-engine/src/dispatch_fast";
 
 const METRICS: &[Metric] = &[
@@ -102,14 +106,14 @@ const METRICS: &[Metric] = &[
     Metric {
         name: "opcodes",
         direction: Direction::Informational,
-        sources: &[Source::File("crates/quench-runtime/src/bytecode.rs")],
-        extract: Extract::Syntax(extract::opcode_variants),
+        sources: &[Source::File(OPCODE_TABLE)],
+        extract: Extract::Rows(extract::opcode_variants),
     },
     Metric {
         name: "opcodes_with_staged_operation",
         direction: Direction::Up,
-        sources: &[Source::File("crates/quench-runtime/src/bytecode.rs")],
-        extract: Extract::Syntax(extract::staged_opcodes),
+        sources: &[Source::File(OPCODE_TABLE)],
+        extract: Extract::Rows(extract::staged_opcodes),
     },
     Metric {
         name: "derivation_debt_lines",
@@ -173,6 +177,14 @@ const METRICS: &[Metric] = &[
         sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
         extract: Extract::Syntax(extract::fact_homes),
     },
+    // The one home of fact types is `typed_ir::cell`; each fact type declared anywhere else is a second home.
+    // Shrinks as the listed types move onto the cell (`fact_types.txt`), and a new one fails the lint at once.
+    Metric {
+        name: "fact_types",
+        direction: Direction::Down,
+        sources: &[Source::Tree(RUNTIME, &[]), Source::Tree(ENGINE, &[])],
+        extract: Extract::SyntaxAt(extract::fact_types),
+    },
     Metric {
         name: "epoch_fields",
         direction: Direction::Down,
@@ -205,47 +217,23 @@ const METRICS: &[Metric] = &[
         extract: Extract::Text(extract::runtime_internals),
     },
     Metric {
-        name: "fallback_jit_rejects",
-        direction: Direction::Down,
-        sources: &[Source::File(FALLBACKS)],
-        extract: Extract::Text(extract::fallback_jit_rejects),
-    },
-    Metric {
-        name: "fallback_helper_calls",
-        direction: Direction::Down,
-        sources: &[Source::File(FALLBACKS)],
-        extract: Extract::Text(extract::fallback_helper_calls),
-    },
-    Metric {
-        name: "fallback_deopts",
-        direction: Direction::Down,
-        sources: &[Source::File(FALLBACKS)],
-        extract: Extract::Text(extract::fallback_deopts),
-    },
-    Metric {
-        name: "fallback_opaque_natives",
-        direction: Direction::Down,
-        sources: &[Source::File(FALLBACKS)],
-        extract: Extract::Text(extract::fallback_opaque_natives),
-    },
-    Metric {
         name: "tier_order_violations",
         direction: Direction::Down,
         sources: &[Source::File(TIER_ORDER)],
         extract: Extract::Text(extract::text_lines),
     },
-    // The per-op tier ladder (quench-gate step `ir-budget`): ops b-jit runs in more than the
-    // interpreter, and ops the default mode runs in more than b-jit.
+    // The per-op tier ladder (quench-gate step `ir-budget`): ops the default mode runs in more than
+    // the interpreter, and ops AOT runs in more than the default mode.
     Metric {
-        name: "tier_inversions_b_jit",
+        name: "tier_inversions",
         direction: Direction::Down,
         sources: &[Source::File(TIER_INVERSIONS)],
         extract: Extract::Text(extract::text_lines),
     },
     Metric {
-        name: "tier_inversions_default",
+        name: "tier_inversions_aot",
         direction: Direction::Down,
-        sources: &[Source::File(DEFAULT_INVERSIONS)],
+        sources: &[Source::File(AOT_INVERSIONS)],
         extract: Extract::Text(extract::text_lines),
     },
     Metric {
@@ -316,9 +304,13 @@ fn count_file(path: &Path, how: Extract) -> Result<usize, String> {
     let name = path.display();
     let text = fs::read_to_string(path).map_err(|error| format!("{name}: {error}"))?;
     match how {
+        Extract::Rows(count) => Ok(count(quench_opcodes::ROWS)),
         Extract::Text(count) => Ok(count(&text)),
         Extract::Syntax(count) => syn::parse_file(&text)
             .map(|syntax| count(&syntax))
+            .map_err(|error| format!("{name}:{}: {error}", error.span().start().line)),
+        Extract::SyntaxAt(count) => syn::parse_file(&text)
+            .map(|syntax| count(&path.to_string_lossy(), &syntax))
             .map_err(|error| format!("{name}:{}: {error}", error.span().start().line)),
     }
 }

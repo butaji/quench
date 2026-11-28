@@ -4,13 +4,13 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::region::Mutability;
-use quench_runtime::staged::{Access, Domain, NumericStage, Stage, Table};
+use quench_runtime::staged::{Access, Stage, Table};
 use quench_runtime::staged::flow::FlowStage;
-use quench_runtime::staged::math::FloatUnary;
+use quench_runtime::staged::NumericStage;
 use quench_runtime::staged::number_machine as numbers;
 use quench_runtime::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
 use crate::compiled::regions;
-use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The specializer's stage (`quench_runtime::staged`): each operation emits its residual as Cranelift
 /// IR into `builder`, where a guard's failure jumps to its miss block.
@@ -26,6 +26,21 @@ pub(crate) struct Emit<'a, 'b> {
     /// (`property_values` is `None`): `Table::PropertyValues` then reads the payload's property
     /// buffer where it is used, after any call the operation made before it.
     pub(crate) payload: Option<ir::Value>,
+    /// The facts of the words this step read from the frame (R2, facts on values): each register's
+    /// type at this point, which the frame noted when it read the word (`EmitFrame::tagged`).
+    /// A row's class test the fact decides builds no code (`Stage::fact`, `value::decided`).
+    pub(crate) facts: smallvec::SmallVec<[(ir::Value, quench_runtime::typed_ir::Type); 4]>,
+    /// Whether the holder this step stores into is fresh (allocated in this unit, with no safepoint since, `LocalProofs::fresh`):
+    /// its store barrier's log is elided, and only the observation gate remains (`store_gate`, `held_store_gate`).
+    pub(crate) fresh: bool,
+}
+
+impl Emit<'_, '_> {
+    /// Notes `fact` of `word` for the rest of this step (`facts`); a later note of the same word keeps both.
+    #[inline(always)]
+    pub(crate) fn note_fact(&mut self, word: ir::Value, fact: quench_runtime::typed_ir::Type) {
+        if fact != quench_runtime::typed_ir::Type::ANY { self.facts.push((word, fact)); }
+    }
 }
 
 /// An immediate of the Cranelift stage: a constant, or a value the caller holds as one (a stencil's
@@ -79,6 +94,7 @@ impl Emit<'_, '_> {
 quench_runtime::projection!(Emit<'_, '_> => Emit);
 
 impl Stage for Emit<'_, '_> {
+    const SLOT_TABLES: bool = false;
     type Proof = super::super::EmitProof;
     type Word = ir::Value;
     /// Any integer: nonzero holds.
@@ -224,7 +240,14 @@ impl Stage for Emit<'_, '_> {
     /// proved immediate never asks (`staged::store`); a stage with no payload answers no, and
     /// the store leaves at its miss.
     fn store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
-        self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged))
+        if self.fresh {
+            // A fresh holder logs nothing (4.7 (b)): only the observation gate is asked.
+            return self.gate_word(|stage, payload, watch, logged| quench_runtime::staged::barrier::store_untracked(stage, payload, watch, logged));
+        }
+        self.gate_word(|stage, payload, watch, logged| match space {
+            quench_runtime::staged::StagedRecordSpace::Class => quench_runtime::staged::barrier::class_store_unlogged(stage, payload, watch, super::super::class_mark_table(), record_id, value, logged),
+            _ => quench_runtime::staged::barrier::store_unlogged(stage, payload, watch, super::super::store_mark_list(space), record_id, value, logged),
+        })
     }
     /// Whether a store of a value the slot's type holds needs no barrier log
     /// (`Heap::held_store_unlogged`): slot observation sees nothing of it, so the tracking bit of
@@ -232,14 +255,22 @@ impl Stage for Emit<'_, '_> {
     /// owner is unmarked (`barrier::value_unlogged`). A stage with no payload answers no, and the
     /// store leaves at its miss.
     fn held_store_gate(&mut self, space: quench_runtime::staged::StagedRecordSpace, record_id: ir::Value, value: ir::Value) -> ir::Value {
+        if self.fresh {
+            // A fresh holder's barrier log is elided (4.7 (b)), and the held store observes nothing: it is open.
+            let zero = self.constant(0);
+            return self.eq(zero, zero);
+        }
         let Some(payload) = self.gate else { return self.ult(record_id, record_id) };
         let (logged, join) = (self.builder.create_block(), self.builder.create_block());
         self.builder.set_cold_block(logged);
         let open = self.builder.append_block_param(join, types::I8);
         let clear = self.counts_clear(payload);
         emit_js_guard(self.builder, clear, logged);
-        quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged)
-            .expect("an Emit guard always continues");
+        match space {
+            quench_runtime::staged::StagedRecordSpace::Class => quench_runtime::staged::barrier::class_value_unlogged(self, payload, super::super::class_mark_table(), record_id, value, logged),
+            _ => quench_runtime::staged::barrier::value_unlogged(self, payload, super::super::store_mark_list(space), record_id, value, logged),
+        }
+        .expect("an Emit guard always continues");
         let yes = self.raw_const(Lane::I8, 1);
         self.goto(join, &[yes]);
         self.builder.switch_to_block(logged);
@@ -248,14 +279,13 @@ impl Stage for Emit<'_, '_> {
         self.builder.switch_to_block(join);
         open
     }
-    /// Whether an immediate store needs no barrier log: the gate word's counts bit is clear. A stage
-    /// with no payload compiles under whether any heap counts (`heap::rc::COUNTS_SEEN`): open
-    /// without counts, else closed, and the store leaves at its miss.
+    /// Whether an immediate store needs no barrier log: the dispatch payload's counts bit is clear, read at run
+    /// time from the run's own payload (the gate's, else the step's). A stage with no payload cannot read the run's
+    /// counts, so it is closed and the store leaves at its miss (no process-wide flag is baked into compiled code).
     fn immediate_store_open(&mut self) -> ir::Value {
-        let Some(payload) = self.gate else {
-            let seen = quench_runtime::tier_surface::COUNTS_SEEN.load(core::sync::atomic::Ordering::Relaxed);
-            let counted = self.raw_const(Lane::I8, i64::from(seen));
-            return self.raw_compare_imm(Relation::Equal, counted, 0);
+        let Some(payload) = self.gate.or(self.payload) else {
+            let zero = self.constant(0);
+            return self.ult(zero, zero);
         };
         self.counts_clear(payload)
     }
@@ -313,6 +343,24 @@ impl Stage for Emit<'_, '_> {
     }
     fn box_number(&mut self, number: quench_runtime::staged::Float64<ir::Value>) -> ir::Value {
         super::super::emit_js_box_number(self.builder, number)
+    }
+    /// A stored double's own bits (decision 4.1): a plain move, no read-side canonicalization.
+    fn box_raw_number(&mut self, number: quench_runtime::staged::Float64<ir::Value>) -> ir::Value {
+        self.raw_unary(Unary::Bitcast(Lane::I64), number.word())
+    }
+    /// A float bit entry: a NaN the canonical one (decision 4.1), an unordered self-compare's select.
+    fn canonical_float(&mut self, bits: ir::Value) -> ir::Value {
+        let unordered = self.raw_compare(Relation::FloatUnordered, bits, bits);
+        let nan = self.raw_const(Lane::F64, f64::NAN.to_bits() as i64);
+        self.raw_select(unordered, nan, bits)
+    }
+    /// An int32 word converts to its double's bits; any other Number word is a double already.
+    fn raw_number(&mut self, bits: ir::Value) -> ir::Value {
+        let high = self.shr_imm(bits, u64::from(u32::BITS));
+        let int = self.eq_imm(high, quench_runtime::staged::value_encoding::INT_TAG_HIGH);
+        let double = self.i32_to_f64(bits);
+        let converted = self.raw_unary(Unary::Bitcast(Lane::I64), double);
+        self.select(int, converted, bits)
     }
     fn store_u8(&mut self, at: Access, base: ir::Value, offset: i32, value: ir::Value) {
         self.raw_store(Lane::I8, regions::flags(at), (value, false), base, offset);
@@ -380,7 +428,15 @@ impl Stage for Emit<'_, '_> {
         emit_js_guard(self.builder, cond, miss);
         Some(())
     }
-    fn known(&self, _cond: ir::Value) -> Option<bool> { None }
+    fn known(&self, cond: ir::Value) -> Option<bool> {
+        crate::compiled::emit_machine::scalar::known_integer(self.builder, cond).map(|(bits, _)| bits != 0)
+    }
+    /// The fact this step noted of `word` (`facts`); the most precise of two notes of one word is the
+    /// later one a refinement made, and both hold, so the last is taken.
+    fn fact(&self, word: ir::Value) -> quench_runtime::typed_ir::Type {
+        let word = self.builder.func.dfg.resolve_aliases(word);
+        self.facts.iter().rev().find(|(noted, _)| *noted == word).map_or(quench_runtime::typed_ir::Type::ANY, |(_, fact)| *fact)
+    }
     fn table(&mut self, table: Table) -> ir::Value {
         match table {
             Table::PropertyValues => match (self.property_values, self.payload) {
@@ -390,14 +446,21 @@ impl Stage for Emit<'_, '_> {
             },
             // The table is a static that never moves; in-process code embeds its address.
             Table::Layouts => self.constant(quench_runtime::tier_surface::layouts::table_base() as u64),
+            // The class space's base is per heap, so it is not an iconst: compiled code is shared by the
+            // heaps that run it. The dispatch head holds the base of the heap the running VM owns.
+            Table::ClassSpace => match self.payload {
+                Some(payload) => super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.class_base)),
+                None => panic!("an operation addressing the class space has its dispatch payload"),
+            },
+            // The spill arena's base (departure-free S2c) moves when the arena grows; the dispatch head holds it,
+            // refreshed with the other object bases.
+            Table::SpillBase => match self.payload {
+                Some(payload) => super::super::emit_js_payload_word(self.builder, payload, std::mem::offset_of!(super::super::JsStepDispatch, head.spill_base)),
+                None => panic!("an operation addressing a spill run has its dispatch payload"),
+            },
+            // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
+            Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a Cranelift row stores through the VM"),
         }
-    }
-    /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's
-    /// residual.
-    fn walk_prototypes(&mut self, records: ir::Value, object: ir::Value, target: ir::Value, max_depth: u32)
-        -> (ir::Value, ir::Value) {
-        let links = max_depth.min(crate::compiled::tier_policy::PROTOTYPE_UNROLL_LINKS);
-        quench_runtime::staged::object::walk_prototypes(self, records, object, target, links)
     }
 }
 
@@ -415,139 +478,11 @@ impl FlowStage for Emit<'_, '_> {
     fn ret(&mut self, values: &[ir::Value]) { self.leave(values); }
 }
 
-impl Emit<'_, '_> {
-    /// `choose` whose `then` arm is out of line: the path that rarely runs (a call to the VM).
-    pub(crate) fn choose_cold(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
-        otherwise: impl FnOnce(&mut Self) -> ir::Value) -> ir::Value {
-        self.choose_arms(cond, then, otherwise, true)
-    }
-
-    fn choose_arms(&mut self, cond: ir::Value, then: impl FnOnce(&mut Self) -> ir::Value,
-        otherwise: impl FnOnce(&mut Self) -> ir::Value, cold_then: bool) -> ir::Value {
-        let (then_block, else_block, join) = (self.builder.create_block(), self.builder.create_block(), self.builder.create_block());
-        if cold_then { self.builder.set_cold_block(then_block); }
-        self.branch_if(cond, (then_block, &[]), (else_block, &[]));
-        self.builder.switch_to_block(then_block);
-        self.builder.seal_block(then_block);
-        let taken = then(self);
-        // The arms' words share one type: an address or a tagged word, or a Number's `f64`.
-        let kind = self.builder.func.dfg.value_type(taken);
-        let value = self.builder.append_block_param(join, kind);
-        self.goto(join, &[taken]);
-        self.builder.switch_to_block(else_block);
-        self.builder.seal_block(else_block);
-        let other = otherwise(self);
-        self.goto(join, &[other]);
-        self.builder.switch_to_block(join);
-        self.builder.seal_block(join);
-        value
-    }
-}
-
-impl NumericStage for Emit<'_, '_> {
-    const ORDERED_FIRST: bool = true;
-    fn relation(&mut self, relation: NumberRelation, domain: Domain,
-        left: ir::Value, right: ir::Value) -> ir::Value {
-        numbers::number_relation(self, relation, left, right, domain)
-    }
-    fn float_arithmetic(&mut self, operation: NumberArithmetic,
-        left: ir::Value, right: ir::Value) -> ir::Value {
-        numbers::float_arithmetic(self, operation, left, right)
-    }
-    fn float_negate(&mut self, value: ir::Value) -> ir::Value {
-        self.raw_unary(Unary::FloatNegate, value)
-    }
-    /// IEEE equality of two binary64 words: a word of an integer lane is read as its bits.
-    fn float_eq(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        let left = if self.raw_lane(left) == Lane::F64 { left } else { self.f64_from_bits(left) };
-        let right = if self.raw_lane(right) == Lane::F64 { right } else { self.f64_from_bits(right) };
-        self.raw_compare(Relation::FloatEqual, left, right)
-    }
-    fn int_arithmetic(&mut self, operation: NumberArithmetic,
-        left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
-        numbers::checked_int32_arithmetic(self, operation, left, right)
-    }
-    /// The remainder of two binary64 words: where the integral remainder admits them (`number_machine::
-    /// integral_remainder_operands`, the interpreter's bound and rule), its exact i64 form; else the shared leaf
-    /// (`numbers::float_remainder`).
-    fn float_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        let (dividend, divisor, integral) = quench_runtime::staged::number_machine::integral_remainder_operands(self, left, right);
-        self.choose_arms(integral,
-            |stage| quench_runtime::staged::number_machine::integral_remainder_value(stage, (dividend, divisor), left),
-            |stage| numbers::float_remainder(stage, left, right), false)
-    }
-    fn integral_remainder(&mut self, left: ir::Value, right: ir::Value) -> (ir::Value, ir::Value) {
-        // The u-jit makes the float remainder for every operand (a leaf call it can hold), so its miss is never taken.
-        let value = numbers::float_remainder(self, left, right);
-        (value, self.i32_constant(0))
-    }
-    fn int_remainder(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        self.raw_binary(Binary::RemainderSigned, left, right)
-    }
-    fn float_unary(&mut self, operation: FloatUnary, value: ir::Value) -> ir::Value {
-        match operation {
-            FloatUnary::Floor => self.raw_unary(Unary::Floor, value),
-            FloatUnary::Ceil => self.raw_unary(Unary::Ceiling, value),
-            FloatUnary::Trunc => self.raw_unary(Unary::Truncate, value),
-            FloatUnary::Abs => self.raw_unary(Unary::FloatAbsolute, value),
-            FloatUnary::Sqrt => self.raw_unary(Unary::SquareRoot, value),
-            FloatUnary::Fround => {
-                let single = self.raw_unary(Unary::Demote, value);
-                self.raw_unary(Unary::Promote, single)
-            }
-            FloatUnary::Round => quench_runtime::staged::math::round(self, value),
-            FloatUnary::Sign => quench_runtime::staged::math::sign(self, value),
-        }
-    }
-    fn int_multiply(&mut self, left: ir::Value, right: ir::Value) -> ir::Value {
-        self.raw_binary(Binary::Mul, left, right)
-    }
-    /// A 64-bit word's low 32 bits are the int32; the count is over those alone.
-    fn int_leading_zeros(&mut self, a: ir::Value) -> ir::Value {
-        let a = if self.raw_lane(a) == Lane::I64 { self.narrow(a) } else { a };
-        self.raw_unary(Unary::LeadingZeros, a)
-    }
-    fn float_extreme(&mut self, maximum: bool, left: ir::Value, right: ir::Value) -> ir::Value {
-        self.raw_binary(if maximum { Binary::FloatMax } else { Binary::FloatMin }, left, right)
-    }
-    fn i32_constant(&mut self, value: i32) -> ir::Value { self.raw_const(Lane::I32, i64::from(value)) }
-    fn f64_constant(&mut self, value: f64) -> ir::Value { self.raw_const(Lane::F64, value.to_bits() as i64) }
-    fn f64_from_bits(&mut self, bits: ir::Value) -> ir::Value { self.raw_unary(Unary::Bitcast(Lane::F64), bits) }
-    fn narrow(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::Narrow(Lane::I32), a) }
-    /// An int32 word, whether a 32-bit value or a zero-extended 64-bit one.
-    fn i32_to_f64(&mut self, a: ir::Value) -> ir::Value {
-        let a = if self.raw_lane(a) == Lane::I64 { self.narrow(a) } else { a };
-        self.raw_unary(Unary::FromSigned(Lane::F64), a)
-    }
-    fn u32_to_f64(&mut self, a: ir::Value) -> ir::Value { self.raw_unary(Unary::FromUnsigned(Lane::F64), a) }
-    fn to_int32(&mut self, number: ir::Value, miss: ir::Block) -> Option<ir::Value> {
-        Some(emit_number_to_int32(self.builder, number, miss))
-    }
-    fn int_bitwise(&mut self, operation: NumberBitwise, left: ir::Value, right: ir::Value) -> ir::Value {
-        numbers::int32_bitwise(self, operation, left, right)
-    }
-    fn i32_is_zero(&mut self, a: ir::Value) -> ir::Value { self.raw_compare_imm(Relation::Equal, a, 0) }
-    fn i32_is_negative(&mut self, a: ir::Value) -> ir::Value { self.raw_compare_imm(Relation::SignedLess, a, 0) }
-    fn both(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.raw_binary(Binary::And, a, b) }
-    fn either(&mut self, a: ir::Value, b: ir::Value) -> ir::Value { self.or(a, b) }
-    fn cond_word(&mut self, cond: ir::Value) -> ir::Value { cond }
-    fn guard_false(&mut self, cond: ir::Value, miss: ir::Block) -> Option<()> {
-        let passed = self.builder.create_block();
-        // The forced-deopt switch counts this guard too: both successors leave.
-        #[cfg(test)]
-        let passed_or_miss = if crate::compiled::forced_miss::next() { miss } else { passed };
-        #[cfg(not(test))]
-        let passed_or_miss = passed;
-        self.branch_if(cond, (miss, &[]), (passed_or_miss, &[]));
-        self.builder.switch_to_block(passed);
-        Some(())
-    }
-}
-
 #[cfg(all(test, feature = "jit"))]
 pub(crate) mod tests;
 mod effects;
 mod gate;
+mod numeric;
 #[cfg(all(test, feature = "jit"))] mod tier_homomorphism_tests;
 #[cfg(all(test, feature = "jit", target_arch = "x86_64"))] mod ir_predict_tests;
 

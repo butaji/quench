@@ -4,8 +4,15 @@
 //! `step_beside_activations_in_lane` does for a frameless activation, and continues, so no such
 //! record hands its body back.
 #[allow(unused_imports)]
+use quench_runtime::staged::AllocationAllocationExt;
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
+#[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+use quench_runtime::staged::exit::Exit;
+use quench_runtime::staged::frame::CONTEXT_THIS;
+use quench_runtime::vm::engine_types::JsStepDispatch;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The call-out of the record at `call_pc`, its operands read from the running registers:
 /// `LANE_CALL_COMPLETED` with the result written to its register, `LANE_CALL_MISSED` where it
@@ -232,17 +239,7 @@ pub(crate) unsafe extern "C" fn body_general_step(_vm: u64, _residual: u64, cont
     // guest code and moves nothing: no step, no base to refresh.
     if let Some(status) = unsafe { decided_compare_jump(context as usize as *mut LaneContext, call_pc) } { return status; }
     // SAFETY: the caller's contract.
-    let traced = quench_runtime::trace::Channel::BodyLeave.on().then(|| {
-        let cx = context as usize as *mut LaneContext;
-        let function = running_function_in_lane(cx);
-        let op = unsafe { &*(*cx).code }.function(function as usize).code.get(call_pc as usize).map(|word| word.op());
-        (function, op, unsafe { self::vm(cx) }.lane_stack.has_frames())
-    });
-    let status = unsafe { stepped(context, |cx| body_general_step_in(cx, call_pc)) };
-    if let Some((function, op, activations)) = traced && status != crate::compiled::LANE_CALL_COMPLETED {
-        eprintln!("QUENCH_CALL_STATUS helper=step function={function} pc={call_pc} op={op:?} activations={activations} status={status}");
-    }
-    status
+    unsafe { stepped(context, |cx| body_general_step_in(cx, call_pc)) }
 }
 
 /// The owner step of the record at `call_pc` (`Op::steps_on_owner`), which a b-jit row makes in place of the general step
@@ -315,29 +312,101 @@ unsafe fn body_general_step_in(cx: *mut LaneContext, call_pc: u64) -> u64 {
         return unsafe { activation_step_in(cx, call_pc) };
     }
     let (code, frame, ip) = unsafe { (&*(*cx).code, (*cx).frame(), (*cx).base.add(call_pc as usize)) };
-    let function = code.function(vm.frames[frame].function as usize);
-    // A returning record (`return a + b`) is made as the step that writes its result register: the body's
-    // own `Return` row completes the activation with it.
-    let instruction = function.widened(function.code[call_pc as usize]).without_return();
-    // A value step (an operator or a comparison jump) is an image body's guard miss: the frame's own step makes it.
-    let value_step = instruction.op().value_step().is_some() && instruction.result_flags() == 0;
-    if !(instruction.op().steps_in_body() || instruction.op().makes_script_call() || value_step) { return LANE_CALL_MISSED; }
-    let following = call_pc as usize + 1;
-    let branched = in_place_in_lane(cx, ip, |vm, code| {
-        let mut next = following;
-        vm.step(code, frame, instruction, &mut next, false).map(|result| {
-            debug_assert!(matches!(result, StepResult::Continue), "an in-place step only continues");
-            next != following
-        })
-    });
-    if branched.is_some() && (instruction.op().binds_this() || instruction.writes_current_this()) {
+    let Some(instruction) = frame_step_record(code.function(vm.frames[frame].function as usize), call_pc as usize) else {
+        return LANE_CALL_MISSED;
+    };
+    let exit = in_place_in_lane(cx, ip, |vm, code| step_frame_record(vm, code, frame, call_pc as usize, instruction));
+    if exit.is_some() && (instruction.op().binds_this() || instruction.writes_current_this()) {
         // The step bound the frame's `this` (`super()`): the rows that read the receiver take the payload's.
         let this = vm.current_this(frame).unwrap_or(Value::DELETED);
         vm.publish_body_receiver(this);
     }
     // The dropped caches are derived again where the lane next needs them.
     handler_edges::drop_environment_caches(cx);
-    branched.map_or(LANE_CALL_MISSED, |branched| if branched { LANE_CALL_BRANCHED } else { LANE_CALL_COMPLETED })
+    exit.map_or(LANE_CALL_MISSED, |exit| if exit == Exit::Branched { LANE_CALL_BRANCHED } else { LANE_CALL_COMPLETED })
+}
+
+/// The record at `call_pc` of `function` as a frame's step makes it: its result-less form (`without_return`, a returning
+/// record is made as the step that writes its result register, whose `Return` row completes the activation), where it
+/// is a step that runs in the body (`Op::steps_in_body`), a script call form (`Op::makes_script_call`), or a value step
+/// (an operator or a comparison jump, an image body's guard miss). `None` where it is none of these: nothing has run,
+/// and the caller takes its general path.
+pub(crate) fn frame_step_record(function: &quench_runtime::bytecode::Function, call_pc: usize) -> Option<WideInstruction> {
+    let instruction = function.widened(function.code[call_pc]).without_return();
+    let value_step = instruction.op().value_step().is_some() && instruction.result_flags() == 0;
+    (instruction.op().steps_in_body() || instruction.op().makes_script_call() || value_step).then_some(instruction)
+}
+
+/// The interpreter's single step of `instruction`, the record at `call_pc` of the function `vm.frames[frame]` runs
+/// (`frame_step_record`), made in place on that frame as the general loop makes it, without inline calls. `Exit::Branched`
+/// where the step took its jump, else `Exit::Completed`. The lane body (`body_general_step_in`) and the image body
+/// (`ahead_general_step`) both make their steps here; they differ only in where the frame, program and record come from.
+/// A step that raised returns its error: the caller parks it where its exception waits and leaves with `Exit::Raised`.
+pub(crate) fn step_frame_record(vm: &mut Vm, code: &ResidualProgram, frame: usize, call_pc: usize, instruction: WideInstruction) -> Result<Exit, JsError> {
+    let following = call_pc + 1;
+    let mut next = following;
+    vm.step(code, frame, instruction, &mut next, false).map(|result| {
+        debug_assert!(matches!(result, StepResult::Continue), "an in-place step only continues");
+        if next != following { Exit::Branched } else { Exit::Completed }
+    })
+}
+
+/// The step of the record at `call_pc` of an image activation, whose frame is the payload's `frame` of the program its
+/// `head.residual` names, in the VM its `head.vm` names (`JsStepDispatch::with_function`). Returns the step's helper status
+/// (`Exit::to_helper`): `HELPER_COMPLETED` or `HELPER_BRANCHED`; `HELPER_MISSED` where the record is no frame step (nothing
+/// ran: the image's per-record fallback runs it); `HELPER_RAISED` where the step raised, the error parked in
+/// `Vm::lane_completion`. On return the payload's frame words are current (`refresh_image_bases`), since the step may have
+/// grown `vm.frames`. Image bodies run no lane activations, so the step is always the frame's own.
+///
+/// # Safety
+/// `payload` is a live image dispatch whose VM and program outlive the call.
+pub(crate) unsafe extern "C" fn ahead_general_step(payload: *mut JsStepDispatch, call_pc: u64) -> u64 {
+    // SAFETY: the caller's contract; the VM and program the payload names are live and not otherwise borrowed here.
+    let payload = unsafe { &mut *payload };
+    let vm = unsafe { &mut *(payload.head.vm as *mut Vm) };
+    let code = unsafe { &*(payload.head.residual as *const ResidualProgram) };
+    let (frame, pc) = (payload.frame, call_pc as usize);
+    let Some(instruction) = frame_step_record(code.function(vm.frames[frame].function as usize), pc) else {
+        return helper_word(Exit::Missed);
+    };
+    // The record's pc is published as a frame's own step publishes it (`made_in_place`).
+    vm.frames[frame].pc = pc;
+    vm.frames[frame].pc_is_resume = false;
+    let made = step_frame_record(vm, code, frame, pc, instruction);
+    refresh_image_bases(payload, vm);
+    let exit = match made {
+        Ok(exit) => {
+            if instruction.op().binds_this() || instruction.writes_current_this() {
+                // The step bound the frame's `this` (`super()`): the header the image's rows read takes it.
+                let this = vm.current_this(frame).unwrap_or(Value::DELETED);
+                // SAFETY: the payload's window was refreshed above, and its header is its own.
+                unsafe { set_frame_word(payload.native_registers, CONTEXT_THIS, this.to_bits()) };
+            }
+            exit
+        }
+        Err(error) => {
+            vm.lane_completion.raise(error);
+            Exit::Raised
+        }
+    };
+    helper_word(exit)
+}
+
+/// The helper status word of a frame step's exit: every exit a frame step makes has one (`Exit::to_helper`).
+fn helper_word(exit: Exit) -> u64 {
+    exit.to_helper().expect("a frame step's exit is a helper status")
+}
+
+/// Re-reads the register window of the payload's frame into the image payload's cached words (`native_registers`,
+/// `register_count`, `fixed_this_slot`), as `JsStepDispatch::refresh_heap_bases` reads them at entry. A step that grows
+/// `vm.frames` may have moved the frame's window, so an image body refreshes them as a lane body refreshes its bases
+/// (`refresh_body_bases`), and the object bases (`refresh_object_bases`) a step that allocated or ran guest code may have moved.
+pub(crate) fn refresh_image_bases(payload: &mut JsStepDispatch, vm: &mut Vm) {
+    let activation = &mut vm.frames[payload.frame];
+    payload.native_registers = activation.registers.as_mut_ptr();
+    payload.register_count = activation.registers.len();
+    payload.fixed_this_slot = if activation.fixed_this { &activation.this as *const Value } else { std::ptr::null() };
+    payload.refresh_object_bases(vm);
 }
 
 /// The allocation of the record at `call_pc`, a fixed-shape object the record defines (`Step::Allocate`): its value is

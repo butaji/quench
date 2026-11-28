@@ -97,7 +97,7 @@ fn chain_stores(
         let own = body.initializer_stores(&code.constants).or_else(|| body.only_returns_undefined(&code.constants).then_some(&[]));
         return append(stores, program, own.filter(|_| Vm::inline_constructible(body))?, passed).map(|()| class);
     }
-    let parent = vm.object_data(class)?.proto();
+    let parent = vm.heap_reads().object(class)?.proto();
     if body.super_forwarding(&code.atoms, &code.constants) == Some(SuperForwarded::Passed) {
         return chain_stores(vm, parent, passed, stores, classes + 1);
     }
@@ -115,6 +115,7 @@ fn add_chain_stores(
     this: Value,
     stores: &[(ProgramId, InitializerStore)],
     argument: &impl Fn(u16) -> Value,
+    fixed: bool,
     each: &mut dyn FnMut(&InitializerStore, Value),
 ) -> bool {
     let running = vm.active_program;
@@ -123,13 +124,13 @@ fn add_chain_stores(
         if *program != vm.active_program {
             enter_program(vm, *program);
         }
-        let Some(code) = vm.programs.residual(*program).map(std::ptr::from_ref) else {
+        if vm.programs.residual(*program).is_none() {
             added = false;
             break;
-        };
-        // SAFETY: the program store keeps a residual for as long as the VM runs it.
-        let code = unsafe { &*code };
-        added = add_stores_in_lane(vm, code, this, std::slice::from_ref(store), argument, |_, _| None, &mut *each);
+        }
+        // Each class's atoms name its own program's fields, which the running program's facts do not
+        // settle, so every chain store is kept.
+        added = add_stores_in_lane(vm, this, std::slice::from_ref(store), argument, |_| true, fixed, |_, _| None, &mut *each);
         if !added {
             break;
         }
@@ -146,12 +147,13 @@ fn enter_program(vm: &mut Vm, program: ProgramId) {
 }
 
 /// Notes on `callee`'s plan, when the construction left one, the parent it holds with.
-fn plan_super_parent(vm: &mut Vm, callee: Value) {
-    if let Some(index) = construct_plan_index(callee)
+fn plan_super_parent(vm: &mut Vm, callee: Value, class: u32) {
+    if let Some(index) = construct_plan_index(callee, class)
         && vm.lane_stack.construct_plans[index].callee == callee
-        && let Some(class) = vm.object_data(callee)
+        && vm.lane_stack.construct_plans[index].class == class
+        && let Some(object) = vm.heap_reads().object(callee)
     {
-        vm.lane_stack.construct_plans[index].super_parent = class.proto();
+        vm.lane_stack.construct_plans[index].super_parent = object.proto();
     }
 }
 
@@ -170,6 +172,7 @@ fn plan_super_parent(vm: &mut Vm, callee: Value) {
 #[inline(never)]
 pub(crate) fn super_construction(
     cx: *mut LaneContext,
+    ip: Ip,
     r: Registers,
     i: &LaneInstruction,
     callee: Value,
@@ -178,18 +181,20 @@ pub(crate) fn super_construction(
     if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
         return None;
     }
-    if let Some(this) = holding_construct_plan(vm, callee)
+    // SAFETY: `ip` is a record of the running view.
+    let class = unsafe { site_class_in_lane(cx, ip, callee) };
+    if let Some(this) = holding_construct_plan(vm, callee, class)
         .filter(|plan| !plan.super_parent.is_undefined())
-        .and_then(|_| planned_construction_in_lane(vm, callee, r, i))
+        .and_then(|_| planned_construction_in_lane(vm, callee, class, r, i))
     {
         return Some(this);
     }
     let mut stores = ChainStores::new();
     let root = chain_stores(vm, callee, None, &mut stores, 0).filter(|root| *root != callee)?;
     let argument = construct_argument_in_lane(r, i);
-    let (this, added) = initialize_stores_in_lane(vm, callee, root, Value::UNDEFINED, |vm, this, _, each| add_chain_stores(vm, this, &stores, &argument, each))?;
+    let (this, added) = initialize_stores_in_lane(vm, callee, class, root, Value::UNDEFINED, |vm, this, fixed, _, each| add_chain_stores(vm, this, &stores, &argument, fixed, each))?;
     added.then(|| {
-        plan_super_parent(vm, callee);
+        plan_super_parent(vm, callee, class);
         this
     })
 }

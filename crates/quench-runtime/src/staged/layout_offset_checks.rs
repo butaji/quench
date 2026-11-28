@@ -16,9 +16,6 @@ const _: () = assert!(std::mem::size_of::<crate::heap::FunctionKind>() == std::m
 const _: () = assert!(crate::heap::NATIVE_RECORD_CURSOR_LAYOUT.next_offset == L::NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
 const _: () = assert!(crate::heap::NATIVE_RECORD_CURSOR_LAYOUT.limit_offset == L::NATIVE_RECORD_CURSOR_LAYOUT.limit_offset);
 // NATIVE_OBJECT_LAYOUT
-const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_capacity == L::NATIVE_OBJECT_LAYOUT.record_capacity);
-const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_size == L::NATIVE_OBJECT_LAYOUT.record_size);
-const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.record_align == L::NATIVE_OBJECT_LAYOUT.record_align);
 const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset == L::NATIVE_OBJECT_LAYOUT.layout_offset);
 const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.meta_offset == L::NATIVE_OBJECT_LAYOUT.meta_offset);
 const _: () = assert!(crate::heap::NATIVE_OBJECT_LAYOUT.auxiliary_offset == L::NATIVE_OBJECT_LAYOUT.auxiliary_offset);
@@ -81,7 +78,7 @@ const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.entry_size == L::NATI
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_offset);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_offset);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_offset == L::NATIVE_FIELD_CACHE_LAYOUT.slot_offset);
-const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_id_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_id_offset);
+const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_cell_offset == L::NATIVE_FIELD_CACHE_LAYOUT.holder_cell_offset);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement == L::NATIVE_FIELD_CACHE_LAYOUT.receiver_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.holder_complement == L::NATIVE_FIELD_CACHE_LAYOUT.holder_complement);
 const _: () = assert!(crate::vm::NATIVE_FIELD_CACHE_LAYOUT.slot_complement == L::NATIVE_FIELD_CACHE_LAYOUT.slot_complement);

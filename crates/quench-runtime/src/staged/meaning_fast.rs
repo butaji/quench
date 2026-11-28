@@ -2,11 +2,19 @@
 //! tier's test exactly. Each classification reads the record's decoded operation (`Operation::decode`,
 //! the shared staged semantics) or a catalog trait, never the opcode's name.
 
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::allocation::AllocationAllocationExt;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use crate::bytecode::{Register, Traits, WideInstruction};
 use super::protocol_literals::LiteralStep;
 use super::protocol_owned::OwnedVarStep;
 use super::protocol_values::ValueStep;
 use super::{DecodeContext, Operation, Protocol};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The staged operation of `instruction`, with no constants or sites resolved (`Operation::decode`).
 #[inline(always)]

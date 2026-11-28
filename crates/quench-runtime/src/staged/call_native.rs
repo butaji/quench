@@ -20,7 +20,7 @@ use crate::Value;
 /// dependency of the lane's generation: a collection, which may free the function and reuse its
 /// id, or another realm starts a new generation, which forgets it.
 #[inline(always)]
-pub(crate) fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected: S::Word, miss: S::Miss) -> Option<()> {
+pub fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected: S::Word, miss: S::Miss) -> Option<()> {
     let difference = stage.sub(callee, expected);
     let same = stage.eq_imm(difference, 0u32);
     stage.guard(same, miss)
@@ -29,7 +29,7 @@ pub(crate) fn admit_identity<S: Stage>(stage: &mut S, callee: S::Word, expected:
 /// `admit_identity` on machine words, for the interpreter's native call handlers.
 #[inline(always)]
 pub fn concrete_admit_identity(callee: u64, expected: u64) -> bool {
-    admit_identity(&mut Concrete::new(std::ptr::null()), callee, expected, ()).is_some()
+    admit_identity(&mut Concrete::pure(), callee, expected, ()).is_some()
 }
 
 /// The registers of a call site's in-place native call: its callee, receiver, first argument (the
@@ -84,14 +84,16 @@ pub enum MathCall {
     LeadingZeros,
     /// A libm function of one Number, or a body the stages do not run (`Math.atanh`, `Math.cos`, ...).
     Libm(fn(f64) -> f64),
-    /// `Math.pow` or `Math.atan2`: a function of two Numbers, which no stage runs.
+    /// `Math.pow`: `base ** exponent` (`power::power`), a row of the stages of two Numbers.
+    Power,
+    /// `Math.atan2`: a function of two Numbers, which no stage runs.
     Binary(fn(f64, f64) -> f64),
 }
 
 impl MathCall {
     /// The value `Math.max` (`maximum`) or `Math.min` folds its arguments from, and returns for
     /// none: the identity of the extreme, which a NaN argument still overrides.
-    pub(crate) const fn extreme_start(maximum: bool) -> f64 {
+    pub const fn extreme_start(maximum: bool) -> f64 {
         if maximum { f64::NEG_INFINITY } else { f64::INFINITY }
     }
 
@@ -102,14 +104,14 @@ impl MathCall {
     }
 
     /// Whether the function takes one Number (`Math.sqrt`, `Math.clz32`, `Math.sin`, ...).
-    pub(crate) const fn reads_one_number(self) -> bool {
+    pub const fn reads_one_number(self) -> bool {
         matches!(self, Self::Unary(_) | Self::LeadingZeros | Self::Libm(_))
     }
 
     /// The number of arguments the function's operation reads: two for the binary functions, else one.
     pub const fn arity(self) -> u16 {
         match self {
-            Self::Extreme(_) | Self::Imul | Self::Binary(_) => 2,
+            Self::Extreme(_) | Self::Imul | Self::Power | Self::Binary(_) => 2,
             Self::Unary(_) | Self::LeadingZeros | Self::Libm(_) => 1,
         }
     }
@@ -145,11 +147,12 @@ fn int_value<S: NumericStage>(stage: &mut S, payload: S::Word) -> S::Word {
 /// double in int32 range other than -0 as that int32), so the int32 fast paths of `Math.abs`,
 /// `Math.max`, `Math.min` and `Math.imul` change no result: they skip the conversions.
 #[inline(always)]
-pub(crate) fn math_call<S: NumericStage>(stage: &mut S, call: MathCall, args: &[S::Word], miss: S::Miss) -> Option<S::Word> {
+pub fn math_call<S: NumericStage>(stage: &mut S, call: MathCall, args: &[S::Word], miss: S::Miss) -> Option<S::Word> {
     match (call, args) {
         (_, &[only]) => math_call_of_one(stage, call, only, miss),
         (MathCall::Extreme(maximum), &[left, right]) => extreme_pair(stage, maximum, (left, right), miss),
         (MathCall::Imul, &[left, right]) => imul_pair(stage, (left, right), miss),
+        (MathCall::Power, &[base, exponent]) => power_pair(stage, (base, exponent), miss),
         (MathCall::Extreme(maximum), &[]) => {
             let start = super::Float64::constant(stage, MathCall::extreme_start(maximum));
             Some(stage.box_number(start))
@@ -199,6 +202,8 @@ pub fn math_of_operands<S: NumericStage>(stage: &mut S, call: MathCall, operands
         (MathCall::LeadingZeros, &[only]) => (Domain::Int32, super::math::count_leading_zeros(stage, only)),
         (MathCall::Unary(operation), &[only]) => (Domain::Float64, super::math::unary(stage, operation, only)),
         (MathCall::Extreme(maximum), &[left, right]) => (Domain::Float64, super::math::extreme(stage, maximum, left, right)),
+        #[cfg(not(stencil_build))]
+        (MathCall::Power, &[base, exponent]) => (Domain::Float64, stage.float_power(base, exponent)),
         (MathCall::Extreme(maximum), &[only]) => {
             let start = stage.f64_constant(MathCall::extreme_start(maximum));
             (Domain::Float64, super::math::extreme(stage, maximum, start, only))
@@ -274,6 +279,13 @@ fn imul_pair<S: NumericStage>(stage: &mut S, (left, right): (S::Word, S::Word), 
         let y = stage.to_int32(y, miss)?;
         math_value(stage, MathCall::Imul, &[x, y])
     })
+}
+
+/// `Math.pow` of two value words: the power of two Numbers, a non-Number leaving at `miss`.
+#[inline(always)]
+fn power_pair<S: NumericStage>(stage: &mut S, (base, exponent): (S::Word, S::Word), miss: S::Miss) -> Option<S::Word> {
+    let (x, y) = (number_word(stage, base, miss)?, number_word(stage, exponent, miss)?);
+    math_value(stage, MathCall::Power, &[x, y])
 }
 
 /// A native whose value is a function of Number value words: a Math function (`math_call`) or
@@ -381,6 +393,10 @@ pub fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
             let argument = |index: usize| args.get(index).map_or(Some(f64::NAN), |value| value.as_number());
             Some(Value::number(operation(argument(0)?, argument(1)?)))
         }
+        (MathCall::Power, _) if args.len() <= 2 => {
+            let nan = Value::number(f64::NAN); // a missing argument is `undefined`, whose ToNumber is NaN
+            concrete_row(call, &[args.first().copied().unwrap_or(nan), args.get(1).copied().unwrap_or(nan)])
+        }
         _ => concrete_row(call, args),
     }
 }
@@ -388,7 +404,7 @@ pub fn concrete_math_call(call: MathCall, args: &[Value]) -> Option<Value> {
 /// `math_call` of `call` on the interpreter's values, for the stage rows.
 #[inline(always)]
 fn concrete_row(call: MathCall, args: &[Value]) -> Option<Value> {
-    let stage = &mut Concrete::new(std::ptr::null());
+    let stage = &mut Concrete::pure();
     match *args {
         [] => step_number_native_of(stage, NumberNative::Math(call), &[], ()),
         [only] => step_number_native_of(stage, NumberNative::Math(call), &[only.to_bits()], ()),
@@ -475,7 +491,7 @@ mod tests {
 
     #[test]
     fn binary_functions_read_a_missing_argument_as_nan() {
-        let pow = MathCall::Binary(crate::staged::math::power);
+        let pow = MathCall::Power;
         assert_eq!(call(pow, &[Value::integer(2), Value::integer(3)]), Some(Value::integer(8)));
         assert!(call(pow, &[Value::integer(2)]).is_some_and(|value| value.as_number().is_some_and(f64::is_nan)));
         assert_eq!(call(pow, &[Value::UNDEFINED, Value::integer(1)]), None);

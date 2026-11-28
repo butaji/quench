@@ -23,6 +23,8 @@ use crate::typed_ir::Type;
 mod concrete;
 mod word_ops;
 pub mod numeric;
+/// The one typing of an operation over the typed cells: the solve, the graph lowering and check deletion all read it.
+pub mod typing;
 pub mod proof;
 pub use proof::{Float64, HeldLayouts, HeldShapes, HeldViews, Int32, IntFact, IntOf, Linked, NumberFact, NumberOf, ShapeFact, Shaped, TypedViewFact, Viewed};
 /// The stencil layout numbers, one source for the stencils (`#[path]`) and the runtime's const checks.
@@ -70,6 +72,7 @@ mod global;
 #[cfg_attr(not(test), allow(dead_code))] // the division is data the specializers will ask; today only its tests do
 pub mod division;
 pub mod math;
+pub mod power;
 pub(crate) mod int_math;
 mod names;
 pub mod protocol_literals;
@@ -82,7 +85,12 @@ mod spread;
 mod admission;
 mod delete;
 mod operation;
-pub use operation::Operation;
+pub use operation::{HandlerEdge, Operation, OperationOperationExt, OperationOperationRecordsExt, operation_is_call_index};
+pub use names::OperationNamesExt;
+pub use generic::OperationGenericExt;
+pub use compare::{ComparisonCompareExt, OperationCompareExt};
+pub use element_rows::OperationElementRowsExt;
+pub use forms::{CallRecordFormsExt, InvocationFormsExt};
 pub mod c_twins;
 pub use c_twins::{CKernel, CTwin};
 pub use operation::kind as op_kind;
@@ -109,7 +117,7 @@ pub use spread::Passing;
 pub use decode::{DecodeContext, Fields};
 #[allow(unused_imports)]
 pub use compare::{nullish_of, Comparison}; pub use generic::{decide as equality_decided, number_strict_equal};
-pub use concrete::Concrete;
+pub use concrete::{Concrete, concrete_over_arena, concrete_over_vm};
 #[allow(unused_imports)]
 pub use numeric::{Domain, NegativeZero, NumberOperation, NumericFrame, NumericStage, Overflow};
 pub mod builtins;
@@ -171,6 +179,8 @@ pub mod naming;
 pub mod call; pub mod frame;
 pub mod forms;
 pub mod protocol;
+/// The exit status of an activation (`staged/exit.rs`), mounted by the b-jit call record.
+pub use quench_bjit::call_record::exit;
 pub(crate) mod native_frame;
 pub mod call_keeping;
 pub mod call_environment;
@@ -184,7 +194,7 @@ pub mod call_complete;
 pub mod call_return;
 pub mod call_iteration;
 #[allow(unused_imports)]
-pub use forms::{Arguments, CallFacts, CallForm, Callee, FunctionId, Invocation, Receiver, RegisterList};
+pub use forms::{Arguments, CallFacts, CallRecord, Callee, FunctionId, Invocation, Receiver, RegisterList};
 pub use protocol::CallOperation;
 pub(crate) mod invoke;
 pub(crate) mod prologue;
@@ -208,6 +218,9 @@ pub use delegation::DelegationStep;
 mod allocation;
 #[allow(unused_imports)]
 pub use allocation::{Allocation, InlineEmpty};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+pub use allocation::AllocationAllocationExt;
 pub mod plan_fields;
 pub mod property;
 mod property_write;
@@ -223,6 +236,7 @@ mod control;
 mod generic;
 #[allow(unused_imports)]
 pub use steps::{step, step_of, step_out_of_line, row_step, RowStep, step_flow, step_wasm_int, step_local, step_number, step_value, step_names, step_property, step_keyed, step_generic, step_wasm_float, step_wasm_jump, step_wasm_state, step_wasm_access, step_wasm_vector, step_arith};
+#[quench_macros::test_visible]
 pub(crate) mod effects;
 pub(crate) mod function_plan;
 pub mod region;
@@ -255,6 +269,8 @@ pub mod wasm_simd_lanes;
 pub mod wasm_step;
 pub mod wasm_atomic;
 pub(crate) mod wasm_emit;
+#[cfg(not(stencil_build))]
+pub mod glue_prelude;
 pub use wasm_concrete::ConcreteWasm;
 #[cfg(test)]
 pub(crate) mod trace;
@@ -263,7 +279,7 @@ pub use effects::{Effects, Region, RegionSet};
 #[allow(unused_imports)]
 pub use region::Access;
 #[allow(unused_imports)]
-pub use ic::{HINTED_FORM, TAGGED_SLOTS, concrete_global_field_hit, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
+pub use ic::{HINTED_FORM, concrete_global_field_hit, concrete_hinted_own_field_hit, concrete_own_field_hit, concrete_site_own_chain, concrete_site_own_read, concrete_site_store};
 #[allow(unused_imports)]
 pub use object::{Form, Layout, Slots, concrete_own_read, arena_extras_layout};
 
@@ -627,9 +643,6 @@ pub const fn chain_raw_eligible(chain: [u16; 4]) -> u8 {
 /// Its operands are read as Numbers (`numeric::binary_operation`), so a raw double operand is one. These
 /// are the only rows a raw result (`MODE_RAW_OUT`) may feed: a Unary's operand reads as an int32 first.
 pub const BINARY_ROW: u16 = Op::Binary as u16;
-/// The truth jumps a `Binary` equality fuses with into one fixed-equality record (`FUSED_ROWS`' `Binary` pairs),
-/// false-jump first: the lane names their rows from here, never by opcode.
-pub const EQUALITY_JUMP_ROWS: [u16; 2] = [Op::JumpFalse as u16, Op::JumpTrue as u16];
 /// The row of `NumericAdd`, a Number binary operator (see `BINARY_ROW`).
 pub const NUMERIC_ADD_ROW: u16 = Op::NumericAdd as u16;
 /// The row of `NumericMultiply`, a Number binary operator (see `BINARY_ROW`).
@@ -1284,8 +1297,6 @@ mod wasm_call_tests;
 mod wasm_gc_tests;
 #[cfg(test)]
 mod wasm_simd_tests;
-#[cfg(test)]
-mod instanceof_tests;
 #[doc(hidden)]
 pub mod alias_pins;
 

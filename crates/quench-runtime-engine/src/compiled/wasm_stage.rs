@@ -9,10 +9,11 @@ use quench_runtime::bytecode::WideInstruction;
 use quench_runtime::staged::machine::MachineStage;
 use quench_runtime::staged::wasm::{Width, integer_binary};
 use quench_runtime::staged::wasm_float::{convert, float_binary};
-use quench_runtime::staged::wasm_operation::{Operand, WasmOperation};
+use quench_runtime::staged::wasm_operation::{Operand, WasmOperation, WasmOperationWasmOperationExt};
 use quench_runtime::wasm::integer::{I64BinaryOperator as Binary, I64UnaryOperator as Unary};
 use cranelift_codegen::ir;
 use std::convert::Infallible;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The value of a result a stage with no exit cannot fail.
 pub(crate) fn infallible<T>(result: Result<T, Infallible>) -> T {

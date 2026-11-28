@@ -1,4 +1,171 @@
 use super::*;
+use super::array_modern::ArrayFromTarget;
+use super::native_table::NativeFn;
+
+/// The standalone entry of each `Array` native: the array family's own claim, in the method
+/// group of `operations::native_entry`. Each native runs its body through the helper that
+/// owns it; the callback, copy, flatten, group and iterator helpers take the native.
+pub(super) fn entry(native: Native) -> Option<NativeFn> {
+    match native {
+        Native::ArrayIsArray => Some(array_is_array),
+        Native::ArrayPush => Some(array_push),
+        Native::ArrayPop => Some(array_pop),
+        Native::ArraySlice => Some(array_slice),
+        Native::ArrayIncludes => Some(array_includes),
+        Native::ArrayJoin => Some(array_join),
+        Native::ArrayConcat => Some(array_concat),
+        Native::ArrayFlat | Native::ArrayFlatMap => Some(array_flatten),
+        Native::ArrayReverse => Some(array_reverse),
+        Native::ArrayShift => Some(array_shift),
+        Native::ArrayUnshift => Some(array_unshift),
+        Native::ArraySplice => Some(array_splice),
+        Native::ArrayFill => Some(array_fill),
+        Native::ArrayAt => Some(array_at),
+        Native::ArrayLastIndexOf => Some(array_last_index_of),
+        Native::ArrayIndexOf => Some(array_index_of),
+        Native::ArrayCopyWithin => Some(array_copy_within),
+        Native::ArrayWith | Native::ArrayToReversed | Native::ArrayToSpliced => Some(array_copy),
+        Native::ArrayForEach
+        | Native::ArrayMap
+        | Native::ArrayFilter
+        | Native::ArraySome
+        | Native::ArrayEvery
+        | Native::ArrayFind
+        | Native::ArrayFindIndex
+        | Native::ArrayFindLast
+        | Native::ArrayFindLastIndex
+        | Native::ArrayReduce
+        | Native::ArrayReduceRight => Some(array_callback),
+        Native::ArrayGroup | Native::ArrayGroupToMap => Some(array_group),
+        Native::ArraySort => Some(array_sort_in_place),
+        Native::ArrayToSorted => Some(array_sort_copy),
+        Native::ArraySpecies => Some(array_species),
+        Native::ArrayToString => Some(array_to_string),
+        Native::ArrayToLocaleString => Some(array_to_locale_string),
+        Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => Some(array_iterator),
+        Native::ArrayFrom => Some(array_from),
+        Native::ArrayFromAsync => Some(array_from_async),
+        Native::ArrayOf => Some(array_of),
+        _ => None,
+    }
+}
+
+fn array_is_array(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+    Ok(if vm.is_array(p, value)? { Value::TRUE } else { Value::FALSE })
+}
+
+fn array_push(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_push_native(p, this, args)
+}
+
+fn array_pop(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.array_pop_native(p, this)
+}
+
+fn array_slice(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_slice_native(p, this, args)
+}
+
+fn array_includes(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_includes_native(p, this, args)
+}
+
+fn array_join(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_join_native(p, this, args)
+}
+
+fn array_concat(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_concat_native(p, this, args)
+}
+
+fn array_flatten(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_flatten_native(p, native, this, args)
+}
+
+fn array_reverse(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.array_reverse_native(p, this)
+}
+
+fn array_shift(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.array_shift_native(p, this)
+}
+
+fn array_unshift(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_unshift_native(p, this, args)
+}
+
+fn array_splice(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_splice_native(p, this, args)
+}
+
+fn array_fill(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_fill_native(p, this, args)
+}
+
+fn array_at(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_at_native(p, this, args)
+}
+
+fn array_last_index_of(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_last_index_of_native(p, this, args)
+}
+
+fn array_index_of(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_index_of_native(p, this, args)
+}
+
+fn array_copy_within(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_copy_within_native(p, this, args)
+}
+
+fn array_copy(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_copy_native(p, native, this, args)
+}
+
+fn array_callback(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_callback_native(p, native, this, args)
+}
+
+fn array_group(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_group_native(p, native, this, args)
+}
+
+fn array_sort_in_place(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_sort_native(p, this, args, true)
+}
+
+fn array_sort_copy(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_sort_native(p, this, args, false)
+}
+
+fn array_species(_vm: &mut Vm, _p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Ok(this)
+}
+
+fn array_to_string(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.array_to_string_native(p, this)
+}
+
+fn array_to_locale_string(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_to_locale_string_native(p, this, args)
+}
+
+fn array_iterator(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.array_iterator_native(p, native, this)
+}
+
+fn array_from(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_from_native(p, this, args, ArrayFromTarget::Array)
+}
+
+fn array_from_async(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_from_async_native(p, this, args)
+}
+
+fn array_of(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.array_of_native(p, this, args)
+}
 
 const ARRAY_CONSTRUCTOR_LENGTH: f64 = 1.0;
 /// `Array.prototype`'s methods and `Array`'s static methods, in installation order: derived

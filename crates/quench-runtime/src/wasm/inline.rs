@@ -35,35 +35,17 @@ const INTERPRETED_LEAF_OPERATORS: usize = 512;
 /// Keep call structure for a native backend to resolve.
 const RETAIN_CALLS: usize = 0;
 
-/// Operators up to which a module lowered for compiled code inlines leaves as the
-/// interpreter does. A compiled call is cheap, but its activation still costs a frame, a
-/// stack check, an interrupt check and a status test, and a copy lets Cranelift optimize the
-/// leaf with its caller's values. Wasm compiles eagerly, so every copy is compiled whether it
-/// runs or not; past this size the copies' compile time outweighs them on a module's first
-/// runs, and larger modules keep every call.
-const COMPILED_INLINING_MODULE_OPERATORS: usize = 32_768;
-
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 thread_local! {
     /// Set by tests of compiled calls themselves: compiled lowering then keeps every call.
-    pub(crate) static COMPILED_CALLS_KEPT_FOR_TEST: std::cell::Cell<bool> =
+    pub static COMPILED_CALLS_KEPT_FOR_TEST: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
 }
 
-/// The leaf budget for a module lowered for `mode`, whose operators `module_operators`
-/// counts (asked only for compiled code).
-pub(super) fn leaf_budget(mode: crate::ExecutionMode, module_operators: impl FnOnce() -> usize) -> usize {
-    match mode {
-        crate::ExecutionMode::Interpreted => INTERPRETED_LEAF_OPERATORS,
-        #[cfg(test)]
-        crate::ExecutionMode::Compiled if COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => RETAIN_CALLS,
-        crate::ExecutionMode::Compiled if module_operators() <= COMPILED_INLINING_MODULE_OPERATORS => {
-            INTERPRETED_LEAF_OPERATORS
-        }
-        crate::ExecutionMode::Compiled => RETAIN_CALLS,
-        #[cfg(feature = "native-execution")]
-        crate::ExecutionMode::NativeOnly => RETAIN_CALLS,
-    }
+/// The leaf budget of a module, given the policy's answer to whether it inlines leaves
+/// (`tier_policy::wasm_module_inlines_leaves`).
+pub(super) fn leaf_budget(inlines_leaves: bool) -> usize {
+    if inlines_leaves { INTERPRETED_LEAF_OPERATORS } else { RETAIN_CALLS }
 }
 
 /// Leaf forms a round holds at once (`LeafPlan::built_leaf`).

@@ -1,4 +1,4 @@
-use super::{AtomSequence, AtomTable, KeptBytes, KeptPrefix, ResidualProgram, SourceText, binary};
+use super::{AtomSequence, AtomTable, ImageRetention, KeptBytes, KeptPrefix, ResidualProgram, SourceText, binary};
 use std::{hash::{Hash, Hasher}, rc::Rc};
 
 /// One compiler namespace, shared by every metadata record in a linked image.
@@ -30,11 +30,13 @@ impl NativeProgramNamespace {
         Ok(bytes)
     }
 
-    /// Native metadata whose original source lives in the image's shared asset pool.
-    pub fn encode_with_external_source(&self, program: &ResidualProgram) -> Result<Vec<u8>, String> {
+    /// Native metadata whose original source lives in the image's shared asset pool, when
+    /// `retention` keeps the text (its fingerprint names exactly the text the image supplies).
+    pub fn encode_with_external_source(&self, program: &ResidualProgram, retention: ImageRetention) -> Result<Vec<u8>, String> {
         self.prepare_encoding(program)?;
-        let mut bytes = binary::encode_snapshot_program(program);
-        bytes.extend_from_slice(&source_fingerprint(program.source_text()).to_le_bytes());
+        let mut bytes = binary::encode_snapshot_program(program, retention);
+        let text = program.source_text().filter(|_| retention.source_text);
+        bytes.extend_from_slice(&source_fingerprint(text).to_le_bytes());
         bytes.extend_from_slice(&self.fingerprint.to_le_bytes());
         Ok(bytes)
     }
@@ -93,7 +95,7 @@ impl NativeProgramNamespace {
             return Err("native metadata names atoms its namespace lacks".into());
         }
         program.atoms = AtomTable::shared(self.atoms.clone(), atom_count);
-        if program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
+        if program.call_sites.get().is_none() {
             return Err("native metadata has no frozen call-site descriptions".into());
         }
         program.validate()?;
@@ -118,7 +120,7 @@ mod tests {
         let program = crate::Engine::specialize(SOURCE, "pooled.js").unwrap();
         let namespace = NativeProgramNamespace::from_entry(&program).unwrap();
         let included = namespace.encode(&program).unwrap();
-        let external = namespace.encode_with_external_source(&program).unwrap();
+        let external = namespace.encode_with_external_source(&program, ImageRetention::ALL).unwrap();
         assert!(external.len() < included.len());
         assert!(!external.windows(SOURCE.len()).any(|bytes| bytes == SOURCE.as_bytes()));
         let decoded = namespace.decode_with_static_source(Rc::new(external.clone()), Some(SOURCE)).unwrap();
@@ -131,8 +133,22 @@ mod tests {
     }
 
     #[test]
+    fn stripped_metadata_keeps_call_descriptions_without_text_or_positions() {
+        let program = crate::Engine::specialize("function f(value) { value.missing(); }\nf({});", "stripped.js").unwrap();
+        program.freeze_native_diagnostics();
+        let namespace = NativeProgramNamespace::from_entry(&program).unwrap();
+        let retention = ImageRetention { source_text: false, stack_positions: false };
+        let bytes = namespace.encode_with_external_source(&program, retention).unwrap();
+        let decoded = namespace.decode_with_static_source(Rc::new(bytes), None).unwrap();
+        assert!(decoded.source_text().is_none());
+        assert_eq!(decoded.call_sites.get(), program.call_sites.get());
+        assert_eq!(decoded.call_pcs.get(), program.call_pcs.get());
+        assert!(decoded.source_position(0, 0).is_none(), "a program without positions names no location");
+    }
+
+    #[test]
     fn shared_metadata_preserves_prefix_ids_source_and_deferred_functions() {
-        let mut compiler = crate::NativeJsCompiler::new(true);
+        let mut compiler = crate::NativeJsCompiler::new();
         let first = compiler
             .compile_script(
                 "function earlier() { return globalThis.earlier; }",

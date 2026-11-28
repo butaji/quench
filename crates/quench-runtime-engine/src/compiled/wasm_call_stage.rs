@@ -31,6 +31,7 @@ use quench_runtime::staged::wasm_invoke::step_known_call_of;
 use quench_runtime::staged::{CallFrame, Callee, Constant, Entered, Frame, Invocation, NoPlans, PropertyFrame, Room,
     Stage, Step as StagedStep};
 use super::object_slots::Emit;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether `instruction` is a Wasm call whose destination is flagged as a return: a tail call,
 /// after which the function returns (nothing follows it on its path).
@@ -236,8 +237,6 @@ impl Analysis<'_> {
     ) -> Option<()> {
         let callee = u32::from(instruction.known_function_index());
         let compiles = callable.contains(callee as usize);
-        let rooted = self.experimental_root_compilation && !(self.root_only && !self.callouts);
-        (compiles || rooted).then_some(())?;
         let signature = self.signature(callee)?;
         // The VM callout ABI currently carries at most one result: do not admit a residual
         // fallback that would silently discard the remaining Wasm results.

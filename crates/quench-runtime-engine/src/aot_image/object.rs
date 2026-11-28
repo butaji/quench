@@ -1,6 +1,8 @@
 //! The object linker: an `AotImage` as a `NativeJsModule` for the system linker. Each function's
-//! entry is its base body; lane bodies stay in the image file, which the VM relinks each from
-//! when it installs it (`live::link_lane`). Helpers and semantic entries are imports the linker binds;
+//! entry is its base body. Each lane body is placed as its unlinked code (`LANE_TEXT`), with room for
+//! its veneers, beside one blank value table: its symbols name VM values (atoms, shapes, heap values,
+//! guard immediates), so the image's init edge links it in place (`live::link_placed_lane`), and
+//! no code heap block is made for it. Helpers and semantic entries are imports the linker binds;
 //! a code relocation names its target by declaration index, with a PC leave's offset as addend. The
 //! generic rows' operand records are one data record, named with the record's offset as addend, and
 //! the proven calls' records another, writable: each names no callee until the runtime binds it
@@ -12,12 +14,13 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{AotFunction, AotImage, base::NO_ENTRY, file, symbols::{Symbol, SymbolTable}};
+use super::{AotFunction, AotImage, base::NO_ENTRY, demand::Demand, file, symbols::{Symbol, SymbolTable}};
 use quench_runtime::vm::jit_backend::relocatable_code::RelocatableCode;
 use crate::native_object::{NATIVE_DATA_NAMESPACE, NATIVE_FUNCTION_NAMESPACE, NativeCode, NativeData, NativeFunction, NativeDataAddress, NativeFunctionAddress, NativeJsModule, NativeReloc};
 use cranelift_codegen::{ir, isa::{CallConv, TargetIsa}};
 use quench_bjit::call_record::CallRecord;
 use std::collections::BTreeMap;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The system linker's name of lane helper number `helper`, which the runtime binds.
 /// Every body starts at this alignment in the object.
@@ -34,6 +37,12 @@ const CALL_RECORDS_RECORD: u32 = 2;
 const HELPERS_RECORD: u32 = 3;
 /// The data record of the RegExp literals' searches (`regexp_data`).
 const REGEXPS_RECORD: u32 = 4;
+/// The infix of every lane text symbol (`{namespace}_qlane_{id}`, `{namespace}_qlane_values`), each placed in the
+/// executable's `.qlane` section (`LANE_SECTION`), which the init edge links in place and an image dump writes back into
+/// the file (`native_link`).
+pub(crate) const LANE_TEXT: &str = "_qlane_";
+/// The executable section an image's lane text is placed in (`NativeCode::section`).
+pub(crate) const LANE_SECTION: &str = ".qlane";
 /// The bytes of one call record (`CallRecord`).
 const CALL_RECORD_BYTES: i64 = std::mem::size_of::<CallRecord>() as i64;
 
@@ -44,11 +53,12 @@ struct Targets<'a> {
     imports: &'a BTreeMap<(u32, u32), u32>,
     /// The declaration index of each function's base body, by function.
     bases: &'a [u32],
-    conv: CallConv,
+    /// The convention of the lane bodies' code (`BODY_CALL_CONV`).
+    body_conv: CallConv,
 }
 
 /// The object of `image`, its symbols named under `namespace`.
-pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarget) -> Result<NativeJsModule, String> {
+pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarget, demand: Demand) -> Result<NativeJsModule, String> {
     let isa = quench_runtime::vm::jit_backend::relocatable_isa(target)?;
     let isa = &*isa;
     let mut functions = vec![NativeFunction::Import {
@@ -59,21 +69,52 @@ pub(crate) fn emit(image: &AotImage, namespace: &str, target: &super::ImageTarge
     let helpers = helper_data(namespace, image, &imports);
     let first = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
     let bases = base_declarations(image, first)?;
-    let targets = Targets { image, imports: &imports, bases: &bases, conv: isa.default_call_conv() };
+    let targets = Targets { image, imports: &imports, bases: &bases, body_conv: crate::compiled::BODY_CALL_CONV };
     let definitions = image.functions.iter().map(|function| entry_definition(namespace, function, &targets)).collect::<Result<Vec<_>, String>>()?;
     functions.extend(definitions);
-    let regexps = regexp_data(namespace, image, &mut functions, targets.conv)?;
+    let lanes = lane_text(namespace, image, &mut functions, targets.body_conv)?;
+    let regexps = regexp_data(namespace, image, &mut functions, isa.default_call_conv())?;
     let file = file::to_bytes(image);
-    let table = entry_table(isa, namespace, (&bases, first), (file.len(), image.regexps.len()))?;
+    let table = entry_table(isa, namespace, (&bases, first, &lanes), (file.len(), image.regexps.len()))?;
     let data = vec![image_data(namespace, file), table, call_data(namespace, image), helpers, regexps];
-    Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD))
+    Ok(NativeJsModule::of(functions, data, ENTRY_TABLE_RECORD, demand))
 }
 
-/// The code the object places for an image's function: its base body. A lane body names VM
-/// symbols (atoms, heap values, the invalidation word) only a loader resolves, so the VM links
-/// it from the image file when it installs it (`live::link_lane`), as it does in-process.
+/// The code the object links for an image's function: its base body. A lane body names VM symbols (atoms, heap
+/// values, guard immediates, the invalidation word) only a VM resolves, so the object places it unlinked (`lane_text`).
 fn codes(function: &AotFunction) -> impl Iterator<Item = &RelocatableCode> {
     std::iter::once(&function.base.code)
+}
+
+/// The lane text (`LANE_TEXT`): each lane body's unlinked code with room for its veneers, then one blank value table
+/// (`live::value_words`, at least one word), each a definition after `functions`. Returns, per function, the declaration
+/// of its lane body, and last the value table's.
+fn lane_text(namespace: &str, image: &AotImage, functions: &mut Vec<NativeFunction>, conv: CallConv) -> Result<LaneDeclarations, String> {
+    let declare = |functions: &mut Vec<NativeFunction>, name: String, code: Vec<u8>| -> Result<u32, String> {
+        let index = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
+        functions.push(NativeFunction::Code(NativeCode { name, signature: ir::Signature::new(conv), code, alignment: CODE_ALIGNMENT, relocations: Vec::new(), section: Some(LANE_SECTION) }));
+        Ok(index)
+    };
+    let mut bodies = Vec::with_capacity(image.functions.len());
+    for function in &image.functions {
+        bodies.push(match &function.lane {
+            Some(lane) => {
+                let mut code = lane.code.code.to_vec();
+                code.resize(code.len() + super::live::stub_bytes_in_lane(&lane.code), 0);
+                Some(declare(functions, format!("{namespace}{LANE_TEXT}{}", function.id), code)?)
+            }
+            None => None,
+        });
+    }
+    let words = super::live::value_words(image).max(1);
+    let values = declare(functions, format!("{namespace}{LANE_TEXT}values"), vec![0; words * std::mem::size_of::<u64>()])?;
+    Ok(LaneDeclarations { bodies, values })
+}
+
+/// The declarations of an image's lane text (`lane_text`).
+struct LaneDeclarations {
+    bodies: Vec<Option<u32>>,
+    values: u32,
 }
 
 /// Declares the helper and semantic-entry symbols the code names, after `functions`' existing
@@ -129,10 +170,11 @@ fn definition(name: String, code: &RelocatableCode, targets: &Targets<'_>) -> Re
     }).collect::<Result<Vec<_>, String>>()?;
     Ok(NativeFunction::Code(NativeCode {
         name,
-        signature: ir::Signature::new(targets.conv),
+        signature: ir::Signature::new(targets.body_conv),
         code: code.code.to_vec(),
         alignment: CODE_ALIGNMENT,
         relocations,
+        section: None,
     }))
 }
 
@@ -193,7 +235,7 @@ fn regexp_data(namespace: &str, image: &AotImage, functions: &mut Vec<NativeFunc
     for (index, regexp) in image.regexps.iter().enumerate() {
         let function = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
         functions.push(NativeFunction::Code(NativeCode { name: format!("{namespace}_regexp_{index}"), signature: ir::Signature::new(conv),
-            code: regexp.code.to_vec(), alignment: CODE_ALIGNMENT, relocations: Vec::new() }));
+            code: regexp.code.to_vec(), alignment: CODE_ALIGNMENT, relocations: Vec::new(), section: None }));
         function_addresses.push(NativeFunctionAddress { offset: u32::try_from(index * pointer).map_err(|_| "RegExp table exceeds relocation offsets")?, function });
     }
     Ok(NativeData { name: format!("{namespace}_regexps"), bytes: vec![0; image.regexps.len().max(1) * pointer], alignment: pointer as u64,
@@ -213,14 +255,13 @@ fn call_data(namespace: &str, image: &AotImage) -> NativeData {
     }
 }
 
-/// The bytes of `record` as the direct row reads them: each field at its offset, the padding zero.
+/// The bytes of `record` as the direct row reads them: each field at its offset, the padding zero. The callee record
+/// is the loader's (`BoundCalls::of`), so the template's pointer is zero.
 fn record_bytes(record: &CallRecord) -> Vec<u8> {
     use std::mem::offset_of;
     let mut bytes = vec![0; std::mem::size_of::<CallRecord>()];
-    let words = [(offset_of!(CallRecord, callee), record.callee), (offset_of!(CallRecord, cell), record.cell), (offset_of!(CallRecord, expected), record.expected),
-        (offset_of!(CallRecord, captures), record.captures), (offset_of!(CallRecord, global_this), record.global_this),
-        (offset_of!(CallRecord, call), record.call), (offset_of!(CallRecord, caller_base), record.caller_base), (offset_of!(CallRecord, packed), record.packed),
-        (offset_of!(CallRecord, proven_args), record.proven_args), (offset_of!(CallRecord, descriptor), record.descriptor)];
+    let words = [(offset_of!(CallRecord, call), record.call), (offset_of!(CallRecord, caller_base), record.caller_base),
+        (offset_of!(CallRecord, packed), record.packed), (offset_of!(CallRecord, proven_args), record.proven_args)];
     let registers = [(offset_of!(CallRecord, callee_register), record.callee_register), (offset_of!(CallRecord, this_register), record.this_register),
         (offset_of!(CallRecord, args_register), record.args_register), (offset_of!(CallRecord, result_register), record.result_register)];
     words.iter().for_each(|&(at, word)| bytes[at..at + std::mem::size_of::<u64>()].copy_from_slice(&word.to_ne_bytes()));
@@ -232,9 +273,10 @@ fn record_bytes(record: &CallRecord) -> Vec<u8> {
 
 /// The entry table (`crate::native_program::LinkedTable` reads it): the ABI header word; one
 /// entry per function, each the address of its entry definition (`first` plus the ID); one base body
-/// address per function (`bases`, by declaration); then the image file's address and length, the
-/// call records' address, the helper record's address and count, and the RegExp record's address and count.
-fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u32), (file_length, regexps): (usize, usize)) -> Result<NativeData, String> {
+/// address per function (`bases`, by declaration); one lane text address per function (0 where it has
+/// none); then the image file's address and length, the call records' address, the helper record's
+/// address and count, the RegExp record's address and count, and the lane value table's address.
+fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first, lanes): (&[u32], u32, &LaneDeclarations), (file_length, regexps): (usize, usize)) -> Result<NativeData, String> {
     let pointer_bytes = usize::from(isa.pointer_bytes());
     if pointer_bytes != std::mem::size_of::<usize>() {
         return Err("native image pointer width differs from host".into());
@@ -245,15 +287,19 @@ fn entry_table(isa: &dyn TargetIsa, namespace: &str, (bases, first): (&[u32], u3
     for id in 0..count {
         addresses.push(NativeFunctionAddress { offset: offset(header + id)?, function: first + id as u32 });
         addresses.push(NativeFunctionAddress { offset: offset(header + count + id)?, function: bases[id] });
+        if let Some(lane) = lanes.bodies[id] {
+            addresses.push(NativeFunctionAddress { offset: offset(header + 2 * count + id)?, function: lane });
+        }
     }
-    let tail = header + 2 * count;
+    let tail = header + 3 * count;
+    addresses.push(NativeFunctionAddress { offset: offset(tail + 7)?, function: lanes.values });
     let data_addresses = vec![
         NativeDataAddress { offset: offset(tail)?, data: IMAGE_RECORD, addend: 0 },
         NativeDataAddress { offset: offset(tail + 2)?, data: CALL_RECORDS_RECORD, addend: 0 },
         NativeDataAddress { offset: offset(tail + 3)?, data: HELPERS_RECORD, addend: 0 },
         NativeDataAddress { offset: offset(tail + 5)?, data: REGEXPS_RECORD, addend: 0 },
     ];
-    let mut bytes = vec![0; (tail + 7) * pointer_bytes];
+    let mut bytes = vec![0; (tail + 8) * pointer_bytes];
     bytes[(tail + 6) * pointer_bytes..(tail + 7) * pointer_bytes].copy_from_slice(&regexps.to_ne_bytes());
     bytes[(tail + 1) * pointer_bytes..(tail + 2) * pointer_bytes].copy_from_slice(&file_length.to_ne_bytes());
     bytes[(tail + 4) * pointer_bytes..(tail + 5) * pointer_bytes].copy_from_slice(&crate::compiled::LaneHelper::COUNT.to_ne_bytes());

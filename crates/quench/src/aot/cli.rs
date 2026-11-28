@@ -17,7 +17,7 @@ pub(super) const WAIT_WORKER_OPTION: &str = "--wait-worker";
 #[cfg(unix)]
 const PRIVATE_BUILD_DIRECTORY_MODE: u32 = 0o700;
 
-const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration|aot-compact] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
+const USAGE: &str = "quench compile ENTRY -o BINARY [--report FILE] [--profile experiment|release|iteration|aot-image] [--sdk-report FILE] [--strict-aot] [--dynamic-source|--static-source] [--target-cpu x86-64-v2|x86-64-v3|armv8|armv8.2|native] [--target TRIPLE]";
 const RETAINED_SUPPORT: &[&str] = &[
     "unpruned Wasm frontend dependencies",
     "unpruned Node host support",
@@ -31,7 +31,8 @@ struct Options {
     output: PathBuf,
     report: Option<PathBuf>,
     sdk_report: Option<PathBuf>,
-    profile: String,
+    /// `None` selects the support's default: `aot-image` for a static image, `release` for a dynamic-source one.
+    profile: Option<String>,
     strict: bool,
     support: SourceSupport,
     target: NativeTarget,
@@ -104,9 +105,8 @@ impl Options {
                 }
             }
         }
-        let profile = profile.unwrap_or_else(|| "release".to_owned());
-        if !matches!(profile.as_str(), "experiment" | "release" | "iteration" | "aot-compact") {
-            return Err("compile profile must be experiment, release, iteration or aot-compact".into());
+        if profile.as_deref().is_some_and(|profile| !matches!(profile, "experiment" | "release" | "iteration" | "aot-image")) {
+            return Err("compile profile must be experiment, release, iteration or aot-image".into());
         }
         Ok(Self {
             entry: entry.ok_or(USAGE)?,
@@ -185,10 +185,12 @@ fn build_bootstrap(program: &Path, output: &Path, builtins: Vec<String>) -> Resu
 /// The features a static image's support is built with: `native-execution`, plus the intl layer
 /// and the WebAssembly frontend only where the program reaches them. A dynamic-source support
 /// links the standard build's default features instead.
-fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport) -> String {
+/// The support's features. Intl links where the source names it or the closed realm reaches it (`ReachableRealm::needs_intl`:
+/// a computed key may name any global), the same fact the probe and the image install the layer on.
+fn support_features(graph: &super::DependencyGraph, support: NativeImageSupport, realm_intl: bool) -> String {
     if support.allows_dynamic_source() { return "default".into(); }
     let mut features = String::from("native-execution");
-    if graph.needs_intl() { features.push_str(",intl"); }
+    if graph.needs_intl() || realm_intl { features.push_str(",intl"); }
     if graph.needs_wasm() { features.push_str(",wasm"); }
     features
 }
@@ -244,10 +246,13 @@ fn compile(options: Options) -> Result<(), String> {
     }) {
         return Err("report and executable must have different destinations".into());
     }
+    let profile = options.profile.clone().unwrap_or_else(|| {
+        (if support.allows_dynamic_source() { "release" } else { "aot-image" }).to_owned()
+    });
     let mut report = json!({
         "schema_version": COMPILE_REPORT_VERSION, "entry": entry, "output": output,
-        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": options.profile, "support_variant": variant.name(),
-        "support_features": support_features(&graph, support),
+        "execution_mode": if support.allows_dynamic_source() { "native_with_dynamic_source" } else { "native_only" }, "requested_support_profile": profile, "support_variant": variant.name(),
+        "support_features": support_features(&graph, support, false),
         "payload_minimal": false, "retained_support": RETAINED_SUPPORT,
         "startup_options_binding_time": "runtime",
         "source_compilation": support.allows_dynamic_source(),
@@ -293,13 +298,17 @@ fn compile(options: Options) -> Result<(), String> {
     report["static_import_resolutions"] = json!(manifest.assets().imports.len());
     report["sdk_source_views"] = json!(manifest.assets().views.len());
     let compiled = super::image::compile_sources(core, &graph, &entry, manifest)?;
-    if core {
-        report["builtin_families"] = json!(compiled.builtin_families().bits());
-    }
     report["native_code_units"] = json!(compiled.units.len());
     report["deferred_syntax_errors"] = json!(compiled.syntax_errors.len());
     let images = work.0.join("images");
-    let inputs = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    let (inputs, demand, realm, closed) = compiled.emit(&images, &options.target, super::compiler::ImageHost::of(core))?;
+    report["closed_world"] = super::compiler::demand_report(&demand);
+    let realm_intl = realm.as_ref().is_some_and(|realm| realm.needs_intl);
+    report["support_features"] = json!(support_features(&graph, support, realm_intl));
+    if let Some(realm) = &realm {
+        report["builtin_families"] = json!(realm.families.bits());
+        report["reachable_realm"] = super::compiler::realm_report(realm);
+    }
     // A program that loads no native addon and nothing at run time needs no dynamic interface.
     let inputs = if graph.requirements.iter().any(|requirement| requirement.is_dynamic_load() || matches!(requirement, super::GraphRequirement::NativeAddon { .. })) {
         inputs
@@ -308,6 +317,26 @@ fn compile(options: Options) -> Result<(), String> {
     };
     report["self_contained"] = json!(inputs.is_self_contained());
     let native_entry = images.join(format!("{}.bin", super::compiler::NATIVE_ENTRY_UNIT));
+    // A core entry is probed before anything is saved: one that reaches its end with no input folds
+    // to a replay image; one that reaches an input saves its realm, program and the frames that
+    // called the input (`core_rest`); any other saves its realm and program before it runs.
+    if let (true, Some(tables)) = (core, closed) {
+        let reach = super::core_rest::probe(&native_entry, tables)?;
+        report["core_probe"] = match &reach {
+            super::core_rest::Reach::Folds => json!({"status": "folds"}),
+            super::core_rest::Reach::Captured => json!({"status": "captured", "save_point": "input_chain"}),
+            super::core_rest::Reach::Unfinished(diagnostic) => json!({"status": "unfinished", "diagnostic": diagnostic, "save_point": "realm_and_program"}),
+        };
+        if matches!(reach, super::core_rest::Reach::Folds) {
+            super::strict::fold_image(&output, &work.0)?;
+            report["status"] = json!("compiled");
+            report["support_variant"] = json!("strict");
+            report["execution_mode"] = json!("replay");
+            report["engine_linked"] = json!(false);
+            write_report(report_path.as_deref(), &report)?;
+            return Ok(());
+        }
+    }
     let (inputs, held, saved_waits) = super::image::stage_image(core, options.strict, &graph, &work.0, &native_entry, inputs, &waits, &mut report)?;
     let support_report = match &options.sdk_report {
         Some(path) => {
@@ -319,10 +348,20 @@ fn compile(options: Options) -> Result<(), String> {
             // A dynamic-source image links the standard build's library (`cargo build -p quench`, default
             // features), which that build left fresh: this cargo run only reports it. A static image's
             // support leaves out the JIT and the bundled sources, a build of its own.
+            // A minimal static support also builds its standard library for size: the `immediate-abort`
+            // panic strategy drops the panic-message formatting, `optimize_for_size` selects the library's
+            // size-oriented code paths.
             let mut cargo = Command::new("cargo");
-            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1").args(["build", "--locked", "--profile", &options.profile, "-p", "quench"]);
+            cargo.current_dir(&workspace).env("RUSTC_BOOTSTRAP", "1");
+            // `QUENCH_TRACE=build-dir` (a diagnostic build) keeps the sysroot's std with its panic messages, so a failing
+            // check in an image names itself.
+            if !support.allows_dynamic_source() && profile == "aot-image" && !quench_runtime::trace::Channel::BuildDir.on() {
+                cargo.args(["-Zbuild-std=std,panic_abort", "-Zbuild-std-features=optimize_for_size", "-Zpanic-immediate-abort",
+                    "--config", "profile.aot-image.panic=\"immediate-abort\""]);
+            }
+            cargo.args(["build", "--locked", "--profile", &profile, "-p", "quench"]);
             if !support.allows_dynamic_source() {
-                let features = support_features(&graph, support);
+                let features = support_features(&graph, support, realm_intl);
                 cargo.args(["--no-default-features", "--features", &features]);
             }
             cargo.args(["--lib", "--message-format=json"]);
@@ -341,8 +380,21 @@ fn compile(options: Options) -> Result<(), String> {
     report["semantic_exports"] = json!(audit.semantic_exports());
     report["dynamic_interface"] = json!(audit.dynamic_interface);
     report["footprint_before_symbol_removal"] = json!(audit.footprint);
-    let dumps = super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report);
+    report["retained_mechanisms"] = json!(audit.footprint.retained_mechanisms);
+    let dumps = if core {
+        super::core_rest::dump(&staged, &work.0, &mut report)
+    } else {
+        super::image::dump_saved_waits(&staged, &saved_waits, &work.0, &mut report)
+    };
     // `QUENCH_KEEP_SYMBOLS` keeps the symbol table, so a profiler or debugger names the runtime's functions.
+    // `QUENCH_TRACE=build-dir` keeps the linked image with its local symbols, for a debugger: in `build-dir=DIR`, else
+    // beside the output (the build directory itself is removed after a successful compile).
+    if quench_runtime::trace::Channel::BuildDir.on() {
+        let directory = quench_runtime::trace::Channel::BuildDir.value().map_or_else(|| output.parent().unwrap_or(Path::new(".")).to_path_buf(), PathBuf::from);
+        let kept = directory.join(format!("{}.unstripped", output.file_name().unwrap_or_default().to_string_lossy()));
+        fs::copy(&staged, &kept).map_err(|error| error.to_string())?;
+        eprintln!("quench compile: unstripped image kept at {}", kept.display());
+    }
     if std::env::var_os("QUENCH_KEEP_SYMBOLS").is_none() {
         let payload = quench_runtime::native_link::remove_offline_symbols(&staged)?;
         report["symbol_audit_stage"] = json!("before_symbol_removal");
@@ -350,7 +402,7 @@ fn compile(options: Options) -> Result<(), String> {
         report["payload_reduction"] = json!(payload);
     }
     if !dumps.is_empty() {
-        super::image_dump::append(&staged, &dumps)?;
+        quench_runtime::native_link::image_dump::append(&staged, &dumps)?;
     }
     report["native_dependencies"] = json!(super::image::native_dependencies(&staged)?);
     report["status"] = json!("compiled");
@@ -474,7 +526,7 @@ mod tests {
             output: output.clone(),
             report: Some(report.clone()),
             sdk_report: None,
-            profile: "iteration".into(),
+            profile: Some("iteration".into()),
             strict: false,
             support: SourceSupport::Static,
             target: NativeTarget::default(),
@@ -504,7 +556,7 @@ mod tests {
                 output: destination,
                 report,
                 sdk_report: None,
-                    profile: "iteration".into(),
+                    profile: Some("iteration".into()),
                 strict: false,
                 support: SourceSupport::Static,
                 target: NativeTarget::default(),

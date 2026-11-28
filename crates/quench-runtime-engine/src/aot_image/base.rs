@@ -1,6 +1,6 @@
 //! The base body of an AOT function: the whole function stitched from BaseJIT stencils
-//! (`base_region::function`, as `--b-jit` builds it) but emitted relocatable, every hole that
-//! names a run-time address a `Symbol`. A record with no stencil row leaves, as a `--b-jit` body's
+//! (`base_region::function`, as the b-jit tier builds it) but emitted relocatable, every hole that
+//! names a run-time address a `Symbol`. A record with no stencil row leaves, as a b-jit body's
 //! does, and the lane's interpreter runs it: the image is the projection's first body, not a second
 //! semantics. The records it leaves at are counted (`generic`) so the AOT gate drives them to zero
 //! by staging the opcodes they stand for.
@@ -11,8 +11,8 @@
 use crate::ext_traits::*;
 use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use quench_runtime::bytecode::ResidualProgram;
-use quench_runtime::vm::jit_backend::relocatable_code::{RelocatableCode, Relocation};
-use cranelift_codegen::binemit::Reloc;
+use quench_runtime::compile::aot_facts::AotFacts;
+use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
 
 pub(crate) use quench_runtime::vm::engine_types::BaseImage;
 
@@ -24,26 +24,27 @@ impl BaseImage {
     pub(crate) fn generic_rows(&self) -> usize { self.generic.len() }
 }
 
-/// The base body of function `id`: the BaseJIT body over the program alone (no profile), its calls
-/// direct where `facts` prove their callee, its helper and call record addresses as `Reloc::Abs8`
+/// The base body of function `id`: the BaseJIT body over the program and its closed-world `facts` (no profile), its calls
+/// direct where `facts` prove their callee, its helper and call record addresses as `PatchKind::Abs8`
 /// relocations to the symbols the loader resolves; and those calls' sites (`AotImage::calls`).
 pub(crate) fn lower(
     program: &ResidualProgram,
+    facts: &AotFacts,
     target: &ImageTarget,
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<(BaseImage, Vec<CallSite>), String> {
     // The body is the target CPU's stencils, not the compiling CPU's.
-    let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, id))?;
+    let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, facts, id))?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
         // Apple AArch64 names a helper call as a branch hole; a guard's shape is a 32-bit immediate; a
         // PC-relative field keeps its addend; every other site is a 64-bit word.
         let (kind, addend) = match site.class {
-            quench_bjit::BRANCH26 => (Reloc::Arm64Call, 0),
-            quench_bjit::ABS32 => (Reloc::Abs4, 0),
-            quench_bjit::REL32 => (Reloc::X86PCRel4, site.addend),
-            _ => (Reloc::Abs8, 0),
+            quench_bjit::BRANCH26 => (PatchKind::Arm64Call, 0),
+            quench_bjit::ABS32 => (PatchKind::Abs4, 0),
+            quench_bjit::REL32 => (PatchKind::X86PCRel4, site.addend),
+            _ => (PatchKind::Abs8, 0),
         };
         Relocation { offset: site.offset, kind, namespace, key, addend }
     }).collect();

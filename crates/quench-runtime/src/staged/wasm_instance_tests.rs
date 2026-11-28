@@ -5,12 +5,15 @@
 use super::ConcreteWasm;
 use super::machine::MachineStage;
 use super::wasm::{Width, integer_binary};
-use super::wasm_instance::{Instance, Storage, WasmInstance};
+use super::wasm_instance::{Instance, InstanceWasmInstanceExt, Storage, WasmInstance, instance_of};
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_step::Step;
 use crate::bytecode::{Op, WideInstruction};
 use crate::{Value, WasmType};
 use crate::wasm::integer::I64BinaryOperator as Binary;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 #[test]
 fn the_table_names_the_register_and_instance_opcodes() {
@@ -23,10 +26,10 @@ fn the_table_names_the_register_and_instance_opcodes() {
         (Op::WasmGlobalSet, Instance::GlobalSet),
     ];
     for (op, step) in named {
-        assert_eq!(Instance::of(op), Some(step), "{op:?}");
+        assert_eq!(instance_of(op), Some(step), "{op:?}");
         assert_eq!(Step::of(op, 0), Some(Step::Instance(step)), "{op:?}");
     }
-    assert_eq!(Instance::of(Op::WasmI32Add), None);
+    assert_eq!(instance_of(Op::WasmI32Add), None);
     assert!(matches!(
         Step::of(Op::WasmI32Add, 0),
         Some(Step::Numeric(_))

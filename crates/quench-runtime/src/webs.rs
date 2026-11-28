@@ -126,46 +126,111 @@ pub fn solve(
     successors: &dyn Fn(usize, &mut dyn FnMut(Next)),
     reseed: bool,
 ) -> Reaching {
+    let (leaf_pcs, edges, leaves_of) = control(count, successors);
+    let mut flow = Reaching { rows: BitRows::new(count, bits), leaves: BitRows::new(leaf_pcs.len(), bits), leaf_pcs, reached: Vec::new() };
+    if count == 0 {
+        return flow;
+    }
+    let (seeds, reached) = entries(&edges, seed, reseed);
+    flow.reached = reached;
+    let states = crate::dataflow::solve(&mut Reach { edges, seeds, step: transfer });
+    for (row, state) in states.iter().enumerate() {
+        let Some(state) = state else { continue };
+        flow.rows.join(row, state);
+        let mut out = state.clone();
+        transfer(row, &mut out);
+        for &leaf in &leaves_of[row] {
+            flow.leaves.join(leaf, &out);
+        }
+    }
+    flow
+}
+
+/// The PCs control leaves the rows to, ascending and distinct; each row's edges to rows; and each row's leaves, as
+/// indices into those PCs.
+fn control(count: usize, successors: &dyn Fn(usize, &mut dyn FnMut(Next))) -> (Vec<u32>, Vec<Vec<usize>>, Vec<Vec<usize>>) {
     let mut leaf_pcs = Vec::new();
     for row in 0..count {
         successors(row, &mut |next| if let Next::Leave(pc) = next { leaf_pcs.push(pc) });
     }
     leaf_pcs.sort_unstable();
     leaf_pcs.dedup();
-    let mut flow = Reaching { rows: BitRows::new(count, bits), leaves: BitRows::new(leaf_pcs.len(), bits), leaf_pcs, reached: vec![false; count] };
-    if count == 0 {
-        return flow;
+    let (mut edges, mut leaves_of) = (vec![Vec::new(); count], vec![Vec::new(); count]);
+    for row in 0..count {
+        successors(row, &mut |next| match next {
+            Next::Row(next) => edges[row].push(next),
+            Next::Leave(pc) => leaves_of[row].push(leaf_pcs.binary_search(&pc).expect("a collected leave PC")),
+        });
     }
-    let mut visited = vec![false; count];
-    let mut out = seed.to_vec();
-    let mut work = vec![0];
-    flow.rows.join(0, seed);
-    let mut first = true;
-    loop {
-        while let Some(row) = work.pop() {
-            visited[row] = true;
-            if first {
-                flow.reached[row] = true;
-            }
-            out.copy_from_slice(flow.rows.row(row));
-            transfer(row, &mut out);
-            successors(row, &mut |next| match next {
-                Next::Row(next) => {
-                    if flow.rows.join(next, &out) || !visited[next] {
-                        visited[next] = true;
-                        work.push(next);
-                    }
-                }
-                Next::Leave(pc) => {
-                    let leaf = flow.leaf_pcs.binary_search(&pc).expect("a collected leave PC");
-                    flow.leaves.join(leaf, &out);
-                }
-            });
+    (leaf_pcs, edges, leaves_of)
+}
+
+/// The seed of each row the fixpoint starts from, and the rows row 0 reaches. Row 0 is entered with `seed`; where
+/// `reseed` holds, the rows no earlier entry reaches are entered with it, in row order.
+fn entries(edges: &[Vec<usize>], seed: &[u64], reseed: bool) -> (Vec<Option<Vec<u64>>>, Vec<bool>) {
+    let mut seeds: Vec<Option<Vec<u64>>> = vec![None; edges.len()];
+    seeds[0] = Some(seed.to_vec());
+    let mut visited = vec![false; edges.len()];
+    mark(edges, 0, &mut visited);
+    let reached = visited.clone();
+    for row in 0..edges.len() {
+        if reseed && !visited[row] {
+            seeds[row] = Some(seed.to_vec());
+            mark(edges, row, &mut visited);
         }
-        first = false;
-        let Some(row) = reseed.then(|| visited.iter().position(|seen| !seen)).flatten() else { return flow };
-        flow.rows.join(row, seed);
-        work.push(row);
+    }
+    (seeds, reached)
+}
+
+/// Marks `start` and every row control reaches from it in `marked`.
+fn mark(edges: &[Vec<usize>], start: usize, marked: &mut [bool]) {
+    let mut pending = vec![start];
+    while let Some(row) = pending.pop() {
+        if !marked[row] {
+            marked[row] = true;
+            pending.extend(edges[row].iter().copied());
+        }
+    }
+}
+
+/// Reaching definitions as a forward `Dataflow` problem over the rows: a row's state is its bit row, its edges are
+/// the rows control reaches from it (a leave is no edge), and its seed is its entry row where it has one.
+struct Reach<'a> {
+    edges: Vec<Vec<usize>>,
+    seeds: Vec<Option<Vec<u64>>>,
+    /// A row's kills and definitions, applied to its incoming state.
+    step: &'a dyn Fn(usize, &mut [u64]),
+}
+
+impl crate::dataflow::Dataflow for Reach<'_> {
+    type State = Vec<u64>;
+
+    fn blocks(&self) -> usize {
+        self.edges.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.edges[block]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<Vec<u64>> {
+        self.seeds[block].clone()
+    }
+
+    fn join(&self, into: &mut Vec<u64>, incoming: &Vec<u64>) -> bool {
+        let mut grew = false;
+        for (word, incoming) in into.iter_mut().zip(incoming) {
+            let next = *word | incoming;
+            grew |= next != *word;
+            *word = next;
+        }
+        grew
+    }
+
+    fn transfer(&mut self, block: usize, state: &Vec<u64>) -> Vec<u64> {
+        let mut out = state.clone();
+        (self.step)(block, &mut out);
+        out
     }
 }
 

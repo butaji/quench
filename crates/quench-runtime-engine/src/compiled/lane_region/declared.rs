@@ -1,16 +1,17 @@
 //! TypeScript declared types as u-jit facts. An annotation is a seed, never erased: where a value
 //! enters a register the tier checks it once (`conform_declared`) and then trusts the register's
-//! narrowed fact, as a declared parameter is checked at entry (`scalar::declared_entry_types`).
+//! narrowed fact, as a declared parameter is checked at entry (the solve's entry cell).
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The type a declared language set seeds where a tier checks it exactly: a Number, or a set
 /// `scalar::checkable` names (a String, an array or a plain object included). A BigInt, Symbol or a mixed set with Number is not checked here.
 pub(crate) fn checkable_declared(bits: u16) -> Option<Type> {
     let ty = Type::languages(bits);
-    (ty == Type::NUMBER || scalar::checkable(bits)).then_some(ty)
+    (super::number_domains::is_double(ty) || scalar::checkable(bits)).then_some(ty)
 }
 
 /// The checkable return type of program function `function`, from its declared signature keyed by
@@ -78,7 +79,7 @@ pub(crate) fn declared_member_type(program: &ResidualProgram, function_start: u3
 
 /// The annotated locals of `function` (`Function::local_registers`, named by `local_atoms`) that
 /// `DeclaredTypes::declared_local` types checkably, as the register each lives in and its type.
-/// Parameters are checked at entry instead (`scalar::declared_entry_types`). The top level keys
+/// Parameters are checked at entry instead (the solve's entry cell). The top level keys
 /// as `u32::MAX`, a nested function by its source span start (`compile::typescript::signatures`).
 /// A captured local (`Function::local_slot_captured`) is left out.
 pub(crate) fn declared_local_types(program: &ResidualProgram, function: &quench_runtime::bytecode::Function) -> Vec<(Register, Type)> {
@@ -155,19 +156,20 @@ impl Lowering<'_, '_> {
         let program = self.program;
         let Some(ty) = declared_member_type(program, start, parameter, &program.atoms[atom as usize]) else { return };
         self.conform_declared(state, pc + 1, result, ty);
-        narrow_field_read(state, base, atom, result);
+        let owner = self.owner_word(state, Some(base));
+        narrow_field_read(state, owner, atom, result);
     }
 }
 
-/// Narrows the cached read of `atom` on `base` that defined `result` to `result`'s conformed fact,
+/// Narrows the cached read of `atom` on the object `owner` (`base`'s word) that defined `result` to `result`'s conformed fact,
 /// the declared type the check just proved of that same value. A later read of the member on this
 /// path then takes that type from the cache (`define_field_read`) and emits no second conform. A
 /// call clears the cache (`call_effect`), and a join keeps only entries both arrivals hold (`join_states`).
-fn narrow_field_read(state: &mut State, base: Register, atom: Atom, result: Register) {
+fn narrow_field_read(state: &mut State, owner: Option<ir::Value>, atom: Atom, result: Register) {
     let fact = state.values[usize::from(result)];
     let TaggedView::Value(value) = fact.tagged else { return };
     if let Some(field) = state.proofs.fields.iter_mut()
-        .find(|field| field.owner == Some(base) && field.atom == atom && field.value == value) {
+        .find(|field| Some(field.owner) == owner && field.atom == atom && field.value == value) {
         field.ty = fact.value.ty;
     }
 }

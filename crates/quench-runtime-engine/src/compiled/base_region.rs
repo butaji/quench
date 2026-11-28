@@ -1,5 +1,5 @@
 //! A Number loop region built from BaseJIT stencils (`quench-bjit`) instead of Cranelift IR,
-//! behind `QUENCH_DEV=bjit`, as the same stitched program of rows a function's body is
+//! as the same stitched program of rows a function's body is
 //! (`function`, `stitch`): the loop's span of its function, its small monomorphic calls inlined.
 //! The registers the region touches most live in pinned machine registers through the whole chain
 //! of stencils and the rest stay tagged `Value` words in the activation's register file; every exit
@@ -18,10 +18,9 @@ use crate::ext_traits::*;
 use super::lane_unit::{InlinedCall, Origin};
 use super::osr_loop::LoopRegion;
 use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Register, ResidualProgram, WideInstruction};
-use quench_runtime::code_dependencies::InstanceofFact;
 use quench_runtime::typed_ir::{Representation, Type};
 use quench_runtime::value::Value;
-use crate::dispatch_fast::operand_feedback::OperandKinds;
+use crate::operand_class::Site;
 use quench_runtime::vm::in_presence::InPresence;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
@@ -34,7 +33,6 @@ use std::sync::Mutex;
 
 pub(crate) mod adds;
 pub(crate) mod call_args;
-pub(crate) mod names;
 pub(crate) mod call_plan;
 pub(crate) mod sites;
 pub(crate) mod callees;
@@ -44,7 +42,6 @@ pub(crate) mod entry_facts;
 pub(crate) mod exact;
 pub(crate) mod fold;
 pub(crate) mod function;
-pub(crate) use function::inlined_exit_key;
 pub(crate) mod globals;
 pub(crate) mod link;
 pub(crate) mod locals;
@@ -102,9 +99,6 @@ pub(crate) struct Known<'a> {
     /// whose proved prototype chain is then a Stable fact) transition (`Vm::native_field_add`): a
     /// `DefineField` or an adding `SetField` runs it as `staged::add`'s row. `None` where no fact may be held.
     pub(crate) adds: Option<&'a dyn Fn(u16, Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>>,
-    /// The naming a cache site recorded for a `SetFunctionName`'s atom, with the word of the name's string
-    /// (`Vm::native_function_name`): the instruction runs it as `staged::naming`'s row. `None` where no fact may be held.
-    pub(crate) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
     /// The address of the code's invalidation word (`code_dependencies::Invalidation`), which code that
     /// holds a Stable fact and makes a call reads before the rows that hold it.
     pub(crate) invalidation: Option<usize>,
@@ -115,12 +109,6 @@ pub(crate) struct Known<'a> {
     /// `bytecode::TYPEOF_NAMES`: a `typeof` string row names it, so a value's string is the entry its tag's
     /// index selects. Empty for a region, whose `typeof` is the helper step.
     pub(crate) typeof_names: &'a [Value],
-    /// The constructor the `instanceof` at a PC names and what the VM proved of it (`Vm::instanceof_fact`), where the VM and
-    /// the program run specialized and the code may hold Stable facts: the row stands on the constructor's identity (its
-    /// register is guarded against it) and walks the value's chain for its `prototype` link, which a write of that
-    /// slot, a departure of its shape or a change of the `@@hasInstance` holder's values retires the code over
-    /// (`Body::instanceofs`). `None` where no fact may be held.
-    pub(crate) instanceofs: Option<&'a dyn Fn(usize) -> Option<(Value, InstanceofFact)>>,
     /// What `key in object` answered at the PC of an `in` whose key is a constant string (`Vm::membership_facts`), where
     /// the VM and the program run specialized and the code may hold Stable facts: the row answers the boolean while its
     /// object has the receiver layout (exact shape and prototype link) that answered, which a layout change of a
@@ -136,9 +124,6 @@ pub(crate) struct Known<'a> {
     /// a named read of such a parameter folds to its prototype's own value (`declared::class_member_read`), and the entry
     /// checks each (`declared::class_prototypes`). Empty where none was observed.
     pub(crate) classes: &'a [function::ClassProto],
-    /// The exact shapes the region's field accesses of each loop-invariant receiver saw at entry (`osr_compile::loop_shapes`):
-    /// the entry checks each (`Heap::Shape`). Empty for a body, whose parameters are `classes`.
-    pub(crate) shapes: &'a [function::ShapeProto],
 }
 
 /// The realm a body's inlined callees were found in: where the active realm's global object sits in
@@ -174,7 +159,6 @@ struct Totals {
     regions: u64,
     ops: u64,
     bytes: u64,
-    nanos: u64,
     rejected: u64,
     /// Whole-function bodies built (`function::build_body`), and their instructions that run as
     /// rows and that leave the body.
@@ -187,44 +171,10 @@ struct Totals {
     helper_calls: u64,
 }
 
-static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, nanos: 0, rejected: 0, bodies: 0, covered: 0, exits: 0, direct_calls: 0, helper_calls: 0 });
+static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, rejected: 0, bodies: 0, covered: 0, exits: 0, direct_calls: 0, helper_calls: 0 });
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
-static LEAVES: Mutex<BTreeMap<(u32, u32), (quench_runtime::bytecode::Op, u64)>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
 
-/// What a loop site did in the lane, counted under `QUENCH_TRACE=js-jit` (printed with the totals): the
-/// cost of the tier machinery around the regions, which `--b-jit` pays whether or not a region exists.
-#[derive(Clone, Copy)]
-pub(crate) enum Event {
-    /// A loop site's run entered published code.
-    Entered,
-    /// A run left its code at an exit (the interpreter resumed mid-loop).
-    Left,
-    /// A run did not start code: the site is waiting for code, or the entry declined it.
-    Declined,
-    /// A compilation of a loop region started (`loop_compile_in_lane`).
-    Compiled,
-    /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
-    BodyCompile,
-    /// Of those, the ones its recurrence started (`LaneView::recurrent`), not a warm-up count.
-    BodyRecurrent,
-    /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
-    BodyPlanned,
-    /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
-    /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),
-    /// deferred, or handed to a b-jit body (base).
-    BodyPublished,
-    BodyCompiling,
-    BodyUnpaid,
-    BodyShort,
-    BodyDeclined,
-    BodyStale,
-    BodyDeferred,
-    BodyBase,
-}
-
-/// How many `Event`s there are.
-const EVENT_COUNT: usize = Event::BodyBase as usize + 1;
 
 #[cfg(test)]
 thread_local! {
@@ -258,49 +208,12 @@ pub(crate) fn inlined_sites() -> u64 {
     INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-static EVENTS: [std::sync::atomic::AtomicU64; EVENT_COUNT] = [const { std::sync::atomic::AtomicU64::new(0) }; EVENT_COUNT];
-
-/// The most frequent leave sites a run reports.
-const TOP_LEAVES: usize = 40;
-
-/// Counts a region run leaving at `pc` of `function` (an instruction of operation `op`), where the trace channel is on.
-pub(crate) fn leave(function: u32, pc: u32, op: quench_runtime::bytecode::Op) {
-    if !quench_runtime::trace::Channel::BjitLeave.on() {
-        return;
-    }
-    REPORT.call_once(|| {
-        // SAFETY: `report` is an `extern "C" fn()` that touches only statics.
-        unsafe { libc::atexit(report) };
-    });
-    if let Ok(mut leaves) = LEAVES.lock() {
-        leaves.entry((function, pc)).or_insert((op, 0)).1 += 1;
-    }
-}
 
 /// Whether regions and events are counted: a report that reads them is on (`report`, `census`).
 fn counted() -> bool {
     static COUNTED: std::sync::LazyLock<bool> =
         std::sync::LazyLock::new(|| quench_runtime::trace::Channel::JsJit.on() || quench_runtime::trace::Channel::Census.on());
     *COUNTED
-}
-
-/// What regions did, for the tier census: regions built, the instructions they cover, and runs that
-/// entered published code. All zero unless a report is on.
-pub(crate) fn census() -> (u64, u64, u64) {
-    let regions = TOTALS.lock().map_or((0, 0), |totals| (totals.regions, totals.ops));
-    (regions.0, regions.1, EVENTS[Event::Entered as usize].load(std::sync::atomic::Ordering::Relaxed))
-}
-
-/// Counts `event` where a report is on.
-pub(crate) fn count(event: Event) {
-    if !counted() {
-        return;
-    }
-    REPORT.call_once(|| {
-        // SAFETY: `report` is an `extern "C" fn()` that touches only statics.
-        unsafe { libc::atexit(report) };
-    });
-    EVENTS[event as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 extern "C" fn report() {
@@ -310,23 +223,13 @@ extern "C" fn report() {
     let (Ok(totals), Ok(rejects)) = (TOTALS.lock(), REJECTS.lock()) else { return };
     let ops = totals.ops.max(1);
     eprintln!(
-        "bjit regions={} rejected={} ops={} bytes={} bytes_per_op={:.1} build_ns={} build_ns_per_op={:.1}",
-        totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64, totals.nanos,
-        totals.nanos as f64 / ops as f64
+        "bjit regions={} rejected={} ops={} bytes={} bytes_per_op={:.1}",
+        totals.regions, totals.rejected, totals.ops, totals.bytes, totals.bytes as f64 / ops as f64
     );
     let rows = (totals.covered + totals.exits).max(1);
     eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);
-    let [entered, left, declined, compiled, bodies, recurrent, planned, published, compiling, unpaid, short, body_declined, stale, deferred, base] =
-        std::array::from_fn::<u64, EVENT_COUNT, _>(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
-    eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies} inlined_sites={}", inlined_sites());
-    eprintln!("lane-body-attempts started={bodies} recurrent={recurrent} planned={planned} published={published} compiling={compiling} unpaid={unpaid} short={short} declined={body_declined} stale={stale} deferred={deferred} base={base}");
-    if let Ok(leaves) = LEAVES.lock() {
-        let mut ranked: Vec<_> = leaves.iter().collect();
-        ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));
-        for ((function, pc), (op, count)) in ranked.into_iter().take(TOP_LEAVES) {
-            eprintln!("bjit-leave {function}:{pc} {op:?} {count}");
-        }
-    }
+    eprintln!("bjit-inlined sites={}", inlined_sites());
+    eprintln!("{}", crate::dispatch_fast::lane_body_stats::unlowered_report());
     let mut ranked: Vec<_> = rejects.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (name, count) in ranked {
@@ -348,13 +251,13 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<OperandKinds>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], sites: &[Option<Site>], seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();
     loop {
         let (webs, renamed) = Webs::split(span, decoded, &merged);
-        let reprs = representations(span, &renamed, widened, seen, &webs);
+        let reprs = representations(span, &renamed, sites, seen, &webs);
         let homes = Homes::of(&ranked(&renamed, &reprs, Some(Representation::Int32)), &ranked(&renamed, &reprs, Some(Representation::Float64)), webs.orig.clone(), &webs.clashes(span, &renamed));
         let split: Vec<Register> = homes.slots.iter().map(|web| webs.orig[usize::from(*web)]).filter(|register| webs.count(*register) > 1).collect();
         if split.is_empty() {

@@ -344,16 +344,12 @@ pub(crate) fn refresh_identity(context: &mut NativeContext<'_>) -> Result<(), Ro
     Ok(())
 }
 
-/// `process.hrtime` with its `bigint`, and `process.__irMark` under `QUENCH_DEV=ir-mark`.
+/// `process.hrtime` with its `bigint`.
 fn install_clocks(context: &mut NativeContext<'_>, process: RootId) -> Result<(), RootedError> {
     let hrtime = context.host_function_named(crate::host::shared_vm::operation!("processHrtime"), "hrtime")?;
     let bigint = context.host_function_named(crate::host::shared_vm::operation!("processHrtimeBigint"), "bigint")?;
     install(context, hrtime, "bigint", bigint)?;
     install(context, process, "hrtime", hrtime)?;
-    if quench_runtime::trace::Dev::IrMark.on() {
-        let mark = context.host_function(crate::host::shared_vm::operation!("processIrMark"))?;
-        install(context, process, "__irMark", mark)?;
-    }
     Ok(())
 }
 
@@ -694,24 +690,6 @@ fn install(
             "cannot install process binding {name}"
         )))
     }
-}
-
-/// Profiling boundary for the per-primitive instruction budget: it does nothing, and callgrind
-/// started with `--dump-before=quench_ir_mark` writes the counts since the previous mark.
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn quench_ir_mark() {
-    std::hint::black_box(());
-}
-
-/// `process.__irMark()` (`QUENCH_DEV=ir-mark`): one profiling boundary, `quench_ir_mark`.
-pub(crate) fn ir_mark(
-    context: &mut NativeContext<'_>,
-    _: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    quench_ir_mark();
-    Ok(context.undefined())
 }
 
 pub(crate) fn uptime(
@@ -1068,6 +1046,8 @@ pub(crate) fn stream_write(
             // Preserve the embedding API's existing text-only sink contract.
             output(&String::from_utf8_lossy(&bytes));
         } else {
+            // Lines the runtime's host wrote earlier sit in its buffer: they go first.
+            quench_runtime::host::flush_stdout();
             let mut stdout = std::io::stdout().lock();
             stdout
                 .write_all(&bytes)
@@ -2813,11 +2793,6 @@ fn run_check_phase(
 fn wait_for_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) {
     let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
     let poll_interval = crate::modules::net_shared_vm::poll_interval().min(crate::modules::child_process_shared_vm::poll_interval());
-    if let Some(due) = next_timer {
-        if !has_polled_shared_work(shared_state) && quench_runtime::clock::skip_to(due) {
-            return;
-        }
-    }
     let until_timer = next_timer.map(|due| due.saturating_duration_since(quench_runtime::clock::instant_now()));
     let wait = match until_timer {
         Some(delay) if !has_polled_shared_work(shared_state) => delay,

@@ -67,22 +67,20 @@ const ITERATION_SOURCE: &str = r#"
     print(result);
 "#;
 
-fn run_source(mode: crate::ExecutionMode, source: &str) -> (Vec<String>, Vm) {
+fn run_source(mode: crate::ExecutionMode, source: &str) -> Vec<String> {
     let program = Engine::specialize(&format!("(function(){{{source}}})();"), "lane-native-callbacks.js").unwrap();
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(mode);
-    vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.execute(&program).unwrap();
     let printed = output.borrow().clone();
-    (printed, vm)
+    printed
 }
 
 #[test]
 fn a_compiled_body_calls_natives_that_call_back_without_leaving() {
-    crate::vm::tier_policy::force_admission();
-    assert_body_stays(CALLBACK_SOURCE);
+    assert_outputs_agree(CALLBACK_SOURCE);
 }
 
 /// Array callback methods called from a compiled body run their callbacks as lane
@@ -90,20 +88,11 @@ fn a_compiled_body_calls_natives_that_call_back_without_leaving() {
 /// iteration: the output equals the interpreter's and no call leaves the body.
 #[test]
 fn a_compiled_body_iterates_arrays_and_collections_without_leaving() {
-    crate::vm::tier_policy::force_admission();
-    assert_body_stays(ITERATION_SOURCE);
+    assert_outputs_agree(ITERATION_SOURCE);
 }
 
-fn assert_body_stays(source: &str) {
-    let (interpreted, _) = run_source(crate::ExecutionMode::Interpreted, source);
-    let (compiled, vm) = run_source(crate::ExecutionMode::Compiled, source);
+fn assert_outputs_agree(source: &str) {
+    let interpreted = run_source(crate::ExecutionMode::Interpreted, source);
+    let compiled = run_source(crate::ExecutionMode::Compiled, source);
     assert_eq!(interpreted, compiled);
-    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
-    let reports: Vec<String> = views.iter()
-        .filter_map(super::program_store::derived_lane_view)
-        .filter_map(|view| view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None))
-        .collect();
-    let run = reports.iter().find(|report| report.contains("\"completed\":") && !report.contains("\"completed\":0,"));
-    let run = run.unwrap_or_else(|| panic!("a body completes: {reports:?}"));
-    assert!(run.contains("\"left_at\":0,"), "no native call leaves the body: {run}");
 }

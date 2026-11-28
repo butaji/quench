@@ -12,43 +12,36 @@ use cranelift_codegen::ir::{self, types, MemFlagsData};
 use cranelift_codegen::isa::TargetIsa;
 use quench_regexp::backtrack::native::{NativeBuild, NativeCode, NativeCompiler, NativeFn, NativePlan};
 use quench_runtime::staged::regexp::{emit_search, PARAMETERS};
+use quench_runtime::vm::tier_policy::regexp_compiles;
 
-/// Whether this thread's hot regexp programs run natively: only under a compiling mode. The
-/// stencil tier stitches a program after `stitch_runs` searches, the Cranelift tiers compile it
-/// after `native_runs`, each where the mode runs it (`compiler`).
-/// Without the JIT's routes (`jit_routes`) no program compiles.
-pub(crate) fn enable(enabled: bool, runs: (u32, u32)) {
+/// Whether this thread's regexp programs may run natively: only under a compiling mode. A pattern
+/// gets code where `tier_policy::regexp_compiles` picks it (`compiler`); every other pattern runs
+/// the shared matcher. Without the JIT's routes (`jit_routes`) no program compiles.
+pub(crate) fn enable(enabled: bool) {
     match crate::jit_routes::jit() {
-        Some(routes) => (routes.regexp)(enabled, runs),
+        Some(routes) => (routes.regexp)(enabled),
         None => quench_regexp::backtrack::native::enable_native_search(false),
     }
 }
 
 /// `enable`'s route, which `jit_routes` installs.
-pub(crate) fn enable_compiler(enabled: bool, (stitch_runs, native_runs): (u32, u32)) {
-    quench_regexp::backtrack::native::set_native_compiler(compiler(stitch_runs, native_runs));
+pub(crate) fn enable_compiler(enabled: bool) {
+    quench_regexp::backtrack::native::set_native_compiler(compiler());
     quench_regexp::backtrack::native::enable_native_search(enabled);
 }
 
-/// The compiler `quench_regexp` asks for code: the tiers as the mode climbs them, as a
-/// JavaScript function climbs them (`admission::Tier`). The stencil tier first where it runs and
-/// the target has the regexp rows, then the Cranelift tiers where they run; a `--b-jit` target
-/// without the rows compiles with Cranelift, as it did before the rows.
-fn compiler(stitch_runs: u32, native_runs: u32) -> NativeCompiler {
-    use crate::compiled::admission::{tier_runs, Tier};
-    let stencils = tier_runs(&[Tier::Base]) && stitch::available();
-    let cranelift = tier_runs(Tier::CRANELIFT);
-    match (stencils, cranelift) {
-        (true, true) => NativeCompiler { runs: stitch_runs, start: stitch_start, optimize: Some((native_runs, start)) },
-        (true, false) => NativeCompiler { runs: stitch_runs, start: stitch_start, optimize: None },
-        (false, _) => NativeCompiler { runs: native_runs, start, optimize: None },
-    }
+/// The compiler `quench_regexp` asks for code: the pick (`regexp_compiles`) and the tier that
+/// builds the code. The Cranelift u-jit builds it where it runs; a target with the stencil regexp
+/// rows and no Cranelift tiers stitches it from those rows.
+fn compiler() -> NativeCompiler {
+    let start: fn(NativePlan) -> NativeBuild = if quench_runtime::vm::tier_policy::regexp_stitches(stitch::available()) { stitch_start } else { start };
+    NativeCompiler { compiles: regexp_compiles, start }
 }
 
 /// The unit of a regexp program's compile, which the one specializer clears.
 fn unit() -> Option<CompiledUnit> {
     use crate::compiled::admission::{specialize, UnitFacts, UnitKind, UnitRequest};
-    specialize(UnitRequest { kind: UnitKind::Regexp, facts: UnitFacts::default() }).compiled()
+    specialize(UnitRequest { kind: UnitKind::Regexp, facts: UnitFacts::default() })
 }
 
 /// The stencil tier's search of `plan`, stitched at once (`stitch`).

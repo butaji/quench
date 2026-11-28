@@ -11,6 +11,9 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(feature = "jit")]
 mod select;
+/// The select lowering, which the engine's tests run as executable code.
+#[cfg(all(feature = "jit", feature = "test-support"))]
+pub use select::convert;
 pub mod relocatable_code;
 mod worker;
 mod isa;
@@ -24,10 +27,24 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// Reuse immutable host target configuration across JS function tiers and
 /// Wasm module compilation, one per optimization level.
 /// Whether Cranelift verifies the IR of every compile, and regalloc2 checks every allocation
-/// it makes: in debug builds, where tests check each lowering, and in the tier-stress build,
-/// which compiles everything it can (the ISA is shared by every VM of the process); not in release, where the verifier cost about a quarter
+/// it makes: in debug builds, where tests check each lowering; not in release, where the verifier cost about a quarter
 /// of every JIT compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
-fn verify_ir() -> bool { cfg!(debug_assertions) || cfg!(feature = "tier-stress") }
+fn verify_ir() -> bool { cfg!(debug_assertions) }
+
+// The engine's region declarations for a function about to be compiled
+// (`quench-runtime-engine`'s `compiled::regions::declare_regions`). Its argument is a Cranelift
+// function, so the hook is declared here on the compiler side, not among the core's engine calls.
+unsafe extern "Rust" {
+    safe fn quench_engine_fn_declare_regions(function: &mut cranelift_codegen::ir::Function);
+}
+
+/// Declares the engine's regions in `function` before it is compiled.
+fn declare_regions(function: &mut cranelift_codegen::ir::Function) { quench_engine_fn_declare_regions(function) }
+
+/// The signature the engine's definition of `quench_engine_fn_declare_regions` is checked against.
+pub mod signatures {
+    #[allow(non_camel_case_types)] pub type quench_engine_fn_declare_regions = fn(&mut cranelift_codegen::ir::Function);
+}
 
 /// Publication determines relocation policy and code-generation effort, not language
 /// semantics or lowering.
@@ -55,13 +72,10 @@ impl CodePublication {
     }
 }
 
-/// How much effort one compile spends. `Optimized` is the shipping configuration; `Quick`
-/// compiles a body at a fraction of the cost (no mid-end optimization, one-pass register
-/// allocation) for code that has not proven itself hot. A caller chooses per compile; every
-/// compile uses `Optimized` until a tier policy asks otherwise.
+/// How much effort one compile spends. `Optimized` is the shipping configuration, which every
+/// compile uses unless its body is too large for the backtracking allocator.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CompileLevel {
-    Quick,
     /// A body too large for the backtracking allocator's scratch memory: `Optimized` with
     /// one-pass register allocation.
     Large,
@@ -70,16 +84,9 @@ pub enum CompileLevel {
 }
 
 impl CompileLevel {
-    /// The level a compile uses unless its caller chooses: `Optimized`, or `Quick` while the
-    /// `quick-compile` experiment measures that level.
-    pub fn run_default() -> Self {
-        if crate::jit_mode::quick_only() || crate::trace::Dev::QuickCompile.on() { Self::Quick } else { Self::Optimized }
-    }
-
     /// The Cranelift settings a level fixes, applied after the publication's.
     fn settings(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Self::Quick => &[("opt_level", "none")],
             Self::Large => &[("regalloc_algorithm", "single_pass")],
             Self::Optimized => &[],
         }
@@ -130,22 +137,21 @@ pub fn symbol_in(cursor: &mut cranelift_codegen::cursor::FuncCursor<'_>, namespa
 /// The executable-memory ISA of every JavaScript JIT tier.
 pub fn target_isa() -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
-    { target_isa_level(CompileLevel::run_default()) }
+    { target_isa_level(CompileLevel::Optimized) }
     #[cfg(not(feature = "jit"))]
     { None }
 }
 
 /// The ISA of an AOT lane body for `target`: the JIT's, with the frame pointers its leaves' tail
-/// calls to the base body's entries need, as the stencils that base body is built from have, and the
-/// IR verifier on: a lane body is an extra tier, so a body whose IR is invalid is dropped (the
-/// compile's error) rather than aborting the ahead compile, which can afford the check.
+/// calls to the base body's entries need, as the stencils that base body is built from have. No IR
+/// verifier and no register-allocation checker: the ahead compile runs at load in every default run.
 pub fn ahead_lane_isa(target: &NativeTarget) -> Option<Arc<TargetIsa>> {
     #[cfg(feature = "jit")]
     {
         static ISAS: OnceLock<Mutex<Vec<(NativeTarget, Arc<TargetIsa>)>>> = OnceLock::new();
         let mut isas = ISAS.get_or_init(Default::default).lock().ok()?;
         if let Some((_, isa)) = isas.iter().find(|(built, _)| built == target) { return Some(Arc::clone(isa)); }
-        let isa = build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::run_default(), target, true).ok()?;
+        let isa = build_isa_verified(JS_JIT_OPT_LEVEL, CodePublication::Stencil, CompileLevel::Optimized, target, false).ok()?;
         isas.push((target.clone(), Arc::clone(&isa)));
         Some(isa)
     }
@@ -251,14 +257,6 @@ pub enum NativeCompileRejection {
 }
 
 impl NativeCompileRejection {
-    /// Whether replanning with less inlined code can address this rejection.
-    pub const fn exceeds_code_budget(self) -> bool {
-        match self {
-            Self::CodeSizeBudget => true,
-            _ => false,
-        }
-    }
-
     pub const fn reason(self) -> &'static str {
         match self {
             Self::Cranelift => "cranelift-compile-error",
@@ -304,7 +302,7 @@ pub fn compile_function_reading<T>(
     if !cfg!(feature = "jit") {
         return Err(NativeCompileRejection::Cranelift);
     }
-    crate::vm::engine_calls::declare_regions(&mut function);
+    declare_regions(&mut function);
     #[cfg(feature = "jit")]
     select::convert(&mut function);
     let mut context = COMPILE_CONTEXT.with(|held| held.take()).unwrap_or_else(cranelift_codegen::Context::new);

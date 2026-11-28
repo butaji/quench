@@ -108,6 +108,9 @@ enum ErrorDescription {
     /// A thrown primitive, whose message is made only when read (`thrown_primitive`).
     ThrownPrimitive,
     ExecutionTerminated,
+    /// A native edge captured the chain of frames down to its base (`Vm::capture_chain_parked`).
+    /// Not a throw: the frames are gone, so no handler may run, and the run returns the chain.
+    Captured(Box<super::activation::FrameRecord>),
     DataClone(String),
     WasmTrap(crate::WasmTrap),
     WasmException,
@@ -144,6 +147,7 @@ impl fmt::Display for JsError {
             ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
             ErrorDescription::WasmException => f.write_str("uncaught Wasm exception"),
             ErrorDescription::ExecutionTerminated => f.write_str("execution terminated"),
+            ErrorDescription::Captured(_) => f.write_str("execution captured"),
         }
     }
 }
@@ -182,6 +186,25 @@ impl JsError {
     }
 
     pub fn is_execution_terminated(&self)->bool { matches!(self.0.payload.description,ErrorDescription::ExecutionTerminated) }
+
+    /// The error a native edge returns to capture the frames of its run (`Vm::capture_chain_parked`):
+    /// the run stops at the native call with `chain` as its outcome (`into_captured`).
+    pub fn captured(chain: Box<super::activation::FrameRecord>) -> Self {
+        Self::described(ErrorDescription::Captured(chain), None)
+    }
+
+    pub fn is_captured(&self) -> bool { matches!(self.0.payload.description, ErrorDescription::Captured(_)) }
+
+    /// The chain a captured run stopped with, or the error itself when the run did not capture.
+    pub fn into_captured(self) -> Result<Box<super::activation::FrameRecord>, JsError> {
+        if !self.is_captured() {
+            return Err(self);
+        }
+        match self.0.payload.description {
+            ErrorDescription::Captured(chain) => Ok(chain),
+            _ => unreachable!("checked above"),
+        }
+    }
 
     pub fn thrown(value: Value, message: String) -> Self {
         Self::described(ErrorDescription::Text { message }, Some(value))
@@ -302,6 +325,7 @@ impl JsError {
             ErrorDescription::WasmTrap(trap) => trap.to_string(),
             ErrorDescription::WasmException => "uncaught Wasm exception".into(),
             ErrorDescription::ExecutionTerminated => "execution terminated".into(),
+            ErrorDescription::Captured(_) => "execution captured".into(),
         }
     }
 }
@@ -316,8 +340,8 @@ pub(super) const DYNAMIC_FUNCTIONS_KEPT: u16 = 64;
 impl Vm {
     pub(super) fn error_is_error(&self, value: Value) -> bool {
         self.heap
-            .object_record(value)
-            .is_some_and(Object::has_error_data)
+            .object(value)
+            .is_some_and(|object| object.has_error_data())
     }
 
     pub(super) fn error_stack_getter(
@@ -325,7 +349,7 @@ impl Vm {
         program: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let records = match self.object_data(receiver).and_then(Object::stack_data) {
+        let records = match self.heap.object(receiver).and_then(|object| object.stack_data()) {
             Some(StackData::Formatted(value)) => return Ok(value.clone()),
             Some(StackData::Captured { records, .. }) => records.clone(),
             _ => return Ok(Value::UNDEFINED),
@@ -393,7 +417,8 @@ impl Vm {
         })();
         if let Ok(value) = outcome {
             let target = self.heap.root_value(receiver_root).unwrap();
-            if let Some(object) = self.object_data_mut(target) {
+            self.heap.ensure_cell_extras(target);
+            if let Some(mut object) = self.heap.object_mut(target) {
                 object.set_stack_data(StackData::Formatted(value));
             }
         }
@@ -431,11 +456,14 @@ impl Vm {
             for record in records {
                 let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
                 let mut object = Self::empty_object(intrinsics.call_site_prototype);
-                self.capture_constructed_name(&mut object, intrinsics.call_site_constructor, true);
+                let class = self.ordinary_class(intrinsics.call_site_constructor);
+                self.capture_constructed_name(&mut object, intrinsics.call_site_constructor, class, true);
                 let site = self.heap.alloc_object(object);
                 let root = self.heap.root(site);
                 roots.push(root);
-                self.object_data_mut(site)
+                self.heap.ensure_cell_extras(site);
+                self.heap
+                    .object_mut(site)
                     .expect("CallSite is an ordinary object")
                     .set_stack_data(StackData::CallSite(record.clone()));
                 sites.push(self.heap.root_value(root).unwrap());
@@ -492,7 +520,7 @@ impl Vm {
             };
             if let Some(key) = self.lookup_js_atom(&name) {
                 let mut current = receiver;
-                while let Some(object) = self.object_data(current) {
+                while let Some(object) = self.heap.object(current) {
                     if self.proxy_parts(current).is_some() {
                         break;
                     }
@@ -508,7 +536,7 @@ impl Vm {
         }
         let mut found = None;
         let mut current = receiver;
-        while let Some(object) = self.object_data(current) {
+        while let Some(object) = self.heap.object(current) {
             if self.proxy_parts(current).is_some() {
                 break;
             }
@@ -678,7 +706,7 @@ impl Vm {
         let target_root = self.heap.root(target);
         let result = (|| {
             let target = self.heap.root_value(target_root).unwrap();
-            if self.object_data(target).is_none() {
+            if self.heap.object(target).is_none() {
                 return Err(self.type_error(
                     program,
                     "Error.captureStackTrace target must be an object".into(),
@@ -696,7 +724,9 @@ impl Vm {
     /// `constructor_opt`, without defining the accessor again.
     fn capture_constructed_error_stack(&mut self, error: Value, constructor_opt: Value) {
         let data = self.captured_stack_data(constructor_opt);
-        self.object_data_mut(error)
+        self.heap.ensure_cell_extras(error);
+        self.heap
+            .object_mut(error)
             .expect("a constructed error is an object")
             .set_stack_data(data);
     }
@@ -734,7 +764,9 @@ impl Vm {
         data: StackData,
     ) -> Result<(), JsError> {
         self.define_error_stack_property(program, target)?;
-        self.object_data_mut(target)
+        self.heap.ensure_cell_extras(target);
+        self.heap
+            .object_mut(target)
             .expect("stack target remains object-like")
             .set_stack_data(data);
         Ok(())
@@ -761,7 +793,7 @@ impl Vm {
                     number.floor().min(usize::MAX as f64) as usize
                 });
             }
-            constructor = self.object_data(constructor)?.proto();
+            constructor = self.heap.object(constructor)?.proto();
         }
     }
 
@@ -849,7 +881,7 @@ impl Vm {
         native: Native,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let record = match self.object_data(receiver).and_then(Object::stack_data) {
+        let record = match self.heap.object(receiver).and_then(|object| object.stack_data()) {
             Some(StackData::CallSite(record)) => record.clone(),
             _ => {
                 let method = CALL_SITE_METHODS
@@ -884,7 +916,7 @@ impl Vm {
                 record.this_value
             }),
             Native::CallSiteGetFunction => Ok(match record.name {
-                CallSiteName::Callable(function) if !record.hide_identity => function,
+                CallSiteName::Callable(function) if !record.hide_identity && !self.hides_host_wrapper(function) => function,
                 _ => Value::UNDEFINED,
             }),
             Native::CallSiteGetMethodName => Ok(self.call_site_method_name(&record)?
@@ -935,18 +967,18 @@ impl Vm {
 
     pub(super) fn error_stack_setter(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(object) = self.object_data_mut(receiver)
-            && matches!(
-                object.stack_data(),
-                Some(StackData::Captured { .. } | StackData::Formatted(_))
-            ) {
+        let formatting = self.heap.object(receiver).and_then(|object| object.stack_data());
+        if matches!(formatting, Some(StackData::Captured { .. } | StackData::Formatted(_))) {
+            self.heap.ensure_cell_extras(receiver);
+            if let Some(mut object) = self.heap.object_mut(receiver) {
                 object.set_stack_data(StackData::Formatted(value));
             }
+        }
         Ok(Value::UNDEFINED)
     }
 
@@ -1213,7 +1245,9 @@ impl Vm {
                 },
             )?;
         }
-        self.object_data_mut(object)
+        self.heap.ensure_cell_extras(object);
+        self.heap
+            .object_mut(object)
             .expect("primitive wrapper")
             .set_boxed_primitive(value);
         Ok(object)
@@ -1221,7 +1255,7 @@ impl Vm {
 
     pub(super) fn box_bigint_object(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         value: Value,
     ) -> Result<Value, JsError> {
         let realm = self.active_native_env().unwrap_or(self.realm.globals);
@@ -1234,7 +1268,9 @@ impl Vm {
             .or_else(|| self.primitive_prototype(value))
             .unwrap_or(self.object_proto);
         let object = self.heap.alloc_object(Self::empty_object(prototype));
-        self.object_data_mut(object)
+        self.heap.ensure_cell_extras(object);
+        self.heap
+            .object_mut(object)
             .expect("bigint wrapper")
             .set_boxed_primitive(value);
         Ok(object)
@@ -1460,7 +1496,7 @@ impl Vm {
         };
         #[cfg(feature = "native-execution")]
         let native_program = {
-            let parts = kind.native_parts(self.specialization_part(), &parameters, &source);
+            let parts = kind.native_parts(&parameters, &source);
             match self.resolve_native_program(crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME, &parts) {
                 Ok(program) => program,
                 Err(crate::NativeSourceError::Syntax(message)) => return self.syntax_error_result(program, &message),
@@ -1486,11 +1522,10 @@ impl Vm {
             let source_name = crate::compile::DYNAMIC_FUNCTION_SOURCE_NAME;
             // A Function body compiles from its text alone, so its compiled form goes through the
             // host's compile cache (`Host::kept_compiled_program`).
-            let kept_key = [self.specialization_part(), dynamic.text.as_str()];
+            let kept_key = [dynamic.text.as_str()];
             let kept = self.host.kept_compiled_program(source_name, &kept_key).and_then(|bytes| {
                 let text = crate::bytecode::SourceText::Shared(std::sync::Arc::from(dynamic.text.as_str()));
-                let specialized = self.specialized;
-                self.decode_cached_program(bytes, text, 0, source_name, specialized).ok()
+                self.decode_cached_program(bytes, text, 0, source_name).ok()
             });
             let compiled = kept.is_none();
             let residual = match kept {
@@ -1717,7 +1752,7 @@ impl Vm {
         let (shared_array_buffer, _) =
             self.install_shared_array_buffer_for_realm(program, global, object_prototype)?;
         self.set_builtin_value_named(global, "SharedArrayBuffer", shared_array_buffer)?;
-        self.object_data_mut(global)
+        self.heap.object_mut(global)
             .expect("realm global is an object")
             .set_proto(object_prototype);
         self.install_string_for_realm(program, global, object_prototype)?;
@@ -1841,7 +1876,7 @@ impl Vm {
                 .intrinsics
                 .function_constructors
                 .insert((global, native), constructor);
-            self.object_data_mut(constructor)
+            self.heap.object_mut(constructor)
                 .expect("realm dynamic function")
                 .set_proto(function);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
@@ -2040,10 +2075,10 @@ impl Vm {
             Native::ErrorToString,
             Some(global),
         )?;
-        self.object_data_mut(type_error_prototype)
+        self.heap.object_mut(type_error_prototype)
             .expect("realm TypeError prototype")
             .set_proto(realm_error_prototype);
-        self.object_data_mut(type_error)
+        self.heap.object_mut(type_error)
             .expect("realm TypeError constructor")
             .set_proto(realm_error_constructor);
         self.set_builtin_function_name(type_error, "TypeError")?;
@@ -2067,7 +2102,7 @@ impl Vm {
             let empty_message = self.heap.alloc_string("".into());
             self.set_builtin_value_named(prototype, "message", empty_message)?;
             self.set_builtin_value_named(global, name, constructor)?;
-            self.object_data_mut(constructor)
+            self.heap.object_mut(constructor)
                 .unwrap()
                 .set_proto(realm_error_constructor);
         }
@@ -2367,7 +2402,7 @@ impl Vm {
         self.set_builtin_value_named(prototype, "message", empty_message)?;
         if native != Native::Error {
             let error_constructor = self.native_value(Native::Error);
-            if let Some(function) = self.object_data_mut(constructor) {
+            if let Some(mut function) = self.heap.object_mut(constructor) {
                 function.set_proto(error_constructor);
             }
         }

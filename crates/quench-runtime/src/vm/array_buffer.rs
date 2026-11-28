@@ -209,8 +209,8 @@ impl Vm {
             return Err(self.type_error(p, "cannot detach a WebAssembly.Memory buffer".into()));
         }
         if self
-            .object_data(buffer)
-            .is_some_and(Object::is_structured_transfer_forbidden)
+            .heap.object(buffer)
+            .is_some_and(|object| object.is_structured_transfer_forbidden()) // record-only: detach key
         {
             return Err(self.type_error(
                 p,
@@ -453,7 +453,7 @@ impl Vm {
             self.array_buffer_to_index(p, args.first().copied().unwrap_or_else(|| Value::number(0.0)))?;
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let max_byte_length_option =
-            if options.is_undefined() || self.object_data(options).is_none() {
+            if options.is_undefined() || self.heap.object(options).is_none() {
                 None
             } else {
                 let atom = self.intern_atom("maxByteLength");
@@ -600,7 +600,7 @@ impl Vm {
         let species = if constructor.is_undefined() {
             None
         } else {
-            if constructor.is_null() || self.object_data(constructor).is_none() {
+            if constructor.is_null() || self.heap.object(constructor).is_none() {
                 return Err(self.type_error(p, "ArrayBuffer constructor must be an object".into()));
             }
             let species = self.species_of(p, constructor)?;
@@ -708,8 +708,8 @@ impl Vm {
             _ => (true, true, Default::default()),
         };
         if self
-            .object_data(this)
-            .is_some_and(Object::is_structured_transfer_forbidden)
+            .heap.object(this)
+            .is_some_and(|object| object.is_structured_transfer_forbidden()) // record-only: detach key
         {
             return Err(self.type_error(
                 p,

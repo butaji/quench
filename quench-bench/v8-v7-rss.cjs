@@ -2,7 +2,7 @@
 //
 //   quench quench-bench/v8-v7-rss.cjs --quench PATH [--qjs PATH] [--node PATH]
 //     [--bun PATH] [--runs N] [--only richards,regexp] [--rss-exec PATH] [--rss-cpu N]
-//     [--node-options OPTIONS] [--bun-options OPTIONS] [--out FILE] [--all-tiers]
+//     [--node-options OPTIONS] [--bun-options OPTIONS] [--out FILE]
 //
 // Each fixture is the pinned suite's base.js, the fixture and the stock reporting runner.
 // Every round runs each engine once, in a fixed interleaved order, through `rss-exec`
@@ -111,15 +111,6 @@ const engines = [
   { name: "quench --no-jit", side: "quench", executable: measuredQuench, argv: ["--no-jit"], env: {} },
   { name: "quench", side: "quench", executable: measuredQuench, argv: [], env: {} },
 ];
-// --all-tiers adds Quench's other measured modes (the stabilization sweep's four): no-jit
-// with QUENCH_DEV=memory-first, the base tier alone and the upper tier.
-if (process.argv.includes("--all-tiers")) {
-  engines.push(
-    { name: "quench --no-jit memory-first", side: "quench", executable: measuredQuench, argv: ["--no-jit"], env: { QUENCH_DEV: "memory-first" } },
-    { name: "quench --b-jit", side: "quench", executable: measuredQuench, argv: ["--b-jit"], env: {} },
-    { name: "quench --u-jit", side: "quench", executable: measuredQuench, argv: ["--u-jit"], env: {} },
-  );
-}
 const qjs = option("--qjs", null);
 if (qjs) engines.push({ name: "qjs", side: "other", executable: qjs, argv: [], env: {} });
 // An engine's own option variable, set only when its flag names options.

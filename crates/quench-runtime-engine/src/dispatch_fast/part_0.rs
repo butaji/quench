@@ -1,17 +1,13 @@
 //! Functions of `dispatch_fast` in a codegen unit of their own (B1: a staged edit recompiles only the units that inline it).
 #![allow(unused_imports)]
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether a leaf of `form` runs with its receiver bound (`THIS_LEAF`, `CONTEXT_LEAF`).
 #[inline(always)]
 pub(super) const fn leaf_binds_this(form: LeafForm) -> bool {
     quench_runtime::staged::call_leaf::binds_this(form)
-}
-
-/// The `LaneStack::noted` entry of a link address and callee function.
-#[inline(always)]
-pub(super) fn noted_slot(address: usize, function: u32) -> usize {
-    ((address >> 1) ^ (function as usize).wrapping_mul(0x9E37)) & (NOTED_SITE_CALLEES - 1)
 }
 
 /// The script target index a call link names, with or without `PLAIN_LINK`.
@@ -68,23 +64,15 @@ pub(super) fn entry_fill_known(function: &Function) -> u16 {
     }
 }
 
-/// Switches the record at `ip` to `handler` for the rest of its view's life: a one-way step of
-/// the record's state machine, taken when an execution of the record shows the handler it has
-/// does not fit the site. Every handler a record may switch between computes the same result.
+/// Switches the record at `ip` to `handler` for the rest of its view's life, at an edge only: a handler is chosen once at
+/// load from the facts (`derive_lane_view`) and execution never rewrites it. The edges that may are the settle of a probed
+/// name (`settle_name_record`) and the loop site's admission edge (`loop_retire_in_lane`).
+/// Every handler a record may switch between computes the same result.
 #[inline(always)]
-pub(super) fn requicken(ip: Ip, handler: Handler) {
+pub(super) fn edge_rewrite(ip: Ip, handler: Handler) {
     // SAFETY: `ip` comes from `LaneView::records`, whose records live in `UnsafeCell`s; the
-    // lane runs on the view's thread, and no reference to the handler field is live. A
-    // header record a loop site holds keeps `loop_header_miss`, and the site the handler.
+    // lane runs on the view's thread, and no reference to the handler field is live.
     unsafe {
-        if (*ip).handler == loop_header_miss as Handler as *const () {
-            let site = header_site_in_lane(ip);
-            (*site).header_handler.set(handler as *const ());
-            return;
-        }
-        if loop_kernel::requicken_kernel(ip, handler) {
-            return;
-        }
         // A record whose result carries flags keeps its edge's general step (`derive_lane_view`).
         if (*ip).handler == general_step_in_lane as Handler as *const () && (*ip).a & !quench_runtime::bytecode::REGISTER_MASK != 0 {
             return;
@@ -95,7 +83,7 @@ pub(super) fn requicken(ip: Ip, handler: Handler) {
             (*ip.cast_mut()).handler = general_step_in_lane as Handler as *const ();
             return;
         }
-        (*ip.cast_mut()).handler = trusted_this_handler(handler) as *const ();
+        (*ip.cast_mut()).handler = handler as *const ();
     }
 }
 
@@ -124,53 +112,6 @@ pub(crate) unsafe fn pc_in_view(base: Ip, ip: Ip) -> usize {
     }
     // SAFETY: the function's contract.
     unsafe { ip.offset_from(base) as usize }
-}
-
-/// The handler a record takes for `handler`: its trusted form while the lane trusts `this`: every
-/// activation's `this` is one a tier bound and checked once (`note_lane_this`, `CallFrame::call_this_bound`).
-#[inline]
-pub(super) fn trusted_this_handler(handler: Handler) -> Handler {
-    let Some(&(_, trusted)) = TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler as *const ()) else { return handler };
-    let cx = context_in_lane();
-    if cx.is_null() { return handler; }
-    // SAFETY: the running lane's context.
-    let vm = unsafe { vm(cx) };
-    if vm.this_trust.get() == THIS_TRUSTED { trusted } else { handler }
-}
-
-/// The check once per activation of the `this` the lane binds for it (N4): a `this` that is no direct
-/// object retires the trust for good, and every trusted row takes its checked form
-/// (`retire_this_trust`). Every lane binding of an activation's `this` makes it.
-/// `this_rows` is whether the activation's view has `this` sites (`LaneView::this_rows`), `true` where it is not known.
-#[inline(always)]
-pub(crate) fn note_lane_this(vm: &Vm, this: Value, this_rows: impl FnOnce() -> bool) {
-    if this.direct_object_index().is_none() && vm.this_trust.get() != THIS_RETIRED && this_rows() {
-        retire_this_trust(vm);
-    }
-}
-
-/// `note_lane_this` for the general loop's frame `frame` the lane resumes, its view found in the context's table.
-#[inline]
-pub(super) fn note_frame_this(cx: *mut LaneContext, vm: &Vm, frame: usize, this: Value) {
-    note_lane_this(vm, this, || {
-        let function = vm.frames[frame].function;
-        // SAFETY: the context's table lives as long as its program entry.
-        unsafe { (*cx).views.as_ref() }.and_then(|views| views.get(function as usize)).and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .is_none_or(|view| view.this_rows)
-    });
-}
-
-/// Retires the lane's `this` trust (`note_lane_this`): every view's trusted rows take their checked forms.
-/// A linked ahead image retires it too: its bodies run compiled under `--no-jit` and hand activations
-/// back to the lane (`CompiledAheadImagesVm::load_ahead_images`).
-#[cold]
-#[inline(never)]
-pub(crate) fn retire_this_trust(vm: &Vm) {
-    vm.this_trust.set(THIS_RETIRED);
-    quench_runtime::tier_surface::retire_this_holders();
-    vm.programs.rewrite_lane_handlers(&|handler| {
-        TRUSTED_THIS_ROWS.iter().find(|(_, trusted)| *trusted as *const () == handler).map(|(plain, _)| *plain as *const ())
-    });
 }
 
 /// The header word `index` (a `staged::frame` `CONTEXT_*`) of the window at `registers`: the words count
@@ -242,12 +183,9 @@ pub(crate) fn retire_running_lane_context() {
     unsafe { (cx.cast::<LaneBinding>().as_ref().unwrap_unchecked().retire)(cx) };
 }
 
-pub(super) unsafe fn resume_lane_binding(context: *mut ()) {
-    let cx = context.cast::<LaneContext>();
-    // SAFETY: the prefix's callback was installed for this context's Host.
-    let base = unsafe { vm(cx) }.heap_reads().object_record_base().unwrap_or(std::ptr::null());
-    unsafe { (*cx).binding.object_base = base };
-}
+/// The resume callback of the lane prefix. The object record base it used to reread is gone (S7f), so there
+/// is nothing to reread on resume.
+pub(super) unsafe fn resume_lane_binding(_context: *mut ()) {}
 
 /// The storage of the running frame's captured environment (`LaneContext::frame_storage`),
 /// for a frame run of a function other than the root whose frame holds one; `None` leaves
@@ -663,6 +601,7 @@ pub(super) fn window_closure_value_in_lane(
                 None => window(vm),
             };
             let value = vm.closure_of_template(template, env);
+            vm.note_closure_created(vm.active_program, function, value);
             // SAFETY: the context's program outlives the lane run.
             vm.record_lane_closure(code, unsafe { (*cx).program }, function, value);
             Some(value)
@@ -1318,7 +1257,7 @@ pub(super) fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) 
     vm.dense_array_element(base, key)
         .or_else(|| named_key_element(vm, base, key))
         .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
-        .or_else(|| row_typed_element(ip, vm, base, key))
+        .or_else(|| row_typed_element(vm, base, key))
         .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
         .or_else(|| vm.absent_array_element(base, key))
         .or_else(|| site_keyed_get_in_lane(vm, ip, base, key))
@@ -1326,25 +1265,12 @@ pub(super) fn row_index_read(context: *mut (), ip: Ip, base: Value, key: Value) 
 }
 
 /// A typed array's element at an index key (`Vm::plain_typed_element`), which no dense array
-/// read before it serves: the site then reads it through its typed element row
-/// (`TYPED_KIND_SITES`), whose site fixes the kind (`requicken_typed`).
-pub(super) fn row_typed_element(ip: Ip, vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
+/// read before it serves. The publish makes the view the typed row of the element's kind proves
+/// (`LaneFrame::kept_view`) available to the next read of the record.
+pub(super) fn row_typed_element(vm: &mut Vm, base: Value, key: Value) -> Option<Value> {
     let value = vm.plain_typed_element(base, key)?;
     vm.publish_typed_view(base);
-    requicken_typed(ip, true, vm.typed_array_kind_of(base));
     Some(value)
-}
-
-/// Switches the element record at `ip` to its typed row, read or store, for the element kind
-/// `kind` names: the record's immediate holds the native kind's index, which the row's view
-/// proof reads (`LaneFrame::kept_view`). A kind with no native element keeps the record.
-pub(super) fn requicken_typed(ip: Ip, read: bool, kind: Option<TypedArrayKind>) {
-    let Some(index) = kind.and_then(quench_runtime::staged::typed_elements::native_kind_index) else { return };
-    // SAFETY: `ip` is a live element record of the view; an element record's operand holds no
-    // loop site or call target, so its immediate is free for the kind.
-    unsafe { (*ip.cast_mut()).operand.imm = index };
-    let handler = element_typed_row(read, index);
-    requicken(ip, handler);
 }
 
 /// A lane `GetIndex` of a symbol key whose proof records an inherited getter
@@ -1409,7 +1335,7 @@ pub(super) fn row_index_write(context: *mut (), ip: Ip, object: Value, key: Valu
         && !vm.try_fill_dense_hole(object, key, value)
         && !vm.try_site_symbol_set(ip.addr(), object, key, value)
         && !vm.try_host_private_symbol_set(object, key, value)
-        && !row_typed_store(ip, vm, object, key, value)
+        && !row_typed_store(vm, object, key, value)
         && !vm.array_index_key(key).is_some_and(|index| vm.typed_array_set_bigint(object, index as usize, value))
         && !vm.try_plain_string_key_set(object, key, value)
         && !key
@@ -1425,16 +1351,15 @@ pub(super) fn row_index_write(context: *mut (), ip: Ip, object: Value, key: Valu
 }
 
 /// A store of a number at an index of a typed array, which none of the array and symbol
-/// paths before it serve: the site then stores through its typed element row (`TYPED_KIND_SITES`).
-pub(super) fn row_typed_store(ip: Ip, vm: &mut Vm, object: Value, key: Value, value: Value) -> bool {
+/// paths before it serve.
+pub(super) fn row_typed_store(vm: &mut Vm, object: Value, key: Value, value: Value) -> bool {
     let stored = vm
         .array_index_key(key)
         .is_some_and(|index| vm.typed_array_set_number(object, index as usize, value));
     if stored {
-        // The typed row proves the view the VM publishes (`LaneFrame::kept_view`): unpublished, every
-        // store would miss back here.
+        // The typed row of the element's kind proves the view the VM publishes (`LaneFrame::kept_view`):
+        // unpublished, every store would miss back here.
         vm.publish_typed_view(object);
-        requicken_typed(ip, false, vm.typed_array_kind_of(object));
     }
     stored
 }
@@ -1489,14 +1414,6 @@ pub(super) fn capture_read_value(cx: *mut LaneContext, depth: u16, slot: u16) ->
 /// `capture_read_value`, with `PLAIN` also a root projection's plain read
 /// (`Vm::plain_capture`), for a `LoadCapture` record, which takes the value however held.
 #[inline(always)]
-/// Whether a capture of `depth` in the running activation's environment settles on a root binding
-/// (the root `walked_capture_slots` reports), which a record's root row answers (`FLAG_ROOT`).
-pub(super) fn capture_settles_on_root(cx: *mut LaneContext, depth: u16) -> bool {
-    let vm = unsafe { vm(cx) };
-    let env = unsafe { (*cx).registers }.env();
-    !env.is_deleted() && vm.walked_capture_slots(env, false, depth).is_some_and(|(_, root)| root.is_some())
-}
-
 pub(super) fn read_capture_value<const PLAIN: bool>(cx: *mut LaneContext, depth: u16, slot: u16) -> Option<Value> {
     let vm = unsafe { vm(cx) };
     let env = unsafe { (*cx).registers }.env();
@@ -1634,6 +1551,7 @@ pub(super) fn closure_in_lane(vm: &mut Vm, code: &ResidualProgram, function: u32
         && code.functions.get(function as usize).is_some_and(|slot| slot.header().prototype_unobservable)
         && let Some(known) = Value::known_closure(function, env)
     {
+        vm.note_closure_created(vm.active_program, function, known);
         return Some(known);
     }
     vm.closure(code, function, env).ok()
@@ -1868,8 +1786,3 @@ pub(super) fn single_base_handler(base: u16, this: Handler, register: Handler, n
     }
 }
 
-/// Whether a field record's base is one the single-base handlers read
-/// (`known_field_base_in_lane`): `this` or a register, not a nested chain or a local slot.
-pub(super) fn is_single_field_base(base: u16) -> bool {
-    base == quench_runtime::bytecode::FieldBase::THIS.0 || quench_runtime::bytecode::FieldBase(base).register_index().is_some()
-}

@@ -6,19 +6,26 @@
 //! have changed it. The backing pointer an access loads from a record stays an ordinary load: it
 //! is read after the access proved its array, which a hoist to a loop's entry would precede.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{Constant, Operation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
+    /// The accesses of every word an array access of this unit reads (`regions::array_access`): the record table's base
+    /// readonly where `arrays_stay_put` holds for the unit (`self.arrays_fixed`), the backing's words as the effect row proves.
+    pub(crate) fn array_access(&self) -> crate::compiled::regions::ArrayAccess {
+        crate::compiled::regions::array_access(self.unit.effects(), self.arrays_fixed)
+    }
+
     /// Whether no instruction of the unit may move arrays: each is a staged operation that cannot,
     /// or a return, or a `Binary` or equality whose operands the facts prove Numbers, which the lane
     /// lowers inline (a residual with no call-out); any other instruction may.
-    pub(crate) fn arrays_stay_put(&self, leaders: &quench_runtime::dataflow::BitSet, writes: &dyn Fn(WideInstruction) -> super::super::facts::Writes) -> bool {
+    pub(crate) fn arrays_stay_put(&self) -> bool {
         let instructions = &self.unit.instructions;
-        let number = |pc: usize, register: Register| self.facts.before(pc, register, instructions, leaders,
-            &self.program.constants, writes, self.native_calls).is_subtype(Type::NUMBER);
+        let number = |pc: usize, register: Register| self.cell_before(pc, register).ty.is_subtype(Type::NUMBER);
         let untyped: Vec<Constant> = self.program.constants.iter().map(|_| Constant::untyped(Value::UNDEFINED)).collect();
         let context = quench_runtime::staged::DecodeContext { constants: &untyped, ..quench_runtime::staged::DecodeContext::of(self.program) };
         instructions.iter().enumerate().all(|(pc, instruction)| {

@@ -88,6 +88,11 @@ use std::{
 use transfer::{Arch, check_call, check_no_return, check_transfer, check_value_field};
 
 const SOURCE: &str = "stencils/rows.rs";
+/// The quench-staged crate's root, relative to this crate (the cwd), and the name its metadata is passed under.
+const STAGED_ROOT: &str = "../quench-staged/src/lib.rs";
+const STAGED_CRATE: &str = "quench_staged";
+/// The metadata file `build_staged` writes for a variant (`--crate-name`, `--emit=metadata`).
+const STAGED_RMETA: &str = "libquench_staged.rmeta";
 /// Environment variable of each rustc process naming its shard's instance file (`rows.rs` reads
 /// it with `env!`).
 const INSTANCES_VAR: &str = "QUENCH_STENCIL_INSTANCES";
@@ -142,9 +147,6 @@ impl Family {
         }
     }
 }
-/// Environment variable of the library (`stencils/supernodes.rs`) naming the generated list: `build/supernodes.rs`
-/// writes `FAMILIES` and `SUPERNODES` from `supernodes.txt` to `OUT_DIR/supernodes.rs`.
-const SUPERNODES_VAR: &str = "QUENCH_SUPERNODES";
 /// The prefix of an exit hole (`HOLE_EXIT<k>`) that precedes its index.
 const EXIT_PREFIX: usize = "EXIT".len();
 /// The stencil libraries of an x86-64 build: the table's name and the `-C target-cpu` it is built for. Another
@@ -153,7 +155,8 @@ const VARIANTS: [(&str, Option<&str>); 2] = [("BASELINE", Some("x86-64-v2")), ("
 /// The flags every stencil object is built with beyond the target (`stencil-rustc-flags.txt`, next to `Cargo.toml`).
 const RUSTC_FLAGS_FILE: &str = "stencil-rustc-flags.txt";
 /// The files beyond the stencil sources (`stencil_sources`) whose change reruns the build script, relative to the crate.
-const EXTRA_WATCHED: [&str; 3] = ["supernodes.txt", RUSTC_FLAGS_FILE, "../quench-runtime/src/bytecode.rs"];
+/// The opcode table the list names is a build-dependency (`quench-opcodes`), so its change reruns the script too.
+const EXTRA_WATCHED: [&str; 2] = ["supernodes.txt", RUSTC_FLAGS_FILE];
 
 /// The flags of `RUSTC_FLAGS_FILE` in file order: one flag or flag-and-value pair per line, `#` starts a comment.
 fn rustc_flags() -> Vec<String> {
@@ -174,20 +177,15 @@ fn target() -> Option<(Arch, fn(&[u8]) -> Vec<ObjectRow>)> {
     }
 }
 
-/// The `quench-bjit` crate directory, where the stencil sources and lists are. This script builds two packages:
-/// `quench-bjit` (the library's generated supernode list only) and `quench-stencils` (every stencil row and the
-/// table), so the runtime crates, which depend on `quench-bjit` alone, compile while the stencils build.
+/// The `quench-bjit` crate directory, where the stencil sources and lists are. This script is `quench-stencils`' build
+/// script (`build = "../quench-bjit/build.rs"`), so the runtime crates, which depend on `quench-bjit` alone, compile
+/// while the stencils build.
 fn manifest_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let package = Path::new(env!("CARGO_MANIFEST_DIR"));
         if package.ends_with("quench-bjit") { package.to_path_buf() } else { package.join("../quench-bjit").canonicalize().expect("the quench-bjit crate") }
     })
-}
-
-/// Whether this run builds the stencil table (`quench-stencils`) rather than `quench-bjit`'s supernode list alone.
-fn builds_stencils() -> bool {
-    env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "quench-stencils")
 }
 
 fn main() {
@@ -199,14 +197,14 @@ fn main() {
     for extra in EXTRA_WATCHED {
         println!("cargo::rerun-if-changed={}", manifest.join(extra).display());
     }
+    println!("cargo::rerun-if-changed={}", manifest.join("../quench-staged/Cargo.toml").display());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let listed = supernodes::load(manifest);
+    let listed = supernodes::load();
     let generated = out.join("supernodes.rs");
     fs::write(&generated, &listed.text).unwrap();
-    println!("cargo::rustc-env={SUPERNODES_VAR}={}", generated.display());
-    if !builds_stencils() {
-        return;
-    }
+    let checked_in = manifest.join("stencils/supernode_list.rs");
+    assert!(fs::read_to_string(&checked_in).is_ok_and(|text| text == listed.text),
+        "supernodes.txt and stencils/supernode_list.rs differ: copy {} over it", generated.display());
     let table = out.join("rustc_stencils.rs");
     let Some((arch, read)) = target() else {
         watch(&sources::watched(manifest));
@@ -247,7 +245,9 @@ fn main() {
     let mut all_watched = std::collections::BTreeSet::new();
     for family in Family::ALL {
         let Some(shard) = first(family) else { continue };
-        let watched = stencil_sources(&out, family, shard).unwrap_or_else(|| sources::watched(manifest));
+        let staged = staged_sources(&out, Some(family));
+        let mut watched = stencil_sources(&out, family, shard, &staged_extern(&out, variants[0].1)).unwrap_or_else(|| sources::watched(manifest));
+        watched.extend(staged);
         let now = cache::sources_key(&rustc(), manifest, &watched, &[]);
         let since = snapshot.covers(&watched).then(|| {
             let was = cache::sources_key_of(&rustc(), manifest, &watched, &[], |file| snapshot.get(file).expect("a covered file").to_vec());
@@ -261,11 +261,16 @@ fn main() {
     watch(&all_watched);
     let key_of = |family: Family| keys.iter().find(|(of, ..)| *of == family).map(|(_, key, since)| (*key, since.clone())).expect("a family key");
     let jobs: Vec<Shard> = variants.iter().flat_map(|(_, cpu)| parts.iter().enumerate().map(|(shard, (family, _))| shard_job(&out, shard, *family, *cpu, key_of(*family))).collect::<Vec<_>>()).collect();
+    // quench-staged's metadata is the front end the shards and the rows' type check read: built only when a shard must
+    // compile (lazily, so a body edit no row reaches pays nothing here).
+    if jobs.iter().any(Shard::reads_staged) {
+        let cpus: Vec<Option<&str>> = variants.iter().map(|(_, cpu)| *cpu).collect();
+        build_staged(&out, &cpus);
+    }
     for family in Family::ALL {
         if jobs.iter().any(|job| job.family == family && !job.cached() && !job.unchanged_by_edit()) {
-            type_check(&out, family, first(family).expect("a shard of the family"));
+            type_check(&out, family, first(family).expect("a shard of the family"), &staged_extern(&out, variants[0].1));
         }
-
     }
     // Only a fresh target dir (no shard object yet) uses the shared cache, fetching what it can and publishing what it
     // compiles. On the project's network mount a lookup or a write could hold the build for seconds (a write once for
@@ -296,7 +301,7 @@ fn main() {
 /// One macro invocation per generated row, the unit `shards::split` distributes, with its
 /// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
 /// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
-/// and its base tier falls back as a `--b-jit` without one does.
+/// and its base tier falls back as the b-jit tier alone does without one.
 fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize, Family)> {
     // The base tier's rows are built for both hosted targets (an AOT image stencils them).
     let base: Vec<(String, usize)> = if matches!(arch, Arch::X86_64 | Arch::Aarch64) {
@@ -387,6 +392,12 @@ impl Shard {
         self.object.with_extension("reach")
     }
 
+    /// Whether this job's rustc reads quench-staged's metadata (`staged_extern`): a compile, or the reach file a
+    /// cached object still lacks (`compile`, `write_reach`). The metadata is built before any such job runs.
+    fn reads_staged(&self) -> bool {
+        if self.cached() { !self.reach_file().is_file() } else { !self.unchanged_by_edit() }
+    }
+
     /// Whether the object on disk is still the one these inputs make although its key is not: it was built from
     /// the last finished build's sources with these arguments and instances, every edit since then is inside
     /// function bodies (`edits`), and no row of the shard reaches an edited function (`reach`). A row is made of the
@@ -467,6 +478,8 @@ fn shard_job(out: &Path, shard: usize, family: Family, cpu: Option<&'static str>
     let instances = instance_file(out, shard);
     let key = cache::shard_key(sources, &args, &[&instances, &call_rows_file(out, shard)]);
     let since = since.map(|(was, edited)| (cache::shard_key(was, &args, &[&instances, &call_rows_file(out, shard)]), edited));
+    // Outside the key: the shared cache is target-dir independent, and the staged sources are already in `sources`.
+    args.extend(staged_extern(out, cpu));
     // Not `-C incremental`: rustc's incremental mode partitions and inlines differently (with one codegen unit
     // or 16, and with `-Z inline-mir=yes`), so 116 of 303 sampled rows came out changed and 61 kept relocations
     // that are not holes. A shard is reused whole, by its key, or compiled whole.
@@ -502,29 +515,109 @@ fn watch(watched: &std::collections::BTreeSet<PathBuf>) {
 /// `out` (in each shard's key by content): the files whose contents are in the family's keys. The fixed family's
 /// set (every module) is the build script's rerun triggers. `None` where rustc cannot read the source, which falls
 /// back to the `#[path]` graph.
-fn stencil_sources(out: &Path, family: Family, shard: usize) -> Option<std::collections::BTreeSet<PathBuf>> {
+fn stencil_sources(out: &Path, family: Family, shard: usize, staged: &[String]) -> Option<std::collections::BTreeSet<PathBuf>> {
     let deps = out.join(format!("rows_{}.d", family.name()));
     let mut command = Command::new(rustc());
-    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args()).args(staged);
     command.args(["--emit=dep-info", "-o"]).arg(&deps).arg(SOURCE);
-    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out, shard)).status().ok()?;
+    // Before the metadata exists this fails by design (the extern is absent): its error is silent, and the caller falls
+    // back to the `#[path]` graph. A real error in the rows surfaces in `type_check`, which runs with the metadata.
+    let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out, shard))
+        .stderr(std::process::Stdio::null()).status().ok()?;
     if !status.success() {
         return None;
     }
     let text = fs::read_to_string(&deps).ok()?;
-    // The first rule names the output and then every input, separated by spaces (a space in a path is `\ `).
+    Some(dep_inputs(&text)?.into_iter().filter(|path| !path.starts_with(out)).collect())
+}
+
+/// The input files of a dep-info file's first rule, as the manifest joins them. The rule names the output and then
+/// every input, separated by spaces (a space in a path is `\ `).
+fn dep_inputs(text: &str) -> Option<Vec<PathBuf>> {
     let (_, inputs) = text.lines().next()?.split_once(": ")?;
     let manifest = manifest_dir();
-    let files = inputs.replace("\\ ", "\0").split_whitespace().map(|path| manifest.join(path.replace('\0', " "))).filter(|path| !path.starts_with(out)).collect();
-    Some(files)
+    Some(inputs.replace("\\ ", "\0").split_whitespace().map(|path| manifest.join(path.replace('\0', " "))).collect())
+}
+
+/// The arguments of quench-staged's metadata compile for `cpu`: the shards' flags (`base_args`) with the crate kind and
+/// the emit set changed, and the cpu. One metadata holds every module (no `stencil_family`), so every family's shards
+/// read the same optimized MIR and `cfg(debug_assertions)` values the shard compiles do.
+fn staged_args(cpu: Option<&str>) -> Vec<String> {
+    let mut args: Vec<String> = base_args().into_iter().filter(|arg| !["--crate-name", "--crate-type", "--emit"].iter().any(|flag| arg.starts_with(flag))).collect();
+    args.push(format!("--crate-name={STAGED_CRATE}"));
+    args.extend(["--crate-type=lib", "--emit=metadata,dep-info", "-Z", "cross-crate-inline-threshold=always", "-Z", "always-encode-mir=yes"].map(String::from));
+    if let Some(cpu) = cpu {
+        args.extend(["-C".to_string(), format!("target-cpu={cpu}")]);
+    }
+    args
+}
+
+/// The directory of quench-staged's metadata for `cpu`: `staged_<cpu or native>`, which the key file sits in too.
+fn staged_dir(out: &Path, cpu: Option<&str>) -> PathBuf {
+    out.join(format!("staged_{}", cpu.unwrap_or("native")))
+}
+
+/// The arguments that let a crate compiled in this build name quench-staged's metadata for `cpu` (`build_staged`).
+fn staged_extern(out: &Path, cpu: Option<&str>) -> Vec<String> {
+    let dir = staged_dir(out, cpu);
+    vec!["--extern".to_string(), format!("{STAGED_CRATE}={}", dir.join(STAGED_RMETA).display()), "-L".to_string(), format!("dependency={}", dir.display())]
+}
+
+/// The source files quench-staged is made of, as rustc reads them under `family`'s cfgs (`None`: no family cfg, the
+/// rmeta's own), by `--emit=dep-info`: parse and expansion only, about a second, and no externs. Its paths are the
+/// manifest's, not normalized, so a file's name is the same in every checkout (`cache::sources_key`).
+fn staged_sources(out: &Path, family: Option<Family>) -> std::collections::BTreeSet<PathBuf> {
+    let deps = out.join(format!("staged_{}.d", family.map_or("all", Family::name)));
+    let mut command = Command::new(rustc());
+    command.args(staged_args(None).into_iter().filter(|arg| !arg.starts_with("--emit")));
+    if let Some(family) = family {
+        command.args(family.args());
+    }
+    let status = command.args(["--emit=dep-info", "-o"]).arg(&deps).arg(STAGED_ROOT).status().expect("run rustc");
+    assert!(status.success(), "rustc failed to read {STAGED_ROOT}");
+    let text = fs::read_to_string(&deps).unwrap_or_else(|e| panic!("read {}: {e}", deps.display()));
+    dep_inputs(&text).unwrap_or_else(|| panic!("no inputs in {}", deps.display())).into_iter().collect()
+}
+
+/// Builds quench-staged's metadata for each of `cpus` whose key differs from the one beside it (`staged_key`), the
+/// variants in parallel, holding `MEMORY` for reading as the shard compiles do.
+fn build_staged(out: &Path, cpus: &[Option<&str>]) {
+    let sources = staged_sources(out, None);
+    thread::scope(|scope| {
+        for &cpu in cpus {
+            let sources = &sources;
+            scope.spawn(move || {
+                let dir = staged_dir(out, cpu);
+                fs::create_dir_all(&dir).unwrap();
+                let key = staged_key(sources, cpu);
+                let key_file = dir.join("quench_staged.key");
+                if dir.join(STAGED_RMETA).is_file() && fs::read_to_string(&key_file).is_ok_and(|was| was == key) {
+                    return;
+                }
+                let _ = fs::remove_file(&key_file);
+                let status = {
+                    let _shared = MEMORY.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    Command::new(rustc()).args(staged_args(cpu)).arg("--out-dir").arg(&dir).arg(STAGED_ROOT).status().expect("run rustc")
+                };
+                assert!(status.success(), "rustc failed on {STAGED_ROOT} ({})", cpu.unwrap_or("native"));
+                fs::write(&key_file, key).unwrap();
+            });
+        }
+    });
+}
+
+/// The key of quench-staged's metadata for `cpu`: the toolchain, the content of `sources` (`staged_sources`) and the
+/// metadata's arguments. `build_staged` rebuilds the metadata when it differs from the key beside the rmeta.
+fn staged_key(sources: &std::collections::BTreeSet<PathBuf>, cpu: Option<&str>) -> String {
+    cache::shard_key(cache::sources_key(&rustc(), manifest_dir(), sources, &[]), &staged_args(cpu), &[])
 }
 
 /// Type-checks the stencil source under `family`'s cfgs once (`--emit=metadata`, the instances of its shard
 /// `shard`) before any shard's codegen, so a source error, or a module a family leaves out that its rows need,
 /// fails the build in about a minute rather than after the first shard objects.
-fn type_check(out: &Path, family: Family, shard: usize) {
+fn type_check(out: &Path, family: Family, shard: usize, staged: &[String]) {
     let mut command = Command::new(rustc());
-    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args());
+    command.args(base_args().into_iter().filter(|arg| !arg.starts_with("--emit"))).args(family.args()).args(staged);
     command.args(["--emit=metadata", "-o"]).arg(out.join(format!("rows_check_{}.rmeta", family.name())));
     let status = command.env(INSTANCES_VAR, instance_file(out, shard)).env(CALL_ROWS_VAR, call_rows_file(out, shard)).arg(SOURCE).status().expect("run rustc");
     assert!(status.success(), "rustc failed to type-check {SOURCE} for the {family:?} rows");

@@ -226,7 +226,7 @@ pub(crate) type Outcome = Option<NumberWord>;
 /// step (`op_kind::NUMBER`), the arm `step` takes for an `Operation::Number`.
 pub(crate) fn run(left: NumberWord, right: NumberWord, operation: NumberOperation) -> Outcome {
     let is_relation = matches!(operation, NumberOperation::Relation { .. });
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = NumberFrame { values: vec![left, right, NumberWord::Int(0)] };
     match step_of::<{ op_kind::NUMBER }, _, _>(&mut stage, &mut frame, Operation::Number(operation)) {
         Step::Value(predicate) if is_relation => Some(NumberWord::Int(i32::from(predicate != 0))),

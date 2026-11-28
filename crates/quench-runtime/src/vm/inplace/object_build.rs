@@ -24,12 +24,12 @@ impl Vm {
     /// answers for this one too.
     #[inline(always)]
     fn enum_cache_shape(&self, object: Value) -> Option<u32> {
-        self.enum_cache_shape_of(self.heap.object_record(object)?)
+        self.enum_cache_shape_of(self.heap.direct_object_view(object)?)
     }
 
     /// `enum_cache_shape` of the ordinary object record `data`, for a caller that holds it.
     #[inline(always)]
-    fn enum_cache_shape_of(&self, data: &Object) -> Option<u32> {
+    fn enum_cache_shape_of(&self, data: ObjectRef<'_>) -> Option<u32> {
         if data.has_exotic_access() || data.has_side_descriptors() || data.boxed_primitive().is_some() {
             return None;
         }
@@ -43,14 +43,14 @@ impl Vm {
     /// (`initialize_plain_copy`), with one probe per memo. `false`, before any effect, leaves the
     /// copy to `copy_plain_properties`.
     fn copy_into_fresh_empty(&mut self, target: Value, source: Value) -> bool {
-        let Some(target_data) = self.heap.object_record(target) else {
+        let Some(target_data) = self.heap.direct_object_view(target) else {
             return false;
         };
         let (target_shape, target_proto) = (target_data.shape(), target_data.proto());
         if target_proto != self.object_proto || !self.is_fresh_empty(target_data) {
             return false;
         }
-        let Some(source_data) = self.heap.object_record(source) else {
+        let Some(source_data) = self.heap.direct_object_view(source) else {
             return false;
         };
         let Some(source_shape) = self.enum_cache_shape_of(source_data) else {
@@ -69,7 +69,7 @@ impl Vm {
         if entry.words == Some(self.heap.slot_encoding_epoch()) && self.heap.copy_slot_words(target, source, entry.shape) {
             return true;
         }
-        let Some(source_data) = self.heap.object_record(source) else {
+        let Some(source_data) = self.heap.direct_object_view(source) else {
             return false;
         };
         let mut values = smallvec::SmallVec::<[Value; PLAIN_COPY_INLINE_PROPERTIES]>::from_elem(Value::UNDEFINED, slots.len());
@@ -83,7 +83,7 @@ impl Vm {
     /// Whether `data` is an extensible ordinary object with no storage, side descriptors, dictionary
     /// shape or prototype role: an empty object whose first copy may take its shape at once.
     /// `plain_object_assign` has already excluded exotic access.
-    fn is_fresh_empty(&self, data: &Object) -> bool {
+    fn is_fresh_empty(&self, data: ObjectRef<'_>) -> bool {
         data.is_extensible()
             && !data.has_side_descriptors()
             && !data.was_used_as_prototype()
@@ -107,7 +107,7 @@ impl Vm {
     /// with no guest code, so the general path reads the same values and writes them again.
     pub fn plain_object_assign(&mut self, args: &[Value]) -> Option<Value> {
         let (&target, sources) = args.split_first()?;
-        if self.heap.object_record(target)?.has_exotic_access() {
+        if self.heap.direct_object_view(target)?.has_exotic_access() {
             return None;
         }
         if let [source] = sources && self.copy_into_fresh_empty(target, *source) {
@@ -117,7 +117,7 @@ impl Vm {
             if source.is_null() || source.is_undefined() {
                 continue;
             }
-            let copied = self.heap.object_record(source).is_some()
+            let copied = self.heap.direct_object_view(source).is_some()
                 && self.copy_plain_properties(target, source, &[], PropertyCopyKind::Set);
             if !copied {
                 return None;

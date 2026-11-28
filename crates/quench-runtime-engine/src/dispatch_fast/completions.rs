@@ -124,7 +124,7 @@ impl<const LEAF: u8> quench_runtime::staged::call_return::ScriptReturn for LaneS
 #[inline(always)]
 fn returning_plain_run(cx: *mut LaneContext, mut window: Registers) -> Option<usize> {
     let depth = unsafe { vm(cx) }.lane_stack.plain.depth.get() as usize;
-    let stage = &mut quench_runtime::staged::Concrete::new(std::ptr::null());
+    let stage = &mut quench_runtime::staged::Concrete::pure();
     for above in 0..depth {
         let packed = quench_runtime::staged::call_complete::frame_packed(stage, window.0.expose_provenance() as u64);
         if !quench_runtime::staged::call_complete::completes_plainly(stage, packed) {
@@ -159,7 +159,7 @@ pub(crate) fn lane_return_header<const INTO_BODY: bool>(cx: *mut LaneContext, wi
     let stack: &mut LaneStack = &mut unsafe { vm(cx) }.lane_stack;
     debug_assert!(stack.plain.depth.get() == 0 || (stack.plain.registers.get() == window.0 && unsafe { (*cx).registers }.0 == window.0));
     let plain = (&raw const stack.plain).expose_provenance() as u64;
-    let caller = quench_runtime::staged::call_complete::step_plain_return_of(&mut Concrete::new(std::ptr::null()), plain,
+    let caller = quench_runtime::staged::call_complete::step_plain_return_of(&mut Concrete::pure(), plain,
         window.0.expose_provenance() as u64, value.to_bits(), INTO_BODY, plain_destination, ())?;
     stack.frames_changed();
     // SAFETY: a plain window is the lane stack's own, so its release is the top's move.
@@ -189,18 +189,12 @@ pub(crate) fn complete_cross_activation_in_lane(cx: *mut LaneContext, value: Val
 
 /// Whether a call record that returns its callee's completion runs in the lane: from an
 /// activation, which completes in turn, or from the frame, which the general loop then
-/// completes with the value (`frame_return`). A host permitting proper tail calls sends
-/// a strict caller's terminal calls to the general dispatch path instead.
+/// completes with the value (`frame_return`). A strict caller's terminal call is a proper tail call, which the
+/// general dispatch path takes as a jump (`Vm::js_tail_call_allowed`), so the lane does not admit it.
 #[inline(always)]
 pub(crate) fn returning_call_admitted(cx: *mut LaneContext) -> bool {
-    let vm = unsafe { vm(cx) };
-    let proper = vm.host.proper_tail_calls();
-    // The running function's strictness is read only where proper tail calls are on.
-    let strict = proper && {
-        let function = running_function_in_lane(cx);
-        unsafe { &*(*cx).code }.function(function as usize).strict
-    };
-    concrete_admits_returning_call(proper, strict)
+    let function = running_function_in_lane(cx);
+    concrete_admits_returning_call(unsafe { &*(*cx).code }.function(function as usize).strict)
 }
 
 /// The frame's own call record at `call` returns `value`, its callee's completion: the
@@ -313,7 +307,7 @@ impl quench_runtime::staged::call_return::ReturningChain for LaneChain {
     fn plain_header_crosses(&mut self) -> Option<bool> {
         let stack = &unsafe { vm(self.cx) }.lane_stack;
         (stack.plain.depth.get() != 0).then(|| {
-            concrete_side_completion(frame_packed(&mut Concrete::new(std::ptr::null()), stack.plain.registers.get().expose_provenance() as u64)).crosses
+            concrete_side_completion(frame_packed(&mut Concrete::pure(), stack.plain.registers.get().expose_provenance() as u64)).crosses
         })
     }
     #[inline(always)]

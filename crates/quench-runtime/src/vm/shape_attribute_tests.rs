@@ -190,7 +190,7 @@ fn long_attribute_walks_earn_the_shape_a_lookup_index_with_the_same_answers() {
     vm.execute(&program).unwrap();
     let name = vm.intern_atom("o");
     let object = vm.own_property(vm.realm.globals, name).unwrap();
-    let shape = vm.object_data(object).unwrap().shape();
+    let shape = vm.heap.object(object).unwrap().shape();
     let attributes = |vm: &mut Vm, name: &str| {
         let atom = vm.intern_atom(name);
         let (_, slot) = vm.object_property_slot(object, PropertyKey::string(atom)).unwrap();

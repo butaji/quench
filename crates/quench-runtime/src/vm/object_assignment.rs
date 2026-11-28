@@ -71,7 +71,7 @@ impl Vm {
                 }
                 break;
             }
-            prototype = self.object_data(holder).map(|data| data.proto()).filter(|value| !value.is_null());
+            prototype = self.heap.object(holder).map(|data| data.proto()).filter(|value| !value.is_null());
         }
         self.type_error(
             p,
@@ -94,7 +94,7 @@ impl Vm {
                 break;
             }
             if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {
-                let receiver = if self.heap.object_record(object).is_some() { self.diagnostic_object_receiver(object) } else { self.detail_string(object) };
+                let receiver = if self.heap.ordinary_view(object).is_some() { self.diagnostic_object_receiver(object) } else { self.detail_string(object) };
                 if attributes.accessor && attributes.setter.is_none() {
                     return self.type_error(
                         p,
@@ -111,7 +111,7 @@ impl Vm {
                 }
                 break;
             }
-            let Some(data) = self.object_data(holder) else {
+            let Some(data) = self.heap.object(holder) else {
                 break;
             };
             holder = data.proto();
@@ -120,7 +120,7 @@ impl Vm {
             }
         }
         if self
-            .object_data(object)
+            .heap.object(object)
             .is_some_and(|data| !data.is_extensible())
         {
             let verb = if define { "define" } else { "add" };

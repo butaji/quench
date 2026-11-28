@@ -3,8 +3,8 @@
 //!
 //! `--tier-differential --seed S --count N --quench BIN [--timeout-ms T] [--iterations I]
 //! [--out-dir DIR]`. A mismatching program is saved to the output directory with a report of
-//! each mode's outcome. Modes: `--no-jit` (the reference), `--b-jit`, `--u-jit`, the default,
-//! and an AOT executable when `BIN compile` works. Forced deopt (R26) is a test-only runtime
+//! each mode's outcome. Modes: `--no-jit` (the reference), the default, and an AOT executable
+//! when `BIN compile` works. Forced deopt (R26) is a test-only runtime
 //! hook: `cargo test -p quench-runtime --lib forced_deopt_corpus` runs the same corpus through it.
 
 use super::{fail, usage, TIER_RUN_TIMEOUT_MS};
@@ -28,7 +28,7 @@ const SIGKILL: i32 = 9;
 
 /// Mode labels and the flag each adds to the command line; the reference comes first.
 const MODES: &[(&str, Option<&str>)] =
-    &[(REFERENCE, Some("--no-jit")), ("b-jit", Some("--b-jit")), ("u-jit", Some("--u-jit")), ("default", None)];
+    &[(REFERENCE, Some("--no-jit")), ("default", None)];
 
 struct Config {
     seed: u64,
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn mismatching_modes_are_named() {
-        let outcomes = vec![(REFERENCE, outcome(0, "a")), ("b-jit", outcome(0, "b")), ("default", outcome(0, "a"))];
-        assert_eq!(mismatches(&outcomes), ["b-jit"]);
+        let outcomes = vec![(REFERENCE, outcome(0, "a")), ("default", outcome(0, "b"))];
+        assert_eq!(mismatches(&outcomes), ["default"]);
     }
 }

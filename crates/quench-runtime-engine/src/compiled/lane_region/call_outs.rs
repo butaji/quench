@@ -1,11 +1,13 @@
 //! The staged rows whose slow case is the VM's own operation (`staged::CallOut`), lowered: the
 //! row's words decide the common case inline, and the rest is one call of the lane's helper
 //! (`dispatch_fast::vm_operation_step`) that continues in place, so no such record leaves its body.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use super::super::lane_unit::Origin;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalSlot};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The call-out row (`Operation::call_out`) of `instruction` where this lowering makes it: in a
@@ -40,7 +42,7 @@ impl Lowering<'_, '_> {
     /// finds no key takes its jump. Whether control falls through.
     pub(crate) fn call_out_step(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(Origin::Caller(record)) = self.unit.origins.get(pc).copied() else {
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         };
         let row = quench_runtime::staged::Operation::decode(instruction, quench_runtime::staged::DecodeContext::of(self.program)).expect("a call-out record decodes");
@@ -152,9 +154,12 @@ impl Lowering<'_, '_> {
             self.set_tagged(state, base, global);
             return Some(StrictReference::Resolved);
         }
-        let base = self.tagged(state, instruction.register_b());
-        let same = self.raw_compare(Relation::Equal, base, global);
-        emit_js_guard(&mut self.builder, same, exit);
+        // The base is the global object where the solve proves it (`proves_global_object`): no compare is emitted.
+        if !self.proves_global_object(pc, instruction.register_b()) {
+            let base = self.tagged(state, instruction.register_b());
+            let same = self.raw_compare(Relation::Equal, base, global);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         Some(StrictReference::Store(quench_runtime::staged::Operation::GlobalWrite { source: instruction.register_a(),
             atom: instruction.atom_index(), site: 0, initialize: false }))
     }

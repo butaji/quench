@@ -82,6 +82,19 @@ impl NativeTable {
             .chain(self.functions.iter().copied())
             .filter(|value| !value.is_null())
     }
+
+    /// After a collection that freed some of the table's values: each freed entry reads as
+    /// absent (`get` takes a null entry as none), so no entry names a freed record.
+    pub(super) fn forget_dead(&mut self, live: impl Fn(Value) -> bool) {
+        if !live(self.realm) {
+            self.realm = Value::NULL;
+        }
+        for function in &mut self.functions {
+            if !live(*function) {
+                *function = Value::NULL;
+            }
+        }
+    }
 }
 
 /// How much of a realm a VM installs when it initializes.
@@ -103,14 +116,12 @@ mod namespace_tests {
 
     #[test]
     fn a_new_realm_can_use_the_creators_unobserved_math_namespace() {
-        for compile in [Engine::specialize as fn(&str, &str) -> _, Engine::specialize_unspecialized] {
-            let program = compile("var other = $262.createRealm().global; print(typeof other.Math); print(typeof other.Math.sin); print(other.Math.abs(-4));", "lazy-realm-math.js").unwrap();
-            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-                let mut vm = Vm::new(TestHost::default().with_test262());
-                vm.set_execution_mode(mode);
-                vm.execute(&program).unwrap();
-                assert_eq!(&*vm.host_as::<TestHost>().lines(), &["object", "function", "4"]);
-            }
+        let program = Engine::specialize("var other = $262.createRealm().global; print(typeof other.Math); print(typeof other.Math.sin); print(other.Math.abs(-4));", "lazy-realm-math.js").unwrap();
+        for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
+            let mut vm = Vm::new(TestHost::default().with_test262());
+            vm.set_execution_mode(mode);
+            vm.execute(&program).unwrap();
+            assert_eq!(&*vm.host_as::<TestHost>().lines(), &["object", "function", "4"]);
         }
     }
 
@@ -400,7 +411,7 @@ impl Vm {
                 .insert((self.realm.globals, native), prototype);
         }
         let object_proto = self.object_proto;
-        self.object_data_mut(self.realm.globals)
+        self.heap.object_mut(self.realm.globals)
             .unwrap()
             .set_proto(object_proto);
     }
@@ -590,7 +601,7 @@ impl Vm {
                 },
             );
         }
-        self.object_data_mut(thrower)
+        self.heap.object_mut(thrower)
             .expect("ThrowTypeError is a function object")
             .set_extensible(false);
         self.set_builtin_value_named(global, INTRINSIC_KEY, thrower)?;
@@ -704,7 +715,7 @@ impl Vm {
     }
     pub fn set_named(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         object: Value,
         name: &str,
         value: Value,
@@ -738,7 +749,7 @@ impl Vm {
 
     pub fn set_builtin_named(
         &mut self,
-        _program: &ResidualProgram,
+        _program: &ProgramRecord,
         object: Value,
         name: &str,
         native: Native,

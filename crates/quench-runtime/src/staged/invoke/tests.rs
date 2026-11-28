@@ -1,5 +1,8 @@
 use super::*;
 use crate::staged::{Bound, Concrete, Edge, NoPlans};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 pub(super) const RETURNED: u32 = 3;
 pub(super) const IDENTITY: u64 = 0x1000;
@@ -119,7 +122,7 @@ pub(super) fn site(receiver: Receiver) -> Invocation {
 }
 
 pub(super) fn call(probe: &mut Probe, site: Invocation) -> Option<u64> {
-    match invoke(&mut Concrete::new(std::ptr::null()), probe, (), site) {
+    match invoke(&mut Concrete::pure(), probe, (), site) {
         Step::Value(word) => Some(word),
         _ => None,
     }
@@ -183,7 +186,7 @@ fn a_forwarding_or_returning_call_runs_the_rows_of_a_call() {
 fn a_return_completes_with_the_register_value() {
     let mut probe = Probe::new(CallEntry::Helper);
     probe.file[3] = 42;
-    let step = ret(&mut Concrete::new(std::ptr::null()), &mut probe, 3);
+    let step = ret(&mut Concrete::pure(), &mut probe, 3);
     assert!(matches!(step, Step::Control(Edge::Target)));
     assert_eq!(probe.returned, Some(42));
 }

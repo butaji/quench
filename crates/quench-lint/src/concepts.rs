@@ -86,6 +86,24 @@ const CONCEPTS: &[Concept] = &[
         homes: &["quench-runtime/src/bytecode/control_flow.rs", "quench-runtime/src/bytecode.rs"],
         marks: &[Mark::Function("decoded_instruction"), Mark::Function("instruction_at"), Mark::Function("widened"), Mark::Spelled(".wide_index()]")],
     },
+    Concept {
+        // One successor relation of a function's code: `Successors` and the opcode layout it reads.
+        name: "cfg-successors",
+        homes: &["quench-runtime/src/bytecode/control_flow.rs", "quench-runtime/src/bytecode.rs", "quench-runtime/src/dataflow.rs"],
+        marks: &[Mark::Named(&["successors", "static_successors"])],
+    },
+    Concept {
+        // One block-leader rule, `Successors::leaders`; a second walk for leaders is a second CFG.
+        name: "cfg-leaders",
+        homes: &["quench-runtime/src/bytecode/control_flow.rs", "quench-runtime/src/bytecode.rs", "quench-runtime/src/dataflow.rs"],
+        marks: &[Mark::Named(&["leaders", "instruction_leaders", "block_leaders"])],
+    },
+    Concept {
+        // One reachability walk over ordinary successors, `reachable_from`.
+        name: "cfg-reachable",
+        homes: &["quench-runtime/src/bytecode/control_flow.rs", "quench-runtime/src/bytecode.rs", "quench-runtime/src/dataflow.rs"],
+        marks: &[Mark::Named(&["reachable", "reachable_from", "reachable_pcs"])],
+    },
     // The projection design (Linear "Projection design: interpreter → b-jit (rustc/LLVM) → u-jit
     // (Cranelift)"): the interpreter's staged rows define WHAT, the JITs define HOW, and both JITs
     // share every layer but the last. Each concept below is a layer that must have one home; every
@@ -111,10 +129,10 @@ const CONCEPTS: &[Concept] = &[
     },
     Concept {
         // One reading of the JIT mode: the specializer decides what each tier may do
-        // (`admission::tier_runs`, `stencil_only`); a tier that reads the mode itself decides again.
+        // (`tier_policy::base_runs`, `cranelift_runs`, `tiers_run`, `wasm_module_inlines_leaves`); a tier that reads the mode itself decides again.
         name: "mode-read",
-        homes: &["quench-runtime-engine/src/compiled/admission.rs", "quench-runtime/src/jit_mode.rs"],
-        marks: &[Mark::Spelled("jit_mode::")],
+        homes: &["quench-runtime/src/jit_mode.rs", "quench-runtime/src/vm/tier_policy.rs"],
+        marks: &[Mark::Spelled("jit_mode::"), Mark::Spelled("MemoryFirst"), Mark::Spelled("tiers_allowed("), Mark::Spelled("tier_may_run(")],
     },
     Concept {
         // u-jit HOW is the Cranelift stage of the staged rows; CLIF built by hand elsewhere is

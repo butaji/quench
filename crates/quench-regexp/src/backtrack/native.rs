@@ -119,22 +119,17 @@ pub struct NativeCode {
     pub keep: Box<dyn std::any::Any>,
 }
 
-/// The embedder's compiler, and the searches a program runs before asking it for code.
+/// The embedder's compiler: whether a pattern gets its own code, given its static frequency (`Program::set_static_frequency`)
+/// and its compact program's instruction count, and how it starts a compile.
 #[derive(Clone, Copy)]
 pub struct NativeCompiler {
-    pub runs: u32,
+    pub compiles: fn(u64, usize) -> bool,
     /// Starts compiling a plan, which the search polls for its code while the interpreter runs.
     pub start: fn(NativePlan) -> NativeBuild,
-    /// The optimizing tier, where the mode has one above the first: the searches (counted from
-    /// the program's first) after which its code replaces the first tier's, and its compiler.
-    pub optimize: Option<(u32, fn(NativePlan) -> NativeBuild)>,
 }
 
 /// A compile in progress: polled for the code, or `Ready(None)` where it has none.
 pub type NativeBuild = Box<dyn FnMut() -> Poll<Option<NativeCode>>>;
-
-/// A building program asks its compile again on every this-many searches.
-const POLL_EVERY: u32 = 64;
 
 static COMPILER: OnceLock<NativeCompiler> = OnceLock::new();
 
@@ -166,17 +161,14 @@ pub fn set_native_compiler(compiler: NativeCompiler) {
     let _ = COMPILER.set(compiler);
 }
 
-/// A program's native state: the searches it has run, then its code or the knowledge that it
-/// has none.
+/// A program's native state: its static frequency, whether the compiler gives it code (decided once), then its code
+/// or the knowledge that it has none.
 #[derive(Default)]
 pub(super) struct NativeSlot {
-    runs: Cell<u32>,
+    frequency: Cell<u64>,
+    decision: OnceCell<bool>,
     code: OnceCell<Option<NativeCode>>,
     building: RefCell<Option<NativeBuild>>,
-    /// The optimizing tier's code, which replaces `code` once it arrives.
-    optimized: OnceCell<NativeCode>,
-    /// The first tier's code stays: no optimizing tier, or its compile gave no code.
-    settled: Cell<bool>,
 }
 
 /// The frames a native search starts with room for; it grows to `MAXIMUM_STACK_FRAMES`.
@@ -191,18 +183,22 @@ impl Program {
         self.classes.is_empty().then(|| self.native_plan())
     }
 
+    /// Adds `frequency` to the program's static frequency: the pattern's sites that run it, as the embedder
+    /// weighs them (`NativeCompiler::compiles`). Read once, when the program's first search asks for code.
+    pub(crate) fn set_static_frequency(&self, frequency: u64) {
+        self.native.frequency.set(self.native.frequency.get().saturating_add(frequency));
+    }
+
     /// Adopts the ahead search registered for this program's pattern (`register_ahead`), where
-    /// there is one: the program's code from its first search, with no tier above it.
+    /// there is one: the program's code from its first search.
     pub(crate) fn adopt_ahead(&self, key: AheadKey) {
         let Some((entry, keep)) = AHEAD.with_borrow(|ahead| ahead.get(&key).map(|(entry, keep)| (*entry, Rc::clone(keep)))) else { return };
-        if self.native.code.set(Some(NativeCode { entry, keep: Box::new(keep) })).is_ok() {
-            self.native.settled.set(true);
-        }
+        let _ = self.native.code.set(Some(NativeCode { entry, keep: Box::new(keep) }));
     }
 
     /// The program as a native plan: its instructions and the tables they name.
     fn native_plan(&self) -> NativePlan {
-        let starts = self.starts.as_ref().map(|starts| (starts.at_start, starts.at_end, starts.units.table.0));
+        let starts = self.facts.starts.as_ref().map(|starts| (starts.at_start, starts.at_end, starts.units.table.0));
         let masks = self.sets.iter().map(|set| set.table.0).chain(starts.map(|(_, _, units)| units)).collect();
         let restarts = self.native_restarts(starts.map(|(at_start, at_end, _)| Admission { at_start, at_end, units: UnitTest::Set(self.sets.len() as u32) }));
         NativePlan {
@@ -213,11 +209,11 @@ impl Program {
             dispatches: self.dispatches.iter().map(|dispatch| dispatch.intervals().into()).collect(),
             classes: self.classes.as_ptr() as usize,
             folds: [false, true].map(case_partners),
-            entry: self.entry.unwrap_or(0),
+            entry: self.facts.entry.unwrap_or(0),
             registers: self.register_count,
             unset: super::UNSET,
             restarts,
-            restart_skip: self.restart_skip,
+            restart_skip: self.facts.restart_skip,
         }
     }
 
@@ -237,83 +233,40 @@ impl Program {
     /// Whether a scan finds the next start (a prefix, lookahead or inner literal), or the
     /// pattern is anchored: native code then gives a failed start back to its caller.
     fn restarts_through_caller(&self) -> bool {
-        self.anchored || self.prefix.is_some() || self.lookahead.is_some() || self.inner_literal.is_some()
+        self.facts.anchored || self.facts.prefix.is_some() || self.facts.lookahead.is_some() || self.facts.inner_literal.is_some()
     }
 
-    /// The native code for this program, asked of the embedder's compiler once the program has
-    /// run `NativeCompiler::runs` searches; `None` while it has none.
+    /// The native code for this program: its code once compiled, else the compile the embedder's
+    /// compiler starts on the program's first search, when it gives this pattern code (decided once);
+    /// `None` while it has none.
     #[inline(always)]
     fn native_code(&self) -> Option<&NativeCode> {
-
         if let Some(code) = self.native.code.get() {
-            if let Some(optimized) = self.native.optimized.get() {
-                return Some(optimized);
-            }
-            if self.native.settled.get() {
-                return code.as_ref();
-            }
-            return self.native_optimizing(code.as_ref());
+            return code.as_ref();
         }
-        // An interpreted run compiles no native search: no call to count its searches.
+        // An interpreted run compiles no native search.
         if !ENABLED.get() {
             return None;
         }
-        self.native_counted()
+        self.native_compiling()
     }
 
     #[inline(never)]
-    fn native_counted(&self) -> Option<&NativeCode> {
+    fn native_compiling(&self) -> Option<&NativeCode> {
         let compiler = COMPILER.get().filter(|_| ENABLED.get())?;
-        let runs = self.native.runs.get().saturating_add(1);
-        self.native.runs.set(runs);
-        if runs < compiler.runs {
+        let size = self.instructions.len();
+        if !*self.native.decision.get_or_init(|| (compiler.compiles)(self.native.frequency.get(), size)) {
             return None;
         }
         let mut building = self.native.building.borrow_mut();
         if building.is_none() {
             *building = Some((compiler.start)(self.native_plan()));
-        } else if runs % POLL_EVERY != 0 {
-            return None;
         }
         let Some(Poll::Ready(code)) = building.as_mut().map(|build| build()) else {
             return None;
         };
         *building = None;
-        // A program with no first-tier code has no tier above it either.
-        self.native.settled.set(code.is_none() || compiler.optimize.is_none());
         self.native.code.get_or_init(|| code).as_ref()
-    }
-
-    /// The first tier's `code` while the optimizing tier counts the program's searches toward
-    /// its compile, then compiles it, polled as the first tier's compile is.
-    #[inline(never)]
-    fn native_optimizing<'a>(&'a self, code: Option<&'a NativeCode>) -> Option<&'a NativeCode> {
-        let Some((threshold, start)) = COMPILER.get().and_then(|compiler| compiler.optimize) else {
-            self.native.settled.set(true);
-            return code;
-        };
-        let runs = self.native.runs.get().saturating_add(1);
-        self.native.runs.set(runs);
-        if runs < threshold {
-            return code;
-        }
-        let mut building = self.native.building.borrow_mut();
-        if building.is_none() {
-            *building = Some(start(self.native_plan()));
-        } else if runs % POLL_EVERY != 0 {
-            return code;
-        }
-        let Some(Poll::Ready(optimized)) = building.as_mut().map(|build| build()) else {
-            return code;
-        };
-        *building = None;
-        match optimized {
-            Some(optimized) => Some(self.native.optimized.get_or_init(|| optimized)),
-            None => {
-                self.native.settled.set(true);
-                code
-            }
-        }
     }
 
     /// `run`'s search of an ASCII subject from the search start `start` in native code: the
@@ -351,7 +304,7 @@ impl Program {
     /// as `MAXIMUM_STACK_FRAMES` allows: the start of its match and the match's end (or
     /// `NATIVE_FAIL`); `None` where the stack is not enough.
     fn native_attempt(&self, code: &NativeCode, bytes: &[u8], (mut start, last): (usize, usize), registers: &mut [usize], stack: &mut Vec<usize>) -> Option<(usize, usize)> {
-        let offset = self.entry.unwrap_or(0) as usize;
+        let offset = self.facts.entry.unwrap_or(0) as usize;
         if stack.len() < INITIAL_STACK_FRAMES * NATIVE_FRAME_WORDS {
             stack.resize(INITIAL_STACK_FRAMES * NATIVE_FRAME_WORDS, 0);
         }

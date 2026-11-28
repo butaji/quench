@@ -2,10 +2,14 @@
 //! callee): made over the values the records name in the registers and the program's constants, as `Vm::step` makes
 //! them in a frame, so the activations stay the lane's unless guest code the step ran made them frames.
 #[allow(unused_imports)]
+use quench_runtime::staged::AllocationAllocationExt;
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
+#[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
 use crate::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
 use quench_runtime::bytecode::ValueStep;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A value step's operands: left and right (a unary step's is its operand twice).
 const OPERANDS: usize = 2;

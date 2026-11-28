@@ -81,7 +81,7 @@ fn number_guard(kind: Kind, dst: Place, offset: u64, register: Register) -> Resu
 /// values are no Numbers is never entered. The guards come first so a body's proven-arguments entry starts past them
 /// (`EntryRow::number`); the rest only test or write slots no Number guard reads, so their order does not change what
 /// they check. Then each declared parameter's entry test (`layout.guards`), and each class-typed parameter's receiver
-/// test (`layout.prototypes`: exact shape and prototype link).
+/// test (`layout.prototypes`: its live class).
 /// `at` is the row the entry enters at (0 for the body's entry, a stub's PC for a resume stub): a Mem
 /// slot's Number guard is emitted only where `layout.entry_reads` says a row reads its entry value.
 pub(crate) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Result<Vec<EntryRow>, String> {
@@ -111,19 +111,11 @@ pub(crate) fn entry_rows(layout: &Layout, entered: &[usize], at: usize) -> Resul
     for EntryGuard { register, languages } in &layout.guards {
         rows.push(EntryRow { stencil: base_rows::stencil(test)?, holes: padded_holes([u64::from(*register) * SLOT, u64::from(*languages), 0]), declared: true, number: None, int32: None, unbox: None });
     }
-    let prototype = HeapRow { heap: Heap::Prototype, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    let class = HeapRow { heap: Heap::Class, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
+    // A class-typed receiver is tested by its live class cell alone (`Heap::Class`): the class id names the shape and the
+    // prototype link. A receiver without a class cell takes no entry row, so its accesses take the general path.
     for proto in &layout.prototypes {
-        let receiver = u64::from(proto.shape) | (u64::from(proto.link) << numeric::site_bits::HELD_LINK_AT);
-        rows.push(EntryRow { stencil: base_rows::stencil(prototype)?, holes: padded_holes([u64::from(proto.register) * SLOT, receiver, 0]), declared: true, number: None, int32: None, unbox: None });
-    }
-    for proto in &layout.shapes {
-        let heap = if proto.flat { Heap::ShapeFlat } else { Heap::Shape };
-        let shape = HeapRow { heap, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
-        rows.push(EntryRow { stencil: base_rows::stencil(shape)?, holes: padded_holes([u64::from(proto.register) * SLOT, u64::from(proto.shape), 0]), declared: true, number: None, int32: None, unbox: None });
-    }
-    if layout.stores {
-        let stores = HeapRow { heap: Heap::Stores, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
-        rows.push(EntryRow { stencil: base_rows::stencil(stores)?, holes: padded_holes([0, 0, 0]), declared: true, number: None, int32: None, unbox: None });
+        rows.push(EntryRow { stencil: base_rows::stencil(class)?, holes: padded_holes([u64::from(proto.register) * SLOT, u64::from(proto.class), 0]), declared: true, number: None, int32: None, unbox: None });
     }
     let identity = HeapRow { heap: Heap::CaptureIdentity, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
     for (slot, callee) in &layout.identities {

@@ -5,11 +5,11 @@
 //! `UNSUPPORTED_*` symbol, which `build.rs` rejects, so a row cannot silently use one.
 
 use crate::layout::{
-    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_STORE_WATCH,
-    JS_STEP_STORES_SPECIALIZED,
+    JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_STORE_WATCH,
+    JS_STEP_STORES_SPECIALIZED, JS_STEP_CLASS_BASE, JS_STEP_CLASS_MARK_LISTS, JS_STEP_SPILL_BASE,
     LAYOUT_TABLE_BASE, PROPERTY_BUFFER_BASE,
 };
-use crate::staged::barrier::{held_unlogged, store_unlogged, MarkList};
+use crate::staged::barrier::{class_held_unlogged, class_store_unlogged, held_unlogged, store_unlogged, MarkList};
 use crate::staged::{Passed, StagedRecordSpace, Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
@@ -46,28 +46,31 @@ pub(crate) struct StencilStage {
 }
 
 impl StencilStage {
-    /// A stage whose first `site` is hole `first`.
+    /// A stage whose first `site` is hole `first`, of the activation whose dispatch payload is `payload`
+    /// (`heap_rows::payload`): every row has one, and its operations read the per-heap tables through it
+    /// (`Table::ClassSpace`, `Table::SpillBase`), so no row can build a stage that reads them at address zero.
     #[inline(always)]
-    pub(crate) fn from_hole(first: u8) -> Self {
-        Self { sites: first, values: 0, payload: 0 }
+    pub(crate) fn from_hole(first: u8, payload: usize) -> Self {
+        Self { sites: first, values: 0, payload: payload as u64 }
     }
 
-    /// As `from_hole`, for a row whose operations address a process table through `payload`.
+    /// A stage for value-word tests and number conversions alone: no site hole, no table. A row's operations
+    /// over the heap take `from_hole` with the row's payload.
     #[inline(always)]
-    pub(crate) fn with_payload(first: u8, payload: u64) -> Self {
-        Self { sites: first, values: 0, payload }
+    pub(crate) fn words() -> Self {
+        Self { sites: 0, values: 0, payload: 0 }
     }
 
     /// As `from_hole`, with the property arena's value base (`Table::PropertyValues`).
     #[inline(always)]
-    pub(crate) fn with_values(first: u8, values: u64) -> Self {
-        Self { sites: first, values, payload: 0 }
+    pub(crate) fn with_values(first: u8, values: u64, payload: usize) -> Self {
+        Self { sites: first, values, payload: payload as u64 }
     }
 
     /// As `with_values`, for a row that stores through the dispatch payload at `payload`.
     #[inline(always)]
     pub(crate) fn storing(first: u8, values: u64, payload: usize) -> Self {
-        Self { sites: first, values, payload: payload as u64 }
+        Self::with_values(first, values, payload)
     }
 
     /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).
@@ -84,10 +87,17 @@ impl StencilStage {
         unsafe { (base.wrapping_add(offset as i64 as u64) as *mut T).write_unaligned(value) }
     }
 
-    /// The runtime's `Concrete::new`, which the shared rows' interpreter wrappers call; those
+    /// The runtime's `Concrete::pure`, which the shared rows' interpreter wrappers call; those
     /// wrappers are never used here.
     #[inline(always)]
-    pub(crate) fn new(_property_values: *const crate::Value) -> Self {
+    pub(crate) fn pure() -> Self {
+        Self { sites: 0, values: 0, payload: 0 }
+    }
+
+    /// The runtime's `Concrete::over` (the heap-bearing constructor): the stencil reads its tables
+    /// through its payload, so the heap is not needed here.
+    #[inline(always)]
+    pub(crate) fn over(_heap: *const crate::heap::Heap) -> Self {
         Self { sites: 0, values: 0, payload: 0 }
     }
 }
@@ -111,6 +121,7 @@ pub(crate) fn stage_site(stage: &mut StencilStage) -> u64 {
 crate::projection!(StencilStage => StencilStage);
 
 impl Stage for StencilStage {
+    const SLOT_TABLES: bool = false;
     type Word = u64;
     type Proof = ();
     type Cond = bool;
@@ -216,6 +227,23 @@ impl Stage for StencilStage {
         crate::words::canonical(f64::from_bits(number.word()))
     }
     #[inline(always)]
+    // A stored double's own bits (decision 4.1): no read-side canonicalization.
+    fn box_raw_number(&mut self, number: crate::staged::Float64<u64>) -> u64 { number.word() }
+    #[inline(always)]
+    // A float bit entry: a NaN is the canonical one (decision 4.1, as `Value::from_float_bits64`).
+    fn canonical_float(&mut self, bits: u64) -> u64 {
+        if f64::from_bits(bits).is_nan() { crate::layout::words::CANONICAL_NAN } else { bits }
+    }
+    #[inline(always)]
+    fn raw_number(&mut self, bits: u64) -> u64 {
+        // An int32 word converts to its double; any other word is a double already.
+        if bits >> crate::layout::words::TAG_SHIFT == crate::layout::words::INT_TAG >> crate::layout::words::TAG_SHIFT {
+            ((bits as u32 as i32) as f64).to_bits()
+        } else {
+            bits
+        }
+    }
+    #[inline(always)]
     fn store_u8(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u8) }
     #[inline(always)]
     fn store_u16(&mut self, _at: Access, base: u64, offset: i32, value: u64) { self.write(base, offset, value as u16) }
@@ -231,20 +259,20 @@ impl Stage for StencilStage {
     fn clamp_u8(&mut self, a: u64) -> u64 { crate::units::clamp_u8(a) }
     #[inline(always)]
     fn store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
-        let list = match space {
-            StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
-            StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
-        };
         let payload = self.payload;
+        let list = match space {
+            StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
+            StagedRecordSpace::Class => return class_store_unlogged(self, payload, JS_STEP_STORE_WATCH, JS_STEP_CLASS_MARK_LISTS, record_id, value, ()).is_some(),
+        };
         store_unlogged(self, payload, JS_STEP_STORE_WATCH, list, record_id, value, ()).is_some()
     }
     #[inline(always)]
     fn held_store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
-        let list = match space {
-            StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
-            StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
-        };
         let payload = self.payload;
+        let list = match space {
+            StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
+            StagedRecordSpace::Class => return class_held_unlogged(self, payload, (JS_STEP_STORE_WATCH, crate::layout::STORE_WATCH_COUNTS), JS_STEP_CLASS_MARK_LISTS, record_id, value, ()).is_some(),
+        };
         held_unlogged(self, payload, (JS_STEP_STORE_WATCH, crate::layout::STORE_WATCH_COUNTS), list, record_id, value, ()).is_some()
     }
     #[inline(always)]
@@ -305,11 +333,12 @@ impl Stage for StencilStage {
             }
             // A static of the runtime at a fixed address: no field to load.
             Table::Layouts => LAYOUT_TABLE_BASE,
+            // The heap's class space base, which the dispatch head holds per heap (`JsStepHead::class_base`).
+            Table::ClassSpace => self.load_u64(Region::Dispatch.mutable(), self.payload, JS_STEP_CLASS_BASE as i32),
+            Table::SpillBase => self.load_u64(Region::Dispatch.mutable(), self.payload, JS_STEP_SPILL_BASE as i32),
+            // A stage without the slot tables (`SLOT_TABLES`) never addresses them.
+            Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a stencil row stores through the VM"),
         }
-    }
-    #[inline(always)]
-    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
-        crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
     }
     /// `fill_by_rows` with volatile stores: the window's prefix, the arguments it holds room for,
     /// then `undefined`. The stores are volatile so LLVM cannot make the loop a `memcpy` or `memset`

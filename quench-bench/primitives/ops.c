@@ -2628,28 +2628,6 @@ static double NOINL op_v_instanceof(long n) {
   return (double)c;
 }
 
-struct v_pt { int32_t x, y; };
-
-/* equiv: JS constructor Point(x, y): initialise one arena slot */
-static struct v_pt * NOINL v_new_point_make(struct v_pt *slot, int32_t x, int32_t y) {
-  slot->x = x;
-  slot->y = y;
-  return slot;
-}
-
-/* equiv: arena of N Points allocated once per op call; iteration i bump-allocates slot i, then reads both fields */
-static double NOINL op_v_new_point(long n) {
-  int32_t N = (int32_t)n, s = 0;
-  struct v_pt *arena = (struct v_pt *)malloc(sizeof(struct v_pt) * (size_t)(N > 0 ? N : 1));
-  for (int32_t i = 0; i < N; i++) {
-    BODY_BARRIER();
-    struct v_pt *p = v_new_point_make(&arena[i], i, (int32_t)((uint32_t)i + 1u));
-    s = (int32_t)((uint32_t)s + (uint32_t)p->x + (uint32_t)p->y);
-  }
-  free(arena);
-  return (double)s;
-}
-
 struct v_ol { int32_t a, b, c; };
 
 /* equiv: object-literal initialiser {a: i, b: i + 1, c: i & 7} written into an arena slot */
@@ -4650,7 +4628,6 @@ static const struct { const char *name; opfn fn; } TABLE[] = {
   {"v_setter", op_v_setter},
   {"v_field_poly4", op_v_field_poly4},
   {"v_instanceof", op_v_instanceof},
-  {"v_new_point", op_v_new_point},
   {"v_obj_literal", op_v_obj_literal},
   {"v_linked_list_walk", op_v_linked_list_walk},
   {"v_closure_call", op_v_closure_call},

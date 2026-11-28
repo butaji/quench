@@ -1222,7 +1222,8 @@ impl<'a> NativeContext<'a> {
 
     /// `evaluate_specialized_script_with_origin_rooted` for host source the caller owns, as the
     /// classic form (`keep_records` false), the entry (`keep_records`) or TypeScript (`typescript`),
-    /// which keeps the string as the program's text instead of a copy of it.
+    /// which keeps the string as the program's text instead of a copy of it. `calls_result_once`: the host calls the
+    /// completion value once (the CommonJS loader's wrapper, `ResidualProgram::host_calls_result_once`).
     pub fn evaluate_owned_script_with_origin_rooted(
         &mut self,
         source: std::rc::Rc<String>,
@@ -1231,6 +1232,7 @@ impl<'a> NativeContext<'a> {
         column_offset: u32,
         keep_records: bool,
         typescript: bool,
+        calls_result_once: bool,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.evaluate_embedding_owned_script_with_origin(
             source,
@@ -1238,6 +1240,7 @@ impl<'a> NativeContext<'a> {
             (line_offset, column_offset),
             keep_records,
             typescript,
+            calls_result_once,
         );
         self.completion(result)
     }
@@ -1833,6 +1836,12 @@ impl<'a> NativeContext<'a> {
         let root = self.vm.bigint_rooted(value);
         self.roots.push(root);
         root
+    }
+
+    /// The declared name of the host operation this context runs, for diagnostics: an image's
+    /// unlinked operation names the operation its program reached.
+    pub fn active_host_operation_name(&self) -> Option<&'static str> {
+        self.vm.host_function_name(self.vm.active_native_callable()?)
     }
 
     pub fn undefined(&mut self) -> RootId {

@@ -6,7 +6,6 @@
 // builds. Nothing here names a runtime item: the file must compile in the stencil crate.
 #![allow(dead_code)]
 
-use core::cell::Cell;
 use core::sync::atomic::AtomicBool;
 
 /// The words of an ordinary object's record (`heap::cell::Object`): its payload word and its layout id.
@@ -14,9 +13,9 @@ use core::sync::atomic::AtomicBool;
 pub struct ObjectHead {
     /// One word: with `ObjectExtras`, `EXTRAS_TAG` and a pointer to them; without extras, the inline values as
     /// narrow values, or the storage position (`ValueVec`'s start), or an array's element backing.
-    pub(crate) payload: u64,
+    pub payload: u64,
     /// The object's layout (`heap::layouts`): the interned pair of its header words.
-    pub(crate) layout: u32,
+    pub layout: u32,
 }
 
 /// The head of a Wasm GC object's record: the address of its payload bytes (`heap::cell::WasmGcFields`),
@@ -37,13 +36,13 @@ pub struct WasmGcHead {
 #[repr(C)]
 pub struct ArrayHeaderHead {
     /// Owners of this backing; zero where no owner counts it.
-    pub(crate) owners: u32,
+    pub owners: u32,
     /// The number of values the backing holds.
-    pub(crate) len: u32,
+    pub len: u32,
     /// Room for values after the header, with the allocator's flags in the bits it sets.
-    pub(crate) capacity: u32,
+    pub capacity: u32,
     /// How many values below `len` are not int32s, holes included (`OTHERS_UNKNOWN` when uncounted).
-    pub(crate) others: u32,
+    pub others: u32,
 }
 
 /// What native code reads of a typed array's view record (`heap::typed_view::NativeView`): the first
@@ -52,19 +51,19 @@ pub struct ArrayHeaderHead {
 #[derive(Debug)]
 pub struct NativeViewHead {
     /// The first element's address.
-    pub(crate) data: usize,
+    pub data: usize,
     /// The buffer's relocation count when `data` and `length` were published.
-    pub(crate) stamp: u64,
+    pub stamp: u64,
     /// The element count, below 2^31.
-    pub(crate) length: u32,
+    pub length: u32,
     /// The `TypedArrayKind` discriminant, or the no-kind marker.
-    pub(crate) kind: u8,
+    pub kind: u8,
     /// Set while the view cannot be addressed in place.
-    pub(crate) detached: u8,
+    pub detached: u8,
     /// Set when the buffer's bytes belong to this view's buffer alone.
-    pub(crate) unshared: u8,
+    pub unshared: u8,
     /// The table entry that holds this record's address, null while it has none.
-    pub(crate) home: *mut usize,
+    pub home: *mut usize,
 }
 
 /// A function record (`heap::cell::FunctionRecord`, which names this with the runtime's own `Object`,
@@ -87,11 +86,11 @@ pub struct FunctionRecord<O, K, V> {
 /// to and including `adapter_payload`, in order, which generated code loads by offset. The runtime embeds
 /// it as the first field `head` of `CallContext`, with `Deref`/`DerefMut`. Its non-word fields are
 /// parameters: `E` the environment value (`Value`), `C` the compiled artifact, `T` the table words' record,
-/// `D` the reference call-site diagnostics, `P` the program id and `R` the raised completion (`Option<Raised>`).
+/// `P` the program id and `R` the raised completion (`Option<Raised>`).
 /// The runtime instantiates them with its own types; `layout_offsets` instantiates them with words of the same
 /// size and alignment, and `base_rows` checks each of those sizes against the runtime type.
 #[repr(C)]
-pub struct CallContextHead<E, C, T, D, P, R> {
+pub struct CallContextHead<E, C, T, P, R> {
     /// The lowest stack address compiled code may use before a call traps as exhausted.
     pub stack_limit: usize,
     /// The attention flag the code polls (`ExecutionInterrupt::attention_flag`).
@@ -120,33 +119,20 @@ pub struct CallContextHead<E, C, T, D, P, R> {
     pub compiled: *const C,
     /// The program of the code running (the VM's; compiled code never reads it).
     pub program: P,
-    /// Number of Wasm-to-host callouts made by this native invocation.
-    pub import_callouts: *mut u64,
-    /// Number of direct known calls that had to use the VM fallback.
-    pub known_callouts: *mut u64,
-    /// Number of Wasm indirect-reference callouts made by this native invocation.
-    pub reference_callouts: *mut u64,
     /// The bound linear memory whose base and size this call uses.
     pub memory: E,
     /// Its exact current byte length, refreshed when a callout may grow it.
     pub memory_length: u64,
     /// What a callout that returned the raised status raised.
     pub raised: R,
-    /// Diagnostic-only ABI fields are appended so existing repr(C) offsets
-    /// used by generated code stay fixed.
-    pub call_reference_diagnostic: usize,
-    pub reference_call_sites: *const D,
-    pub reference_call_site_count: usize,
     /// The VM's poll page (`ExecutionInterrupt::poll_page`), whose fault ends the call as
     /// terminated; empty when compiled code checks the flag instead.
     pub poll_start: usize,
     pub poll_end: usize,
-    /// Diagnostic-only count of direct Emscripten same-memory copies.
-    pub emscripten_memcpy_fast_path_hits: *mut u64,
-    /// Per-import attribution, present only during opt-in diagnostic runs.
-    pub import_callout_counts: *const Cell<u64>,
-    pub import_callout_count: usize,
     /// A stack-owned adapter payload for JS and OSR entries that use this
     /// module's common native-entry trampoline without Wasm callouts.
     pub adapter_payload: *mut (),
+    /// The SysV shim every native caller enters a lane body through (`lane_body_abi::body_shim`), which
+    /// takes the body to call as its fifth argument; zero where the host has no native code.
+    pub body_shim: usize,
 }

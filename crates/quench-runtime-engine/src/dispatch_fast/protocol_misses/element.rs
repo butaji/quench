@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// `GetIndex`'s miss (`get_index_miss`).
 pub(crate) const GET_INDEX: u8 = 0;
@@ -10,10 +11,6 @@ pub(crate) const GET_INDEX: u8 = 0;
 pub(crate) const SET_INDEX: u8 = 1;
 /// `Delete`'s miss (`delete_miss`).
 pub(crate) const DELETE: u8 = 2;
-/// `GetField` of a string primitive's miss (`get_field_string_miss`).
-pub(crate) const GET_FIELD_STRING: u8 = 3;
-/// `GetField` of a nested base's miss (`get_field_nested_miss`).
-pub(crate) const GET_FIELD_NESTED: u8 = 4;
 /// `GetField` at a getter site's miss (`get_field_getter_miss`).
 pub(crate) const GET_FIELD_GETTER: u8 = 5;
 
@@ -24,8 +21,6 @@ pub(crate) const fn element_miss_of(parameters: u8) -> Handler {
         GET_INDEX => super::super::get_index_miss as Handler,
         SET_INDEX => super::super::set_index_miss as Handler,
         DELETE => super::super::delete_miss as Handler,
-        GET_FIELD_STRING => super::super::get_field_string_miss as Handler,
-        GET_FIELD_NESTED => super::super::get_field_nested_miss as Handler,
         GET_FIELD_GETTER => super::super::get_field_getter_miss as Handler,
         _ => general_step_in_lane,
     }

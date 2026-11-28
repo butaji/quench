@@ -293,8 +293,8 @@ impl Vm {
     ) -> Option<(Atom, PropertyAttributes)> {
         // `insert_descriptor` marks every object it records an index-keyed entry for.
         if !self
-            .object_data(target)
-            .is_some_and(Object::has_indexed_descriptors)
+            .heap.object(target)
+            .is_some_and(|object| object.has_indexed_descriptors())
         {
             return None;
         }
@@ -336,8 +336,8 @@ impl Vm {
             .collect::<Vec<_>>();
         if self.heap.array(target).is_some()
             && !self
-                .object_data(target)
-                .is_some_and(Object::is_arguments_object)
+                .heap.object(target)
+                .is_some_and(|object| object.is_arguments_object()) // record-only: arguments flag
         {
             atoms.push(self.length_atom);
         }
@@ -349,8 +349,8 @@ impl Vm {
             return true;
         }
         if self
-            .object_data(target)
-            .is_some_and(Object::is_arguments_object)
+            .heap.object(target)
+            .is_some_and(|object| object.is_arguments_object()) // record-only: arguments flag
         {
             return true;
         }
@@ -421,7 +421,7 @@ impl Vm {
         let current_record = (!is_new).then(|| {
             PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
         });
-        let extensible = self.object_data(target).is_some_and(Object::is_extensible);
+        let extensible = self.heap.object(target).is_some_and(|object| object.is_extensible());
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }

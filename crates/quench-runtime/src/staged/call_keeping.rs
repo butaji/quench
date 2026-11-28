@@ -2,7 +2,7 @@
 //! protocol rows (`protocol`), Stage-generic, no alloc or std, so every tier runs the same rows.
 //!
 //! A keeping activation is a script activation that keeps the values it was passed past its
-//! registers (a forwarding body, a `CallEntry::Keeps` entry, a call passing more values than
+//! registers (a forwarding body, a `CallEntry::framed(Framed::Keeps)` entry, a call passing more values than
 //! the parameters, a rest body whose `arguments` or legacy reflection reads them), or gathers
 //! the values past its fixed parameters into a rest array. Its window, from register 0:
 //!
@@ -31,7 +31,7 @@ const fn context_at(word: usize) -> i32 { -((word * 8) as i32) }
 
 /// The shape of a keeping window, constants of the target: its `registers` and `params`,
 /// whether it keeps the passed values past its registers (`keeps`) and whether its last
-/// parameter gathers the rest (`gathers`, `CallEntry::Gathers`).
+/// parameter gathers the rest (`gathers`, `CallEntry::framed(Framed::Gathers)`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct KeepingWindow {
     pub registers: u16,
@@ -94,7 +94,7 @@ pub(crate) fn admit_keeping<S: Stage>(stage: &mut S, depth: S::Word, depth_limit
 /// `admit_keeping` on machine words, for the interpreter's own admission.
 #[inline(always)]
 pub fn concrete_admits_keeping(depth: usize, depth_limit: usize, room: usize, needed: usize) -> bool {
-    admit_keeping(&mut super::Concrete::new(core::ptr::null()), depth as u64, depth_limit as u64, room as u64, needed as u64, ())
+    admit_keeping(&mut super::Concrete::pure(), depth as u64, depth_limit as u64, room as u64, needed as u64, ())
         .is_some()
 }
 
@@ -151,7 +151,7 @@ mod tests {
 
     fn fill(window: KeepingWindow, passed: &[u64], rest: u64) -> [u64; 8] {
         let mut words = [0_u64; 8];
-        fill_keeping(&mut Concrete::new(core::ptr::null()), words.as_mut_ptr() as u64, passed.as_ptr() as u64,
+        fill_keeping(&mut Concrete::pure(), words.as_mut_ptr() as u64, passed.as_ptr() as u64,
             passed.len() as u16, window, rest);
         words
     }

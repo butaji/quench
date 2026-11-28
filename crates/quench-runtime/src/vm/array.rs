@@ -368,17 +368,19 @@ impl Vm {
     /// from its shape without a call; `None` for an accessor, or for an object keeping
     /// descriptors outside its shape, which its shape alone does not answer.
     pub fn own_plain_data(&self, object: Value, atom: Atom) -> Option<Option<Value>> {
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
+        // record-only: side descriptors
         if data.has_side_descriptors() {
             return None;
         }
         let Some(slot) = self.shape_slot(data.shape(), atom) else {
             return Some(None);
         };
+        // record-only: slot_attributes takes the record
         if self.slot_attributes(data, slot)?.accessor {
             return None;
         }
-        Some(Some(self.heap.property_get(data, slot)?))
+        Some(Some(self.heap.property_get_ref(data, slot)?))
     }
 
     /// `unshift` of a dense array as `splice_dense_elements` makes it, which observes
@@ -402,7 +404,7 @@ impl Vm {
             Some(Some(constructor)) => constructor,
             Some(None) => {
                 let prototype = self.array_prototype_for_realm(self.realm.globals);
-                if self.object_data(array).map(Object::proto) != Some(prototype) {
+                if self.heap.object(array).map(|object| object.proto()) != Some(prototype) {
                     return false;
                 }
                 match self.own_plain_data(prototype, atom) {
@@ -924,8 +926,8 @@ impl Vm {
         let atom = self.length_atom;
         if self.heap.array(object).is_some()
             && !self
-                .object_data(object)
-                .is_some_and(Object::is_arguments_object)
+                .heap.object(object)
+                .is_some_and(|object| object.is_arguments_object()) // record-only: arguments flag
         {
             if self
                 .property_attributes(object, PropertyKey::string(atom))
@@ -1081,7 +1083,7 @@ impl Vm {
             return false;
         }
         let slot = self.heap.dependencies().fuses().slot(IntactFuse::ArrayConstructor);
-        let Some(constructor) = self.object_data(prototype).and_then(|data| self.heap.property_get(data, slot)) else {
+        let Some(constructor) = self.heap.object(prototype).and_then(|data| self.heap.property_get_ref(data, slot)) else {
             return false;
         };
         if !self.fuse_intact_at(IntactFuse::ArraySpecies, constructor) {

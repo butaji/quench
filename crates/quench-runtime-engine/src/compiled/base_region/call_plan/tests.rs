@@ -1,13 +1,17 @@
+#[allow(unused_imports)] use quench_runtime::staged::{CallRecordFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+use super::facts::Declined;
+use super::shape::Method;
 use quench_bjit::call_record as protocol;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 const SHAPE: CallShape = CallShape { call_pc: 9, callee: 1, this: 2, window: 3, argc: 2, result: 6, returning: false, form: CallForm::Plain, method: None, op: quench_runtime::bytecode::Op::Call };
 
 fn facts(registers: u16, params: u16) -> DirectFacts {
     let cell = CellFacts { registers, room: registers, params, fill: quench_runtime::staged::call::FILL_ALL, entry: ENTRY_ACTIVATES as u8 };
-    DirectFacts { callee: 7, cell: 0x1000, validity: 5, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, construction: false, held: false, descriptor: 0 }
+    DirectFacts { callee: 7, cell: 0x1000, facts: cell, call: 0x3000, caller_base: 0x4000, function: 0, captures: 0, env: 0, capture: 0, global_this: None, lexical: false, registers, held: false, closed: false, descriptor: 0 }
 }
 
 /// Each call opcode has its form, and an instruction that is no call, or carries a result flag, has none.
@@ -42,7 +46,6 @@ fn every_other_call_takes_the_helper_with_its_reason() {
     assert_eq!(choose(&SHAPE, None), helper(Declined::NoTarget));
     let many = CallShape { argc: MAX_DIRECT_ARGC as u16 + 1, ..SHAPE };
     assert_eq!(choose(&many, Some(&facts(4, 9))), helper(Declined::Arguments));
-    assert_eq!(choose(&SHAPE, Some(&DirectFacts { construction: true, ..facts(4, 2) })), helper(Declined::Construction));
     assert_eq!(choose(&SHAPE, Some(&facts(0, 2))), helper(Declined::Window));
     assert_eq!(choose(&SHAPE, Some(&facts(4, 1))), helper(Declined::Facts), "more arguments than params");
     for form in [CallForm::Construct, CallForm::Stepped] {
@@ -72,9 +75,10 @@ fn a_direct_chain_is_spills_direct_helper_reloads_with_the_direct_row_skipping_t
     assert_eq!(chain.parts[direct_at].exits, [Exit::Status]);
     assert_eq!(chain.parts[helper_at].exits, [Exit::At(SHAPE.call_pc), Exit::Status]);
     assert_eq!(chain.parts[helper_at].holes[..2], [u64::from(SHAPE.call_pc), 0x4000]);
-    let record = chain.records.into_iter().next().expect("the direct row's record");
+    let (record, callee) = chain.records.into_iter().next().expect("the direct row's record");
     assert_eq!(chain.parts[direct_at].holes[0], std::ptr::from_ref(&*record).addr() as u64);
-    assert_eq!((record.callee, record.cell, record.expected, record.result_register), (7, 0x1000, 5, 6));
+    assert_eq!(record.callee_record, std::ptr::from_ref(&*callee).addr() as u64, "the site names its callee record");
+    assert_eq!((callee.callee, callee.cell, record.result_register), (7, 0x1000, 6));
     assert_eq!(chain.parts[spills.len() + 2].holes[0], SLOT);
 }
 
@@ -103,7 +107,7 @@ fn a_step_chain_is_spills_helper_reloads() {
 fn a_sloppy_callee_takes_the_sloppy_row_with_its_global() {
     let sloppy = DirectFacts { global_this: Some(0xabc), ..facts(4, 2) };
     let chain = plan_call(&plan(Some(&sloppy), &[], &[])).expect("a plan");
-    assert_eq!(chain.records.into_iter().next().expect("a record").global_this, 0xabc);
+    assert_eq!(chain.records.into_iter().next().expect("a record").1.global_this, 0xabc);
     let row = CallRow::Direct { argc: 2, this: ThisRow::Sloppy, checked: true, pinned: false };
     let name = row.name().expect("a row");
     assert_eq!(name, "call_direct_a2_sloppy_window", "every argument is in the window");
@@ -123,7 +127,7 @@ fn a_dead_pinned_argument_is_passed_by_its_pin_and_spilled_before_the_call() {
     assert_eq!(chain.parts.len(), 4, "both spills, the direct row, the helper row");
     assert_eq!(chain.parts[0].holes[0], slot(SHAPE.window), "the argument's spill runs before the direct row");
     assert_eq!(chain.parts[2].taken, Some(4), "completion skips the helper row");
-    let record = chain.records.into_iter().next().expect("the direct row's record");
+    let (record, _) = chain.records.into_iter().next().expect("the direct row's record");
     assert_eq!(record.argument_places, [Place::Pin(1).code(), Place::Mem.code()]);
 }
 
@@ -158,7 +162,7 @@ fn call_protocol_matches_the_runtime() {
 fn a_direct_record_carries_the_proven_arguments() {
     let direct = facts(4, 2);
     let chain = plan_call(&CallPlan { proven_args: 0b11, ..plan(Some(&direct), &[], &[]) }).expect("a plan");
-    assert_eq!(chain.records.first().map(|record| record.proven_args), Some(0b11));
+    assert_eq!(chain.records.first().map(|(record, _)| record.proven_args), Some(0b11));
 }
 
 /// A method call's chain is the spills, its site read (the callee into the scratch register), the checked direct row
@@ -178,7 +182,7 @@ fn a_method_site_reads_its_callee_before_the_direct_row() {
     assert!(std::ptr::eq(chain.parts[1].stencil, read), "the read follows the spills");
     assert_eq!(chain.parts[1].exits, vec![super::super::Exit::Ahead(2)], "a miss takes the helper row behind the direct row");
     assert_eq!(chain.parts[2].taken, Some(4), "the direct row completes past the helper row");
-    assert_eq!(chain.records.first().map(|record| record.callee_register), Some(7), "the direct row checks the scratch register");
+    assert_eq!(chain.records.first().map(|(record, _)| record.callee_register), Some(7), "the direct row checks the scratch register");
 }
 
 /// The stencils' layout numbers, mounted as the stencil crate mounts them (`call_protocol_matches_the_runtime`).

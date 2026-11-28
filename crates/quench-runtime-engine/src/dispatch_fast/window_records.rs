@@ -5,7 +5,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-// merge: theirs window_record/window_local_handler taken whole (staged queries, op-based); HEAD's class-match helpers and window handlers are dropped with the hand fast paths. meaning_fast import dropped as unused.
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// What an environment window does with one record.
 pub(crate) enum WindowRecord {

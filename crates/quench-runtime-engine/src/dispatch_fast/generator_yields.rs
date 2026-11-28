@@ -11,6 +11,7 @@ use super::*;
 use super::lane_frame::{suspension_row_in_lane, yield_star_kind, Suspender, LANE_YIELD};
 use quench_runtime::vm::activation::{JobRoot, SuspendKind};
 use quench_runtime::staged::{SuspendEffect, Suspending, Suspension};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 script_handler! {
     /// `yield` of a generator activation that suspends in place (`Suspender::of_yield`): a
@@ -177,7 +178,7 @@ fn suspend_settling(cx: *mut LaneContext, r: Registers, (pc, destination): (usiz
     let record = top.record();
     // The converted value may be a fresh promise, which the safepoints after the run collect.
     note_allocation(vm);
-    let frame = settling_frame(vm, code, &record, (r, pc));
+    let frame = quench_runtime::vm::activation::FrameRecord::capture(settling_frame(vm, code, &record, (r, pc)));
     let promise = vm.settling_promise(top.payload().settles());
     let continuation = vm.suspend_activation(frame, quench_runtime::vm::activation::Completion::Await(value), Some(destination), promise);
     let activation = vm.lane_stack.pop_activation().expect("a settling activation runs");

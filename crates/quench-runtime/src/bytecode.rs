@@ -96,7 +96,7 @@ pub(crate) fn local_name_read_by_name(name: &str, declared_in_environment: impl 
         || (local_name_requires_environment(name) && declared_in_environment())
 }
 #[allow(unused_imports)]
-pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, jump_edge, may_repeat, reachable_from};
+pub use control_flow::{ControlEdge, Successors, branch_table_entries, entered_only_by_fallthrough, falls_into_next, for_each_instruction_successor, instruction_leaders, jump_edge, loop_depth, may_repeat, reachable_from};
 pub use instruction::Instr;
 pub use instruction::WideInstruction;
 pub use register_list::{ARRAY_LITERAL_WINDOW, RegisterList};
@@ -734,8 +734,9 @@ mod op_catalog; mod op_roles; mod denotation; mod opcode_table;
 pub use op_catalog::{Class, Decoder, GenericStep, JsDenotation, OwnedStep, Traits, ValueStep, OPCODE_COUNT, opcode_name};
 pub(crate) use op_roles::{CALL_INVOKE, ELEMENT_STORE, JUMP_IF_FALSE, OBJECT_FIELD_STORE, OpSet, REGISTER_MOVE, RETURN_OP, negated_jump, op_table, row_ops, strict_variant, the_op};
 
-macro_rules! opcodes {
-    ($d:tt; $($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? $(; class $class:ident)? $(; staged $decoder:ident)? $(; step $step:ident)? $(; owned $owned:ident)? $(; value $value:ident)? $(; traits $($trait:ident)+)?, @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
+/// Defines `Op` and its catalog constants from the opcode table's rows (`quench-opcodes/src/table.rs`).
+macro_rules! define_ops {
+    ($($name:ident => $effect:expr; layout $layout:ident $(; meaning $immediate_role:ident)? $(; flow $flow:ident)? $(; js $js_denotation:ident)? $(; class $class:ident)? $(; staged $decoder:ident)? $(; step $step:ident)? $(; owned $owned:ident)? $(; value $value:ident)? $(; traits $($trait:ident)+)?, @ $result:ident, @ fields($a:ident, $b:ident, $c:ident)),+ $(,)?) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         #[repr(u16)]
         #[quench_macros::native_operation_exports(19, "quench_js_op_")]
@@ -752,17 +753,17 @@ macro_rules! opcodes {
         impl Op {
             pub const COUNT: usize = [$(stringify!($name)),+].len();
             pub const NAMES: [&'static str; Self::COUNT] = [$(stringify!($name)),+];
-            const CLASSES: [Class; Self::COUNT] = [$(opcodes!(@class $($class)?)),+];
+            const CLASSES: [Class; Self::COUNT] = [$(define_ops!(@class $($class)?)),+];
             #[inline(always)] pub const fn class(self) -> Class { Self::CLASSES[self as usize] }
-            const TRAITS: [Traits; Self::COUNT] = [$(opcodes!(@traits $($($trait)+)?)),+];
+            const TRAITS: [Traits; Self::COUNT] = [$(define_ops!(@traits $($($trait)+)?)),+];
             #[inline(always)] pub const fn traits(self) -> Traits { Self::TRAITS[self as usize] }
-            const DECODERS: [Option<Decoder>; Self::COUNT] = [$(opcodes!(@staged $($decoder)?)),+];
+            const DECODERS: [Option<Decoder>; Self::COUNT] = [$(define_ops!(@staged $($decoder)?)),+];
             #[inline(always)] pub const fn staged(self) -> Option<Decoder> { Self::DECODERS[self as usize] }
-            const GENERIC_STEPS: [Option<GenericStep>; Self::COUNT] = [$(opcodes!(@step $($step)?)),+];
+            const GENERIC_STEPS: [Option<GenericStep>; Self::COUNT] = [$(define_ops!(@step $($step)?)),+];
             #[inline(always)] pub(crate) const fn generic_step(self) -> Option<GenericStep> { Self::GENERIC_STEPS[self as usize] }
-            const OWNED_STEPS: [Option<OwnedStep>; Self::COUNT] = [$(opcodes!(@owned $($owned)?)),+];
+            const OWNED_STEPS: [Option<OwnedStep>; Self::COUNT] = [$(define_ops!(@owned $($owned)?)),+];
             #[inline(always)] pub(crate) const fn owned_step(self) -> Option<OwnedStep> { Self::OWNED_STEPS[self as usize] }
-            const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(opcodes!(@value $($value)?)),+];
+            const VALUE_STEPS: [Option<ValueStep>; Self::COUNT] = [$(define_ops!(@value $($value)?)),+];
             #[inline(always)] pub const fn value_step(self) -> Option<ValueStep> { Self::VALUE_STEPS[self as usize] }
             #[cfg(feature = "native-execution")]
             pub fn native_semantic_entry(self) -> crate::NativeJsOperationEntry {
@@ -772,23 +773,23 @@ macro_rules! opcodes {
             }
             const EFFECTS: [Effect; Self::COUNT] = [$($effect),+];
             const RESULT_LAYOUTS: [ResultLayout; Self::COUNT] = [$(
-                opcodes!(@result $result)),+
+                define_ops!(@result $result)),+
             ];
             const CONTROL_FLOW_LAYOUTS: [ControlFlowLayout; Self::COUNT] = [$(
-                opcodes!(@flow $($flow)?)),+
+                define_ops!(@flow $($flow)?)),+
             ];
             const IMMEDIATE_LAYOUTS: [ImmediateLayout; Self::COUNT] = [$(
-                opcodes!(@layout $layout)),+
+                define_ops!(@layout $layout)),+
             ];
 
             const OPERAND_LAYOUTS: [OperandLayout; Self::COUNT] = [$(
-                opcodes!(@fields $a, $b, $c)),+
+                define_ops!(@fields $a, $b, $c)),+
             ];
             const IMMEDIATE_ROLES: [ImmediateRole; Self::COUNT] = [$(
-                opcodes!(@immediate $($immediate_role)?; $layout)),+
+                define_ops!(@immediate $($immediate_role)?; $layout)),+
             ];
             const JS_DENOTATIONS: [JsDenotation; Self::COUNT] = [$(
-                opcodes!(@js $($js_denotation)?)),+
+                define_ops!(@js $($js_denotation)?)),+
             ];
 
             #[inline(always)] pub(crate) const fn effect(self) -> Effect {
@@ -827,7 +828,7 @@ macro_rules! opcodes {
 
             pub const fn from_index(index: usize) -> Option<Self> {
                 if index < Self::COUNT {
-                    // SAFETY: `opcodes!` emits a contiguous repr(u16) enum.
+                    // SAFETY: `define_ops!` emits a contiguous repr(u16) enum.
                     Some(unsafe { std::mem::transmute::<u16, Self>(index as u16) })
                 } else {
                     None
@@ -909,346 +910,7 @@ const READ_THROW: Effect = Effect::READS_HEAP.union(Effect::THROWS);
 const WRITE_THROW: Effect = Effect::WRITES_HEAP.union(Effect::THROWS);
 const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
-opcodes!($;
-    Nop => Effect::PURE; layout Scalar; meaning Unused; js Noop; class Nop; staged Flow; traits LEAF_VALUE SCALAR_REGION FRAME_ONLY NO_OP NO_STEP, @ Register, @ fields(Unused, Unused, Unused),
-    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex; class CloneEnv; staged Names; step Body; traits NAME_OPERATION ENVIRONMENT_CLONE ENVIRONMENT_CAPTURE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
-    Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex; traits NO_STEP, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
-    LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex; js LoadConst; class LoadConst; staged Flow; step Body; traits LEAF_VALUE INLINABLE PURE_SETUP ACTIVATION_FREE SCALAR_REGION LIFETIME_SAFE REMOVABLE_WHEN_DEAD CONSTANT_LOAD MAY_ALLOCATE DEFINES_LOOP_RESULT, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class LoadLocal; staged Local; step Body; owned LoadLocal; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_LOAD RELOCATABLE_LOCAL LOCAL_BINDING_LOAD FRAME_SLOT_READ CHECKED_LOCAL ACCESSES_LOCAL_SLOT, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot; class StoreLocal; staged Local; step Body; owned StoreLocal; traits ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_STORE LOCAL_BINDING_STORE RELOCATABLE_LOCAL LOCAL_SLOT_STORE CHECKED_LOCAL LANE_WRITES_RESULT ACCESSES_LOCAL_SLOT STORES_LOCAL_SLOT, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot; class StoreVarBinding; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
-    LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot; class LoadEnvLocal; staged Names; step Body; owned LoadLocal; traits ENV_LOCAL_LOAD ENV_LOCAL_ACCESS ROW_HANDLER OWNER_ONLY BOXED_RESULT MAY_ALLOCATE ACCESSES_LOCAL_SLOT DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot; class StoreEnvLocal; staged Names; step Body; owned StoreEnvLocal; traits ENV_LOCAL_STORE ENV_LOCAL_ACCESS LOCAL_SLOT_STORE ROW_HANDLER OWNER_ONLY MAY_ALLOCATE ACCESSES_LOCAL_SLOT STORES_LOCAL_SLOT, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot; js CapturedValue; class LoadCapture; staged Value; step Body; owned LoadCapture; traits ROW_HANDLER BOXED_RESULT INLINABLE CAPTURE_LOAD CAPTURE_ACCESS MAY_ALLOCATE READS_VARIABLE DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreCapture => Effect::WRITES_HEAP; layout CaptureDepthAndSlot; class StoreCapture; staged Value; step Body; owned StoreCapture; traits ROW_HANDLER CAPTURE_STORE CAPTURE_ACCESS MAY_ALLOCATE LOWERS_IN_LOOP, @ Register, @ fields(Register, Unused, Unused),
-    LoadName => READ_THROW; layout Scalar; meaning AtomIndex; class LoadName; staged Proved; step Body; owned LoadName; traits BOXED_RESULT UNIT_REWRITTEN NAME_LEAF NAME_OPERATION GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    LoadNameCall => READ_THROW; layout Scalar; meaning AtomIndex; class LoadNameCall; staged Proved; step Body; owned LoadNameCall; traits NAME_OPERATION CALL_LINK GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, WriteRegister, CacheSiteIndex),
-    LoadNameTypeof => Effect::READS_HEAP; layout Scalar; meaning AtomIndex; class LoadNameTypeof; staged Names; step Body; owned LoadNameTypeof; traits NAME_OPERATION GLOBAL_NAME_ACCESS NAME_LOAD BY_NAME_ACCESS DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    ResolveName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step LaneResult; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, BooleanFlag, CacheSiteIndex),
-    LoadResolvedName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, BooleanFlag),
-    DeleteName => READ_THROW; layout Scalar; meaning AtomIndex; staged Names; step Body; traits NAME_OPERATION BINDING_FORM BY_NAME_ACCESS MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex; class StoreName; staged Names; step Body; owned StoreName; traits NAME_OPERATION GLOBAL_NAME_ACCESS NAME_STORE BY_NAME_ACCESS ROW_HANDLER OWNER_ONLY MAY_ALLOCATE LANE_WRITES_RESULT, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
-    // `imm` is the declaration index of a script-top-level lexical (`global_declarations.lexical`); each
-    // falls back to the by-name operation of its atom when the binding is not yet initialized.
-    LoadGlobalLexical => READ_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits BOXED_RESULT UNIT_REWRITTEN MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, CacheSiteIndex),
-    StoreGlobalLexical => WRITE_THROW; layout Scalar; meaning GlobalLexicalIndex; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
-    StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Names; step Lane; traits NAME_OPERATION BINDING_FORM ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, BooleanFlag),
-    LoadThis => READ_THROW; layout Scalar; meaning Unused; class LoadThis; staged Value; traits UNIT_REWRITTEN THIS_LEAF ROW_HANDLER BOXED_RESULT MAY_ALLOCATE LOWERS_IN_LOOP, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadCallee => Effect::PURE; layout Scalar; meaning Unused; class LoadCallee; staged Value; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; staged Names; step Body; traits MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex; class MakeClosure; staged Literal; step Body; traits MAKES_CLOSURE ENVIRONMENT_CAPTURE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class MakeArray; staged Literal; step Body; traits ARRAY_MAKE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE ALLOCATES, @ Register, @ fields(ResultRegister, BooleanFlag, Unused),
-    MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex; class MakeConstArray; staged Literal; step Body; traits CONST_ARRAY_OBJECT2_HEAD DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, ElementCount, Unused),
-    // `a` = the position among the `b` string constants from `imm` of the first strictly equal
-    // to register `c`, or `b` when none is: a string `switch`'s case selector, which a
-    // `WasmBranchTable` follows.
-    StringCaseIndex => Effect::PURE; layout Scalar; meaning ConstantIndex; class StringCaseIndex; staged Lane; step Body; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, ElementCount, Register),
-    // `a` = the slot among the `b` dense int labels from `imm` the discriminant `c` names, when it is an
-    // integral double in the run, else `b`: an int `switch`'s jump table index.
-    IntCaseIndex => Effect::PURE; layout Scalar; meaning IntCaseMinimum; staged Generic; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, ElementCount, Register),
-    MakeLiteralTemplate => CALL_EFFECT; layout Scalar; meaning LiteralTemplateIndex; staged Literal; step Body; traits DISTANT_PRODUCER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeObject => CALL_EFFECT; layout Scalar; meaning Unused; js ObjectAllocation; class MakeObject; staged Literal; step Body; traits OBJECT_MAKE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE ALLOCATES, @ Register, @ fields(ResultRegister, Unused, Unused),
-    MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObject2; staged Literal; step Body; traits RETURNING_OBJECT FRAME_RETURNABLE CONST_ARRAY_OBJECT2_TAIL PAIR_LITERAL_MAKE ROW_HANDLER MAY_ALLOCATE ALLOCATES, @ Returnable, @ fields(ResultRegister, Register, Register),
-    MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex; class MakeObjectLiteral; staged Literal; step Body; traits RETURNING_OBJECT_LITERAL FRAME_RETURNABLE WINDOW_LITERAL_MAKE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE ALLOCATES, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex; class SuperConstArrayObject2; staged Literal; step Body; traits RETURNING_LITERAL FRAME_RETURNABLE FUSED_CONST_ARRAY_OBJECT2 ROW_HANDLER MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Unused, Unused),
-    GetIterator => READ_THROW; layout Scalar; meaning Unused; class GetIterator; staged Names; step LaneResult; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused; staged Names; step Body; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex; class CreateRegExpLiteral; staged Literal; step Body; traits DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, OptionalReadRegister, Unused),
-    IteratorClose => READ_THROW; layout Scalar; meaning Unused; class IteratorClose; staged Names; step LaneResult; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    // ArrayAccumulation past a literal's static prefix: `length` elisions, then the optional
-    // value (iterated when the flag marks a spread), appended at the array's length.
-    AppendArray => CALL_EFFECT; layout Scalar; meaning ArrayLength; class AppendArray; staged Names; step LaneResult; traits ROW_HANDLER MAY_ALLOCATE ARRAY_APPEND, @ Register, @ fields(Register, OptionalReadRegister, BooleanFlag),
-    RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused; class RequireObjectCoercible; staged Value; traits ROW_HANDLER INLINABLE PURE_SETUP LIFETIME_SAFE MAY_ALLOCATE INDEXED_RECEIVER LOWERS_IN_LOOP, @ Register, @ fields(Unused, Register, Unused),
-    RequireIteratorResult => READ_THROW; layout Scalar; meaning Unused; class RequireIteratorResult; staged Value; step Lane; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(BooleanFlag, Register, Unused),
-    // Reads the frame's `this` binding and continues or throws: a lane step in place
-    // (`lane_general_step`) where the lane runs the derived constructor's frame.
-    SuperCallCheck => READ_THROW; layout Scalar; meaning Unused; staged Names; step Lane; traits NAME_OPERATION CALL_LINK MAY_ALLOCATE BINDING_FORM SUPER_CALL_CHECK, @ Register, @ fields(Unused, Unused, Unused),
-    IteratorCleanupPush => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPush; staged Names; step Lane; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE LANE_WRITES_RESULT, @ Register, @ fields(Register, Register, Unused),
-    IteratorCleanupPop => Effect::CONTROL; layout Scalar; meaning Unused; class IteratorCleanupPop; staged Names; step Lane; traits ROW_HANDLER ROW_ONLY MAY_ALLOCATE LANE_WRITES_RESULT, @ Register, @ fields(Unused, Unused, Unused),
-    // `a` = the next key of the for-in state `b` (`Vm::for_in_next`) that is still an enumerable property; to `imm` once none is left.
-    ForInNext => CALL_EFFECT; layout Scalar; meaning JumpTarget; flow ConditionalJump; class ForInNext; staged Names; step Lane; traits LANE_LOOP_EXIT ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    // `a` = the for-in state over `b` (`Vm::for_in_start`): its key snapshot, at the first key.
-    ForInStart => CALL_EFFECT; layout Scalar; meaning Unused; class ForInStart; staged Names; step LaneResult; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    GetEnumerated => READ_THROW; layout RegisterPair; staged Names; step Lane; traits BOXED_RESULT ROW_HANDLER MAY_ALLOCATE LANE_WRITES_RESULT, @ Register, @ fields(ResultRegister, Register, Register),
-    SetFunctionName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex; class SetFunctionName; staged Names; step Lane; traits ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
-    SetFunctionNameKey => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning FunctionNamePrefix; staged Names; step Lane; traits FUNCTION_NAME_KEY_SET ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Unused),
-    InitializeTdz => Effect::PURE; layout Scalar; meaning LocalSlot; class InitializeTdz; staged Local; step Body; owned InitializeTdz; traits TDZ_INITIALIZE ROW_HANDLER CHECKED_LOCAL LANE_WRITES_RESULT ACCESSES_LOCAL_SLOT, @ Register, @ fields(Unused, Unused, Unused),
-    Await => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Await; staged Flow; traits SUSPENDS SUSPENSION_POINT MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused; class Yield; staged Flow; traits SUSPENDS SUSPENSION_POINT MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair; class YieldStar; staged Flow; traits SUSPENSION_POINT SUSPENDS MAY_ALLOCATE, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
-    GetField => READ_THROW; layout Scalar; meaning FieldLookup; js GetField; class GetField; staged Property; step Body; traits BOXED_RESULT FIELD_LEAF RETURNING_FIELD INLINABLE PURE_SETUP FRAME_RETURNABLE ROW_ONLY MAY_ALLOCATE DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
-    GetIndex => READ_THROW; layout Scalar; meaning Unused; class GetIndex; staged Element; step Body; traits BOXED_RESULT INLINABLE PURE_SETUP ELEMENT_ACCESS LIFETIME_SAFE ELEMENT_LOAD INDEXED_RECEIVER DISTANT_PRODUCER ROW_ONLY MAY_ALLOCATE LANE_WRITES_RESULT DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE READS_VALUES, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
-    ToPropertyKey => READ_THROW; layout Scalar; meaning Unused; class ToPropertyKey; staged Generic; step LaneResult; traits PROPERTY_KEY_CONVERT DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    ToNumeric => READ_THROW; layout Scalar; meaning Unused; class ToNumeric; staged Value; traits ROW_HANDLER INLINABLE PURE_SETUP LIFETIME_SAFE DISTANT_PRODUCER ROW_ONLY MAY_ALLOCATE DEFINES_LOOP_RESULT READS_VALUES, @ Register, @ fields(ResultRegister, Register, Unused),
-    CopyDataProperties => CALL_EFFECT; layout Scalar; meaning Unused; class CopyDataProperties; staged Names; step Lane; traits MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    MarkPrivateName => WRITE_THROW; layout Scalar; meaning AtomIndex; class MarkPrivateName; staged Names; step Lane; traits PRIVATE_NAME_MARK INSTANCE_ELEMENT_DEFINE MAY_ALLOCATE, @ Register, @ fields(Unused, Register, Register),
-    DefinePrivateField => WRITE_THROW; layout Scalar; meaning AtomIndex; class DefinePrivateField; staged Names; step Lane; traits PRIVATE_FIELD_DEFINE INSTANCE_ELEMENT_DEFINE MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    SetField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits INLINABLE SLOPPY_STORE OBJECT_FIELD_STORE NAMED_FIELD_WRITE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Register, CacheSiteIndex),
-    DefineComputedField => WRITE_THROW; layout Scalar; meaning Unused; staged Names; step Lane; traits COMPUTED_FIELD_DEFINE INSTANCE_ELEMENT_DEFINE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    SetThisField => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits INLINABLE THIS_FIELD_SINK SLOPPY_STORE THIS_FIELD_STORE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
-    SetIndex => WRITE_THROW; layout Scalar; meaning BooleanFlag; class SetIndex; staged Element; step Body; traits INLINABLE ELEMENT_ACCESS LIFETIME_SAFE ELEMENT_STORE INDEXED_RECEIVER ROW_ONLY MAY_ALLOCATE LOWERS_IN_LOOP READS_VALUES, @ Register, @ fields(Register, Register, Register),
-    DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex; class DefineArrayElement; staged Literal; step Lane; traits ROW_HANDLER MAY_ALLOCATE LANE_WRITES_RESULT LOWERS_IN_LOOP, @ Register, @ fields(Register, Register, Unused),
-    Binary => READ_THROW; layout Scalar; meaning BinaryOperator; js NumericBinary; class Binary; staged Generic; step Body; value Binary; traits ARITHMETIC_BINARY BINARY_RESULT LEAF_BINARY RETURNING_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE CONST_ARRAY_OBJECT2_OPERAND DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE DEFINES_LOOP_RESULT, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    IncDec => READ_THROW; layout Scalar; meaning BooleanFlag; class IncDec; staged Value; traits ROW_HANDLER LEAF_VALUE INLINABLE PURE_SETUP SCALAR_REGION LIFETIME_SAFE INCREMENT_UPDATE ROW_ONLY MAY_ALLOCATE DEFINES_LOOP_RESULT READS_VALUES, @ Register, @ fields(ResultRegister, Register, Unused),
-    Unary => READ_THROW; layout Scalar; meaning UnaryOperator; js NumericUnary; class Unary; staged Value; step Body; value Unary; traits LEAF_VALUE RETURNING_UNARY INLINABLE PURE_SETUP ACTIVATION_FREE FRAME_RETURNABLE LIFETIME_SAFE ROW_ONLY ROW_HANDLER MAY_ALLOCATE DEFINES_LOOP_RESULT READS_VALUES, @ Returnable, @ fields(ResultRegister, Register, Unused),
-    // `a` = ToString of each register of the window `b` of `c` registers, concatenated in
-    // order: a template literal's string (ECMA-262 13.15.5.1), made at once.
-    StringConcat => READ_THROW; layout Scalar; meaning Unused; js StringConcatenation; staged Literal; step Body; traits STRING_CONCAT DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    Delete => READ_THROW; layout Scalar; meaning BooleanFlag; class Delete; staged Property; step Body; traits MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex; class CheckPrivate; staged Names; step Lane; traits MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
-    PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex; class PrivateIn; staged Names; step Lane; traits DISTANT_PRODUCER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    Move => Effect::PURE; layout Scalar; meaning Unused; js Move; class Move; staged Flow; traits LEAF_VALUE INLINABLE PURE_SETUP ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE REGISTER_COPY REMOVABLE_WHEN_DEAD REGISTER_ROW DEFINES_LOOP_RESULT CARRIES_BOXED_VALUE READS_VALUES, @ Register, @ fields(ResultRegister, Register, Unused),
-    Call => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call; class Call; staged Call; traits UNIT_REWRITTEN INLINABLE FRAME_RETURNABLE CALL_LINK PLAIN_CALL CALL_INVOKE ORDINARY_CALL MAY_ALLOCATE CALLS_POSITIONAL MAKES_CALL, @ Returnable, @ fields(ResultRegister, Register, Register),
-    CallArray => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallArray; staged Names; traits CALL_LINK ORDINARY_CALL MAY_ALLOCATE MAKES_CALL, @ Returnable, @ fields(ResultRegister, Register, Register),
-    CallSpread => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallSpread; staged Names; traits CALL_LINK SPREAD_CALL MAY_ALLOCATE MAKES_CALL, @ Returnable, @ fields(ResultRegister, Register, Register),
-    CallKnown => CALL_EFFECT; layout CallWindow; flow Call; class CallKnown; staged Call; traits CALL_LINK MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, FunctionIndex, Unused),
-    CallMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call; class CallMethod; staged Call; traits CALL_LINK MAY_ALLOCATE MAKES_CALL, @ Returnable, @ fields(ResultRegister, Register, Unused),
-    CallThisMethod => CALL_EFFECT; layout Scalar; meaning MethodSiteIndex; flow Call; staged Call; traits CALL_LINK MAY_ALLOCATE, @ Returnable, @ fields(ResultRegister, Unused, Unused),
-    Construct => CALL_EFFECT; layout ConstructCountAndFlags; flow Call; class Construct; staged Call; traits UNIT_REWRITTEN FRAME_RETURNABLE CALL_LINK CONSTRUCTION MAY_ALLOCATE ALLOCATES, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
-    Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump; js Jump; class Jump; staged Flow; traits LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE UNCONDITIONAL_JUMP REGISTER_ROW LOWERS_IN_LOOP, @ Register, @ fields(Unused, Unused, Unused),
-    JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpFalse; staged Flow; traits LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE JUMPS_ON_FALSE REGISTER_ROW CONDITIONAL_JUMP, @ Register, @ fields(Register, Unused, Unused),
-    JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpBinaryFalse; staged Generic; step Body; value CompareJump; traits LEAF_BINARY INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE FUSED_BINARY_JUMP ROW_ONLY MAY_ALLOCATE CONDITIONAL_JUMP READS_VALUES, @ Register, @ fields(BinaryOperator, Operand, Operand),
-    Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; js Return; class Return; staged Flow; traits UNIT_REWRITTEN LEAF_VALUE INLINABLE ACTIVATION_FREE SCALAR_REGION RETURN_VALUE RETURN_FAMILY ROW_ONLY MAY_ALLOCATE LOWERS_IN_LOOP, @ Register, @ fields(Register, Unused, Unused),
-    Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; class Throw; staged Flow; step Body; traits UNIT_REWRITTEN RAISES ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
-    NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator; js NumericBinary; class NumericAdd; staged Generic; traits ARITHMETIC_BINARY LEAF_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE DEFINES_LOOP_RESULT, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator; js NumericBinary; class NumericMultiply; staged Generic; traits ARITHMETIC_BINARY LEAF_BINARY INLINABLE PURE_SETUP ACTIVATION_FREE LIFETIME_SAFE DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE DEFINES_LOOP_RESULT, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused; staged Names; step Body; traits BINDS_THIS NAME_OPERATION BINDING_FORM MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
-    CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex; staged Names; step Body; traits TEMPLATE_CACHE_STORE ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex; staged Names; step Body; traits TEMPLATE_CACHE_LOAD DISTANT_PRODUCER ROW_HANDLER ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldDefinition; class DefineField; staged Names; step Lane; traits FIELD_DEFINE INSTANCE_ELEMENT_DEFINE MAY_ALLOCATE, @ Register, @ fields(Register, Register, CacheSiteIndex),
-    ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused; staged Names; step Body; traits CLASS_HERITAGE_CHECK MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
-    SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; js FieldStore; staged Property; step Body; traits STRICT_STORE NAMED_FIELD_WRITE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Register, CacheSiteIndex),
-    SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex; staged Property; step Body; traits STRICT_STORE THIS_FIELD_STORE ROW_ONLY MAY_ALLOCATE, @ Register, @ fields(Register, Unused, CacheSiteIndex),
-    // The general loop's fast arms dispatch on these with the opcodes above, so they share
-    // one dense range of opcode numbers.
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalLoad; class LoadLocalPlain; staged Local; traits REGISTER_ROW ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_LOAD PLAIN_LOCAL_LOAD READS_VARIABLE ACCESSES_LOCAL_SLOT, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot; js PlainLocalStore; class StoreLocalPlain; staged Local; traits REGISTER_ROW ROW_HANDLER ACTIVATION_FREE FRAME_LOCAL_STORE PLAIN_LOCAL_STORE ACCESSES_LOCAL_SLOT STORES_LOCAL_SLOT, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class JumpTrue; staged Flow; traits REGISTER_ROW LEAF_JUMP INLINABLE ACTIVATION_FREE SCALAR_REGION FRAME_ONLY LIFETIME_SAFE JUMPS_ON_TRUE CONDITIONAL_JUMP, @ Register, @ fields(Register, Unused, Unused),
-    // `Call` whose last window argument the instruction before it loaded from the activation's
-    // `arguments` binding (`CallPlan::forwards_arguments`).
-    CallForwardingArguments => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call; class CallForwardingArguments; staged Call; traits FRAME_RETURNABLE CALL_LINK MAY_ALLOCATE CALLS_POSITIONAL MAKES_CALL, @ Returnable, @ fields(ResultRegister, Register, Register),
-    WasmI32Add => Effect::PURE; layout Scalar; meaning Unused; class WasmI32AddRegister; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Subtract => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Multiply => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32DivideSigned => Effect::THROWS; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32DivideUnsigned => Effect::THROWS; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32RemainderSigned => Effect::THROWS; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32RemainderUnsigned => Effect::THROWS; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32And => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Or => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Xor => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32ShiftLeft => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32ShiftRightSigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32ShiftRightUnsigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32RotateLeft => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32RotateRight => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Equal => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32NotEqual => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32LessSigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32LessUnsigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32GreaterSigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32GreaterUnsigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32LessEqualSigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32LessEqualUnsigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32GreaterEqualSigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32GreaterEqualUnsigned => Effect::PURE; layout Scalar; meaning Unused; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32AddImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32AddImmediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32SubtractImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32SubtractImmediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32MultiplyImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32DivideSignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32DivideUnsignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32RemainderSignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32RemainderUnsignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32AndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32OrImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32XorImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32ShiftLeftImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32ShiftRightSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32ShiftRightUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32RotateLeftImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32RotateRightImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32EqualImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32NotEqualImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32LessSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32LessUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32GreaterSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32GreaterUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32LessEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32LessEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32GreaterEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI32GreaterEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    // `(b >>> c) & imm`: a bit-field extraction fused from its two operators.
-    WasmI32ShiftRightUnsignedAndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate; class WasmI32ShiftRightUnsignedAnd; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, SignedConstant),
-    // `a = b + c`, then jump when `a` is nonzero: a counted loop's step and test.
-    WasmI32AddImmediateJumpNonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmI32AddJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(ResultRegister, Register, SignedConstant),
-    WasmInstanceBinding => Effect::READS_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmInstanceBinding; staged WasmState; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex; class WasmFillRegisters; staged WasmState; traits WASM_OPCODE ROW_HANDLER REGISTER_FILL, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
-    WasmSelect => Effect::PURE; layout RegisterPair; class WasmSelect; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER WASM_SELECT, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32Zero; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Unused, Unused),
-    WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32NonZero; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Unused, Unused),
-    WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable; class WasmBranchTable; staged WasmJump; traits ROW_ONLY WASM_OPCODE ROW_HANDLER, @ Register, @ fields(Register, Unused, Unused),
-    WasmJumpI32Equal => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32NotEqual => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32LessSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32LessUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32GreaterSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32GreaterUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32LessEqualSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32LessEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32GreaterEqualSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32GreaterEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, Register, Unused),
-    WasmJumpI32EqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32EqualImmediate; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32NotEqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; class WasmJumpI32NotEqualImmediate; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32LessSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32LessUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32GreaterSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32GreaterUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32LessEqualSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32LessEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32GreaterEqualSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmJumpI32GreaterEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump; staged WasmJump; traits WASM_OPCODE, @ Register, @ fields(Register, SignedConstant, Unused),
-    WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator; class WasmI32Unary; staged WasmInt; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64Binary; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE I64_BINARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64BinaryImmediate => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediate; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE I64_BINARY_IMMEDIATE_FAMILY, @ Register, @ fields(ResultRegister, Register, SignedConstant),
-    WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator; class WasmI64Unary; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE I64_UNARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI64BinaryRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryRaw; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE RAW_FORM I64_BINARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64BinaryImmediateRaw => Effect::THROWS; layout Scalar; meaning WasmI64BinaryOperator; class WasmI64BinaryImmediateRaw; staged WasmInt; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE RAW_FORM I64_BINARY_IMMEDIATE_FAMILY, @ Register, @ fields(ResultRegister, Register, SignedConstant),
-    WasmI64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmI64UnaryOperator; class WasmI64UnaryRaw; staged WasmInt; traits WASM_OPCODE ROW_HANDLER RAW_FORM I64_UNARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmF64BinaryRaw => Effect::PURE; layout Scalar; meaning WasmF64BinaryOperator; class WasmFloatBinary64Raw; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER RAW_FORM F64_BINARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF64UnaryRaw => Effect::PURE; layout Scalar; meaning WasmF64UnaryOperator; class WasmFloatUnary64Raw; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER RAW_FORM F64_UNARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmReturn64 => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal; class WasmReturn64; staged Flow; traits WASM_OPCODE RAW_FORM RETURN_FAMILY, @ Register, @ fields(Register, Unused, Unused),
-    WasmScalarConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmScalarConversionOperator; class WasmScalarConvert; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator; class WasmFloatBinary32; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF32Unary => Effect::PURE; layout Scalar; meaning WasmF32UnaryOperator; class WasmFloatUnary32; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmF64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64BinaryOperator; class WasmFloatBinary64; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE F64_BINARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64UnaryOperator; class WasmFloatUnary64; staged WasmFloat; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE F64_UNARY_FAMILY, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmTableInit => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; class WasmTableInit; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmIndirectTarget => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmSignatureIndex; class WasmIndirectTarget; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmGlobalGet => READ_THROW; layout Scalar; meaning Unused; class WasmGlobalGet; staged WasmState; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmGlobalSet => WRITE_THROW; layout Scalar; meaning Unused; class WasmGlobalSet; staged WasmState; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Unused),
-    WasmRefFunc => CALL_EFFECT; layout Scalar; meaning WasmFunctionIndex; class WasmRefFunc; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmRefIsNull => Effect::PURE; layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmTableSize => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; class WasmTableSize; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmTableGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; class WasmTableGet; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmTableSet => Effect::WRITES_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; class WasmTableSet; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmTableGrow => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout RegisterPair; class WasmTableGrow; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmTableFill => Effect::WRITES_HEAP.union(Effect::THROWS); layout RegisterPair; class WasmTableFill; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmTableCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; class WasmTableCopy; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryInit => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; class WasmMemoryInit; staged Names; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; class WasmMemoryCopy; staged WasmMemory; traits WASM_OPCODE WASM_MEMORY UNROLL_EXCLUDED ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; class WasmMemoryFill; staged WasmMemory; traits WASM_OPCODE WASM_MEMORY UNROLL_EXCLUDED ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmMemoryAddress => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning ConstantIndex; class WasmMemoryAddress; staged WasmMemory; traits WASM_OPCODE WASM_MEMORY ROW_HANDLER MAY_ALLOCATE WASM_MEMORY_OFFSET_CONSTANT, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmMemoryLoad => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryLoadOperator; class WasmMemoryLoad; staged WasmMemory; traits WASM_OPCODE WASM_MEMORY ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmMemoryStore => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryStoreOperator; class WasmMemoryStore; staged WasmMemory; traits WASM_OPCODE WASM_MEMORY ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmI32Load => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Load => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF32Load => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmF64Load => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load8S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load8S; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load8U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load8U; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load16S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load16S; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Load16U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; class WasmI32Load16U; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Load8S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Load8U => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Load16S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Load16U => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Load32S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI64Load32U => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmI64Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmF32Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmF64Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmI32Store8 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmI32Store16 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmI64Store8 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmI64Store16 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmI64Store32 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset; staged WasmMemory; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(Register, Register, Register),
-    WasmMemorySize => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; class WasmMemorySize; staged WasmMemory; traits WASM_OPCODE WASM_MEMORY ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmMemoryGrow => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; class WasmMemoryGrow; traits WASM_OPCODE UNROLL_EXCLUDED MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmUnreachable => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; class WasmUnreachable; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
-    WasmSimd => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmSimdOperator; class WasmSimd; staged WasmVector; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmSimdShuffle => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning ConstantIndex; class WasmSimdShuffle; staged WasmVector; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE WASM_SHUFFLE_CONSTANT, @ Register, @ fields(ResultRegister, Register, Register),
-    DefinePropertyRecord => CALL_EFFECT; layout Scalar; meaning PropertyDefinitionMode; class DefinePropertyRecord; staged Names; traits MAY_ALLOCATE PROPERTY_RECORD_DEFINE, @ Register, @ fields(Register, Register, Register),
-    WasmRefAsNonNull => Effect::THROWS; layout Scalar; meaning WasmNonNullCheck; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmI31 => Effect::THROWS; layout Scalar; meaning WasmI31Operator; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmRefTest => Effect::READS_HEAP; layout Scalar; meaning WasmReferenceTarget; class WasmRefTest; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmRefCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmRefCast; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmRefEq => Effect::PURE; layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmStructNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmStructNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    WasmStructGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, StaticOffset),
-    WasmStructGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, StaticOffset),
-    WasmStructGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, StaticOffset),
-    WasmStructSet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE STRUCT_SET_FAMILY DEFINES_NOTHING, @ Register, @ fields(Register, Register, Unused),
-    WasmStructGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE RAW_FORM STRUCT_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, StaticOffset),
-    WasmStructSetRaw => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE RAW_FORM STRUCT_SET_FAMILY DEFINES_NOTHING, @ Register, @ fields(Register, Register, Unused),
-
-    WasmArrayNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNew; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayNewDefault => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewDefault; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmArrayNewFixed => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewFixed; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmArrayLen => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-
-    WasmArrayGet => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE ARRAY_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetS => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArrayGetU => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArraySet => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE ARRAY_SET_FAMILY DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmArrayGetRaw => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE RAW_FORM ARRAY_GET_FAMILY, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmArraySetRaw => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcField; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE RAW_FORM ARRAY_SET_FAMILY DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmExternalConversion => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmExternalConversion; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmArrayFill => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmArrayCopy => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmArrayNewData => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewData; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmArrayNewElem => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmArrayNewElem; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmArrayInitData => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-    WasmArrayInitElem => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout RegisterPair; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Register, Register),
-
-    WasmExceptionNew => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE MAY_ALLOCATE WASM_EXCEPTION_WINDOW, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmExceptionMatch => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmExceptionPayload => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmExceptionFieldIndex; staged Names; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, WasmPayloadType),
-    WasmThrowRef => Effect::READS_HEAP.union(Effect::THROWS).union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal; staged Names; traits WASM_OPCODE MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Register, Unused, Unused),
-    WasmStructNewDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmStructNewDefaultDesc => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmRefGetDesc => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmGcTypeIndex; class WasmRefGetDesc; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    WasmDescriptorTest => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorTest; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmDescriptorCast => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmReferenceTarget; class WasmDescriptorCast; staged Names; traits WASM_OPCODE ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-
-    WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator; staged Names; traits WASM_OPCODE MAY_ALLOCATE WASM_ATOMIC_WINDOW, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
-    WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused; staged Names; traits WASM_OPCODE MAY_ALLOCATE DEFINES_NOTHING, @ Register, @ fields(Unused, Unused, Unused),
-    SetFunctionDebugName => Effect::WRITES_HEAP; layout Scalar; meaning AtomIndex; staged Names; step Lane; traits MAY_ALLOCATE, @ Register, @ fields(Register, Unused, Unused),
-    // `arguments.length` and `arguments[key]` of the `arguments` binding in the local slot:
-    // an unmaterialized binding answers from the values its activation kept
-    // (`Function::kept_arguments`); any other value is read as `GetField` and
-    // `GetIndex` read it.
-    ArgumentsLength => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentsLength; staged Names; traits ARGUMENTS_READ FRAME_SLOT_READ DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Unused, Unused),
-    ArgumentGet => READ_THROW; layout Scalar; meaning LocalSlot; class ArgumentGet; staged Names; traits ARGUMENTS_READ FRAME_SLOT_READ DISTANT_PRODUCER ROW_HANDLER MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Unused),
-    // `rest.length` and `rest[key]` of a rest parameter read nowhere else (`Function::rest_view`):
-    // the values its activation kept past its first `imm` parameters, with no array made.
-    // A key other than an index those values hold makes the rest array and reads it.
-    // The rest register (`b` of `RestLength`, `c` of `RestGet`) holds `undefined` where the
-    // entry kept the values, else the array an entry made, which they then read.
-    RestLength => Effect::READS_HEAP; layout Scalar; meaning ArrayLength; class RestLength; staged Names; step Lane; traits ROW_HANDLER MAY_ALLOCATE REST_LENGTH_READ, @ Register, @ fields(ResultRegister, Register, Unused),
-    RestGet => READ_THROW; layout Scalar; meaning ArrayLength; class RestGet; staged Names; step Lane; traits BOXED_RESULT ROW_HANDLER MAY_ALLOCATE REST_INDEX_READ, @ Register, @ fields(ResultRegister, Register, Register),
-    // `CallSpread` of a rest parameter `compile::rest_reads` keeps as a view: its window holds
-    // the rest register, `undefined` where the entry kept the values passed, which it spreads.
-    CallRest => CALL_EFFECT; layout SingleArgumentCallWindowWithEvalFlags; flow Call; class CallRest; staged Names; traits CALL_LINK MAY_ALLOCATE REST_SPREAD_CALL, @ Returnable, @ fields(ResultRegister, Register, Register),
-    // A first-call stub's body: calls its chunk with its arguments and `new.target` (`Vm::call_first_chunk`).
-    CallFirstChunk => CALL_EFFECT; layout Scalar; meaning Unused; staged Call; traits FIRST_CALL_CHUNK MAY_ALLOCATE, @ Register, @ fields(ResultRegister, Register, Register),
-    // `a` = whether `b`, a base class constructor's fresh receiver, already holds the run of
-    // leading constant fields (`ConstantField`) whose defines follow the `JumpTrue` of `a` that
-    // skips them: its exact shape is the one the run's first `DefineField` (cache site `c`) found
-    // already holding its name, as only a receiver made in the run's layout does
-    // (`vm::preshaped_receiver`, `Vm::constant_fields_held`). It reads one cache entry and a
-    // shape, and raises nothing; not taking the skip is always exact too, as the defines then
-    // write each value over itself (`compile::class::emit_instance_fields`).
-    ConstantFieldsHeld => Effect::READS_HEAP; layout Scalar; meaning Unused; staged Names; step LaneResult; traits ROW_HANDLER, @ Register, @ fields(ResultRegister, Register, CacheSiteIndex),
-    WasmSegmentDrop => Effect::WRITES_HEAP; layout Scalar; meaning WasmInstanceSlot; class WasmSegmentDrop; traits WASM_OPCODE MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
-    // Synthetic records only: the lane view's prologue records, which no bytecode holds. A frameless activation
-    // of a function the JavaScript tier may claim starts at `TierPrologue` (`imm` the function, `a` its parameter
-    // count); a specialized body's prologue is `BodyEntry` (`imm` the function, `b` whether it binds `this`).
-    // Their staged rows are `Operation::Prologue` and `Operation::BodyEntry` (`staged::prologue`).
-    TierPrologue => CALL_EFFECT; layout Scalar; meaning Unused; class TierPrologue; staged Lane; traits MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
-    BodyEntry => CALL_EFFECT; layout Scalar; meaning Unused; class BodyEntry; staged Lane; traits MAY_ALLOCATE, @ Register, @ fields(Unused, Unused, Unused),
-);
+quench_opcodes::with_opcode_table!(define_ops);
 
 const _: () = {
     let mut index = 0;
@@ -1319,64 +981,56 @@ const _: () = {
     }
 };
 
-/// Entries after which a function's packed code is expanded into fixed-width instructions.
-/// Decoding costs 1.5x the packed code's memory, so cold bootstrap and one-shot code keeps
-/// decoding on the fly while repeatedly entered functions skip the per-dispatch unpacking.
-/// A function with a loop is primed to expand on its first entry instead (`prime_loop`):
-/// one entry can dispatch without bound.
-const HOT_DECODE_ENTRIES: u32 = 64;
-
+/// A function's packed code expanded into fixed-width instructions, when the function runs decoded. The decision is
+/// made once, at its first interpreted entry, from the static facts the caller passes (`tier_policy::decodes_wide`);
+/// the expansion is a pure cache of the packed code and its wide table, so it is never observed.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HotDecoding {
-    entries: std::cell::Cell<u32>,
-    // A thin pointer: every `Function` pays for this field, almost all stay cold.
+    // A thin pointer: every `Function` pays for this field, almost all stay cold. `None` is the decision to run packed.
     #[allow(clippy::box_collection)]
-    code: std::cell::OnceCell<Box<Vec<WideInstruction>>>,
+    code: std::cell::OnceCell<Option<Box<Vec<WideInstruction>>>>,
 }
 
 impl HotDecoding {
-    /// Counts one entry and returns the expanded code once the function is hot.
+    /// The expanded code of a function that runs decoded, else `None`. `decodes` is asked once, at the first call.
     #[inline(always)] pub(crate) fn on_entry(
         &self,
         code: &[Instr],
         wide: &[WideInstruction],
+        decodes: impl FnOnce() -> bool,
     ) -> Option<&[WideInstruction]> {
-        if let Some(decoded) = self.code.get() {
-            return Some(decoded);
-        }
-        let entries = self.entries.get() + 1;
-        self.entries.set(entries);
-        if entries >= HOT_DECODE_ENTRIES {
-            return Some(self.expand(code, wide));
-        }
-        None
-    }
-
-    /// Makes a function whose code loops expand on its first entry. Priming at installation
-    /// leaves the entry path itself unchanged.
-    pub(crate) fn prime_loop(&self, code: &[Instr], wide: &[WideInstruction]) {
-        if self.entries.get() == 0 && back_edges_of(code.iter().map(|&packed| widen(packed, wide))).next().is_some() {
-            self.entries.set(HOT_DECODE_ENTRIES - 1);
+        match self.code.get() {
+            Some(decided) => decided.as_ref().map(|decoded| decoded.as_slice()),
+            None => self.decide(code, wide, decodes),
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
+    fn decide(
+        &self,
+        code: &[Instr],
+        wide: &[WideInstruction],
+        decodes: impl FnOnce() -> bool,
+    ) -> Option<&[WideInstruction]> {
         self.code
             .get_or_init(|| {
-                code.iter()
-                    .map(|packed| {
-                        if packed.is_wide() {
-                            wide[packed.wide_index()]
-                        } else {
-                            packed.as_wide()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .into()
+                decodes().then(|| {
+                    Box::new(
+                        code.iter()
+                            .map(|packed| {
+                                if packed.is_wide() {
+                                    wide[packed.wide_index()]
+                                } else {
+                                    packed.as_wide()
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
             })
-            .as_slice()
+            .as_ref()
+            .map(|decoded| decoded.as_slice())
     }
 }
 
@@ -1559,7 +1213,7 @@ pub struct Function {
     pub wide: Vec<WideInstruction>,
     pub registers: u16,
     pub dispatch: DispatchClass,
-    /// Fixed-width view of `code`, derived once the function proves hot.
+    /// Fixed-width view of `code`, derived at the function's first interpreted entry when it runs decoded.
     pub(crate) decoded: HotDecoding,
     /// The `plain_local_slots` words of the final code: stored by `compile::lower_settled` from its
     /// proof, else derived on the first read (`plain_local`). The binary codec writes them for a
@@ -2325,11 +1979,39 @@ impl Function {
         self.global_declarations_or_none().map_or(&[], |declarations| &declarations.immutable)
     }
 
-    /// Reusing an activation is observable while its call is protected by a handler.
-    /// A terminal return may skip its following Return instruction without being a
-    /// proper tail call: the caller must still catch the callee's abrupt completion.
-    pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
-        self.strict && !self.class_initializer && self.handler_at(pc).is_none()
+    /// Whether a call at `pc` of this function may replace this activation (`staged::effects::tail_site`'s
+    /// `caller_done`). Reusing an activation is observable while its call is protected by a handler, and
+    /// it discards what the activation still owes its caller: a generator or async body settles or suspends
+    /// its frame, a constructor's result depends on its own frame, and an `arguments` object the activation
+    /// made or may still make reads the frame's values. Those callers keep their frame.
+    pub fn permits_js_tail_call_at(&self, pc: u32) -> bool {
+        self.strict
+            && !self.class_initializer
+            && !self.is_class_constructor
+            && !self.derived_constructor
+            && !self.is_async
+            && !self.is_generator
+            && self.arguments_slot.is_none()
+            && self.handler_at(pc).is_none()
+    }
+
+    /// `permits_js_tail_call_at` for the call at `pc`, read from the bit set derived once for every PC of
+    /// the function on its first call (`FunctionCaches::tail_sites`). Every input of the rule is fixed by
+    /// the record, so the bit never changes.
+    #[inline(always)]
+    pub fn tail_site_permitted(&self, pc: u32) -> bool {
+        let bits = self.caches().tail_sites.get_or_init(|| self.derive_tail_sites());
+        bits.get(pc as usize / 64).is_some_and(|word| *word & (1u64 << (pc % 64)) != 0)
+    }
+
+    fn derive_tail_sites(&self) -> Box<[u64]> {
+        let mut bits = vec![0u64; self.code.len().div_ceil(64)].into_boxed_slice();
+        for pc in 0..self.code.len() {
+            if self.permits_js_tail_call_at(pc as u32) {
+                bits[pc / 64] |= 1u64 << (pc % 64);
+            }
+        }
+        bits
     }
 
     pub fn handler_at(&self, pc: u32) -> Option<Handler> {
@@ -2924,7 +2606,7 @@ impl Function {
             // (`Vm::lexical_activation_this`). One that reaches `super` reads a hidden name
             // (`activation_binding_reads`) or its home as a capture, as any closure reads one.
             // Ordinary but for a rest parameter, which a frameless activation gathers
-            // (`CallEntry::Gathers`) and a plain frame does not.
+            // (`CallEntry::framed(Framed::Gathers)`) and a plain frame does not.
             let ordinary_with_rest = registers_layout && !self.activation_binding_reads(tables);
             // A base class constructor laid out as an ordinary function runs frameless when
             // constructed (`script_construct_miss`); its calls, which throw, keep a frame.
@@ -2996,6 +2678,7 @@ impl Function {
                 suspended_registers,
                 suspended_environment,
                 admits_direct_eval: self.evals_in_scope() && (environment_activation || suspended_environment),
+                tail_callee: !self.is_async && !self.is_generator,
                 plain: ordinary && self.arguments_slot.is_none(),
                 in_loop,
                 settles_in_loop,
@@ -3009,7 +2692,7 @@ impl Function {
                     && self.initial_register == InitialRegister::Undefined
                     && if self.arguments_slot.is_none() {
                         // A rest body's activation keeps every value passed
-                        // (`CallEntry::Gathers`), which legacy reflection reads.
+                        // (`CallEntry::framed(Framed::Gathers)`), which legacy reflection reads.
                         !addresses_locals && (!legacy_reflection || live_parameters || self.rest)
                     } else {
                         reaches_only_forwarded_arguments
@@ -3450,15 +3133,11 @@ impl Function {
     /// runs only before any pass reads the object a materialized frame made on entry, from
     /// the same kept values (one-frame-one-call.md F6 (d)).
     fn arguments_passed_last(&self, instructions: &[WideInstruction], slot: u16, passes: &[usize]) -> bool {
-        let successors = (!self.handlers.is_empty()).then(|| Successors::of(self, instructions));
-        let successors_of = |pc: usize, work: &mut Vec<usize>| match &successors {
-            Some(successors) => work.extend(successors.at(pc).map(|(next, _)| next)),
-            None => crate::bytecode::for_each_instruction_successor(pc, instructions[pc], |next| work.push(next)),
-        };
+        let successors = Successors::of_code(self);
         let mut reached = crate::bitset::BitSet::new(instructions.len());
         let mut work = Vec::new();
         for &pass in passes {
-            successors_of(pass, &mut work);
+            work.extend(successors.at(pass).map(|(next, _)| next));
         }
         while let Some(pc) = work.pop() {
             let Some(instruction) = instructions.get(pc) else {
@@ -3470,7 +3149,7 @@ impl Function {
             if instruction.addressed_local_slots().any(|addressed| addressed == slot) {
                 return false;
             }
-            successors_of(pc, &mut work);
+            work.extend(successors.at(pc).map(|(next, _)| next));
         }
         true
     }
@@ -3737,8 +3416,8 @@ pub(crate) enum LiteralStep {
     Array(u32),
     /// An object of an object site's keys, one value each.
     Object(u32),
-    /// The value of the JSON text at this byte of the program's source: a data script's
-    /// literal (`compile::data_literal`), which the source holds in place of its tree.
+    /// The value of the JSON text in this string constant: a data script's literal
+    /// (`compile::data_literal`), whose tree the program holds as the text instead.
     Json(u32),
 }
 
@@ -4125,102 +3804,28 @@ pub struct ProgramSource {
     /// that asks for one and shared by every copy of the source, so a copy (an error's captured
     /// call sites, a first-call chunk's program) copies no index.
     pub(crate) layout: std::cell::OnceCell<std::sync::Arc<SourceLayout>>,
-    /// Complete static call-printing facts for native images. An unset cell
-    /// leaves the dynamic error-path renderer in charge; an empty table is final.
-    pub call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
 }
 
 impl ProgramSource {
-    /// Project admitted facts with a retained wrapper body, without reparsing it.
-    pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
-        self.text = text;
-        self.base = base;
-        self.layout.take();
-        if let Some(sites) = self.call_sites.take() {
-            self.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.iter().filter_map(|site| {
-                let offset = site.offset.checked_sub(base)?;
-                if offset as usize >= self.text.len() { return None; }
-                let expression = site.expression.and_then(|span| Some(SourceSpan {
-                    start: span.start.checked_sub(base)?, end: span.end.checked_sub(base)?,
-                })).filter(|span| span.end as usize <= self.text.len());
-                Some(CallSiteDescription { offset, construct: site.construct, callee: site.callee.clone(), expression })
-            }).collect::<Vec<_>>()));
-        }
-    }
-
     pub(crate) fn write_snapshot(&self, writer: &mut crate::snapshot::Writer) {
-        // `layout` is a memo of `text`, made again on the first position read. A binary without
-        // the source frontend writes the call sites its source froze, if any (`source_routes`).
-        if let Some(routes) = crate::compile::source_routes::routes() {
-            (routes.freeze_call_sites)(self);
-        }
-        let Self { text, typescript, base, line_offset, column_offset, layout: _, call_sites } = self;
+        // `layout` is a memo of `text`, made again on the first position read.
+        let Self { text, typescript, base, line_offset, column_offset, layout: _ } = self;
         text.write_snapshot(writer);
         writer.bool(*typescript);
         writer.u32(*base);
         writer.u32(*line_offset);
         writer.u32(*column_offset);
-        writer.bool(call_sites.get().is_some());
-        if let Some(sites) = call_sites.get() {
-            writer.len(sites.len());
-            for site in sites.iter() {
-                writer.u32(site.offset);
-                writer.bool(site.construct);
-                writer.str(&site.callee);
-                writer.bool(site.expression.is_some());
-                if let Some(span) = site.expression {
-                    writer.u32(span.start);
-                    writer.u32(span.end);
-                }
-            }
-        }
     }
 
     pub(crate) fn read_snapshot(reader: &mut crate::snapshot::Reader<'_>) -> crate::snapshot::SnapshotResult<Self> {
-        let mut source = Self {
+        Ok(Self {
             text: SourceText::read_snapshot(reader)?,
             typescript: reader.bool()?,
             base: reader.u32()?,
             line_offset: reader.u32()?,
             column_offset: reader.u32()?,
-            call_sites: Default::default(),
             layout: Default::default(),
-        };
-        if reader.bool()? {
-            let count = reader.len()?;
-            let mut sites = Vec::with_capacity(count);
-            for _ in 0..count {
-                sites.push(CallSiteDescription {
-                    offset: reader.u32()?, construct: reader.bool()?, callee: reader.str()?.into(),
-                    expression: if reader.bool()? {
-                        Some(SourceSpan { start: reader.u32()?, end: reader.u32()? })
-                    } else { None },
-                });
-            }
-            source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
-            source.validate_call_sites().map_err(crate::snapshot::SnapshotError)?;
-        }
-        Ok(source)
-    }
-
-    pub(crate) fn validate_call_sites(&self) -> Result<(), String> {
-        if let Some(sites) = self.call_sites.get() {
-            let mut previous = None;
-            for site in sites.iter() {
-                let key = (site.offset, site.construct);
-                if previous.is_some_and(|old| old >= key) || !self.text.is_char_boundary(site.offset as usize) || site.callee.is_empty() {
-                    return Err("invalid frozen call-site descriptions".into());
-                }
-                if let Some(span) = site.expression
-                    && (span.start > site.offset || span.end < site.offset || span.start >= span.end
-                        || !self.text.is_char_boundary(span.start as usize)
-                        || !self.text.is_char_boundary(span.end as usize)
-                        || self.text[span.start as usize..span.end as usize].contains(['\r', '\n', '\u{2028}', '\u{2029}']))
-                    { return Err("invalid frozen call-site expression".into()); }
-                previous = Some(key);
-            }
-        }
-        Ok(())
+        })
     }
 
     pub(crate) fn byte_offset(&self, position: SourcePosition) -> Option<u32> {
@@ -4341,9 +3946,61 @@ impl CacheSiteCounts {
     }
 }
 
+/// The part of a program that a native reads at run time: its atom names, its constants and the
+/// descriptions of its failed calls. A native that needs nothing else of the program takes
+/// `&ProgramRecord`; a `&ResidualProgram` passes there by deref coercion, so the program's own
+/// fields are reached as before. None of it needs the program's source text.
+#[derive(Clone, Debug, Default)]
+pub struct ProgramRecord {
+    pub atoms: AtomTable,
+    pub constants: append_vec::AppendVec<Constant>,
+    /// The callee each call names in its TypeError, frozen (`call_printer::freeze_call_sites`).
+    /// Empty for a program without source; unset until frozen.
+    pub call_sites: std::cell::OnceCell<std::sync::Arc<[CallSiteDescription]>>,
+    /// The source offset of each call instruction, by function and pc (`freeze_native_diagnostics`),
+    /// so a call's description is found without the program's position table.
+    pub(crate) call_pcs: std::cell::OnceCell<Box<[CallPc]>>,
+}
+
+/// A call instruction's source offset, sorted by function and pc (`ProgramRecord::call_pcs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CallPc {
+    pub(crate) function: u32,
+    pub(crate) pc: u32,
+    pub(crate) offset: u32,
+}
+
+/// What an image keeps of a program beyond its atoms, constants and call-site descriptions.
+/// Derived from the realm a program reaches (`ReachableRealm`), never configured.
+#[derive(Clone, Copy, Debug)]
+pub struct ImageRetention {
+    /// The source text: `Function.prototype.toString`, and the line and column a position names.
+    pub source_text: bool,
+    /// The pc-to-position table: a stack trace's entries.
+    pub stack_positions: bool,
+}
+
+impl ImageRetention {
+    /// Everything: what the compiler and the snapshot keep.
+    pub const ALL: Self = Self { source_text: true, stack_positions: true };
+}
+
+impl std::ops::Deref for ResidualProgram {
+    type Target = ProgramRecord;
+
+    fn deref(&self) -> &ProgramRecord {
+        &self.record
+    }
+}
+
+impl std::ops::DerefMut for ResidualProgram {
+    fn deref_mut(&mut self) -> &mut ProgramRecord {
+        &mut self.record
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
-    pub specialized: bool,
     pub kind: ProgramKind,
     pub(crate) module_requests: Vec<ModuleRequest>,
     pub(crate) module_imports: Vec<ModuleImportBinding>,
@@ -4352,8 +4009,8 @@ pub struct ResidualProgram {
     pub declared_types: Option<Box<DeclaredTypes>>,
     pub source_name: String,
     pub source: Option<ProgramSource>,
-    pub atoms: AtomTable,
-    pub constants: append_vec::AppendVec<Constant>,
+    /// The names and constants natives read (`ProgramRecord`), reached through `Deref`.
+    pub record: ProgramRecord,
     pub functions: append_vec::AppendVec<FunctionSlot>,
     pub(crate) cache_sites: chunk_append::SiteCount,
     pub(crate) method_sites: append_vec::AppendVec<MethodSite>,
@@ -4384,6 +4041,11 @@ pub struct ResidualProgram {
     /// The compile-cache records of the functions its load released, encoded as each was
     /// finished, until its compact encoding takes them (`binary::LoadEncoding`).
     pub(crate) load_encoding: LoadRecords,
+    /// Whether the host calls the value the program's root returns exactly once per run of the root: the CommonJS loader's
+    /// wrapper `(function (exports, require, module, __filename, __dirname) { ... })`, which it evaluates and then calls once.
+    /// The host sets it on the program it prepared, before the program runs (`Vm::evaluate_embedding_owned_script_with_origin`);
+    /// the closed world reads that body as running once, as the root does (`aot_facts::identity::once_body`).
+    pub host_calls_result_once: bool,
 }
 
 /// The encoded records of a decoded program's deferred functions (`binary::decode_program`):
@@ -4448,17 +4110,66 @@ impl ResidualProgram {
         self.source.as_ref().map(|source| source.text.as_ref())
     }
 
-    /// The source from compiled byte `start` on, where a data script's literal starts
-    /// (`LiteralStep::Json`); `None` when the program keeps no text there.
-    pub(crate) fn data_literal_text(&self, start: u32) -> Option<&str> {
-        let source = self.source.as_ref()?;
-        let text: &str = source.text.as_ref();
-        text.get(start.checked_sub(source.base)? as usize..)
-    }
-
-    /// Resolve source-derived native error descriptions before publication.
+    /// Resolves the source-derived native error descriptions before publication: their callees
+    /// (`freeze_call_sites`) and the source offset of every call (`freeze_call_pcs`).
     pub fn freeze_native_diagnostics(&self) {
         crate::vm::freeze_call_sites(self);
+        crate::vm::freeze_call_pcs(self);
+    }
+
+    /// Moves the kept text to a wrapper body at `base` of the text the program compiled from
+    /// (`ProgramSource`), and rebases the call descriptions to it, dropping those outside it.
+    pub(crate) fn retain_body(&mut self, text: SourceText, base: u32) {
+        let Some(source) = &mut self.source else { return };
+        source.text = text;
+        source.base = base;
+        source.layout.take();
+        let length = source.text.len();
+        let rebase = |offset: u32| offset.checked_sub(base).filter(|offset| (*offset as usize) < length);
+        if let Some(sites) = self.record.call_sites.take() {
+            let rebased = sites.iter().filter_map(|site| {
+                let expression = site.expression.and_then(|span| Some(SourceSpan {
+                    start: span.start.checked_sub(base)?, end: span.end.checked_sub(base)?,
+                })).filter(|span| span.end as usize <= length);
+                Some(CallSiteDescription { offset: rebase(site.offset)?, construct: site.construct, callee: site.callee.clone(), expression })
+            });
+            self.record.call_sites = std::cell::OnceCell::from(rebased.collect::<std::sync::Arc<[CallSiteDescription]>>());
+        }
+        if let Some(pcs) = self.record.call_pcs.take() {
+            let rebased = pcs.iter().filter_map(|call| Some(CallPc { offset: rebase(call.offset)?, ..*call }));
+            self.record.call_pcs = std::cell::OnceCell::from(rebased.collect::<Box<[CallPc]>>());
+        }
+    }
+
+    /// The call-site descriptions and call offsets are sorted and well formed. Their offsets
+    /// and expressions are checked against the text when the program keeps it.
+    pub(crate) fn validate_call_sites(&self) -> Result<(), String> {
+        let text = self.source.as_ref().map(|source| &*source.text);
+        let on_boundary = |offset: u32| text.is_none_or(|text| text.is_char_boundary(offset as usize));
+        if let Some(sites) = self.record.call_sites.get() {
+            let mut previous = None;
+            for site in sites.iter() {
+                let key = (site.offset, site.construct);
+                if previous.is_some_and(|old| old >= key) || !on_boundary(site.offset) || site.callee.is_empty() {
+                    return Err("invalid frozen call-site descriptions".into());
+                }
+                if let Some(span) = site.expression {
+                    let Some(text) = text else { return Err("invalid frozen call-site expression".into()) };
+                    if span.start > site.offset || span.end < site.offset || span.start >= span.end
+                        || !text.is_char_boundary(span.start as usize)
+                        || !text.is_char_boundary(span.end as usize)
+                        || text[span.start as usize..span.end as usize].contains(['\r', '\n', '\u{2028}', '\u{2029}'])
+                    { return Err("invalid frozen call-site expression".into()); }
+                }
+                previous = Some(key);
+            }
+        }
+        if let Some(pcs) = self.record.call_pcs.get()
+            && pcs.windows(2).any(|pair| (pair[0].function, pair[0].pc) >= (pair[1].function, pair[1].pc))
+        {
+            return Err("invalid frozen call offsets".into());
+        }
+        Ok(())
     }
     /// The record of function `index`, compiled again from source on its first read when
     /// the program released it.
@@ -4519,17 +4230,13 @@ impl ResidualProgram {
                 panic!("native function {index} of {} was not lowered before linking", self.source_name);
             }
             let rewrites_pending = self.rewrite_ranges.defers(index);
-            let function = self.lower_unlowered(index, unlowered, rewrites_pending);
-            function.decoded.prime_loop(&function.code, &function.wide);
-            return function;
+            return self.lower_unlowered(index, unlowered, rewrites_pending);
         }
         // A Wasm module's function lowers from its bytes through the frontend, which a build
         // without `jit` does not carry: its images archive every record.
         #[cfg(feature = "jit")]
         if let Some(lazy) = &self.wasm_lazy {
-            let function = lazy.lower(index, &self.constants);
-            function.decoded.prime_loop(&function.code, &function.wide);
-            return function;
+            return lazy.lower(index, &self.constants);
         }
         #[cfg(not(feature = "jit"))]
         if self.wasm_lazy.is_some() {
@@ -4570,8 +4277,6 @@ impl ResidualProgram {
                 }
             },
         };
-        // As `ResidualProgram::prime_loop_decoding` primes an installed program's records.
-        function.decoded.prime_loop(&function.code, &function.wide);
         function
     }
 
@@ -4596,7 +4301,6 @@ impl ResidualProgram {
                 methods: self,
                 field_sites: &self.field_sites,
                 superinstructions: &self.superinstructions,
-                specialized: self.specialized,
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),
@@ -4739,7 +4443,12 @@ impl ResidualProgram {
             .sum()
     }
     pub fn write_binary(&self, path: &std::path::Path) -> Result<(), String> {
-        binary::write_program(self, path)
+        self.write_binary_retaining(path, ImageRetention::ALL)
+    }
+
+    /// `write_binary`, keeping of the program only what `retention` names.
+    pub fn write_binary_retaining(&self, path: &std::path::Path, retention: ImageRetention) -> Result<(), String> {
+        binary::write_program(self, path, retention)
     }
 
     pub fn read_binary(path: &std::path::Path) -> Result<Self, String> {
@@ -4779,7 +4488,7 @@ impl ResidualProgram {
     /// This program as a snapshot keeps it (`crate::snapshot`): its own atom ids, which the
     /// snapshot's atom table keeps, and its source written apart (`SourceText`).
     pub(crate) fn encode_snapshot(&self) -> Vec<u8> {
-        binary::encode_snapshot_program(self)
+        binary::encode_snapshot_program(self, ImageRetention::ALL)
     }
 
     /// `encode_snapshot`'s bytes, sharing `atoms` (the restored VM's) and with `text` as the
@@ -4791,14 +4500,6 @@ impl ResidualProgram {
             fields: self.cache_sites.capacity(),
             methods: self.method_sites.capacity(),
             objects: self.object_sites.capacity(),
-        }
-    }
-
-    /// Primes the loop decoding of every function record the program holds; a released
-    /// record primes as it compiles again (`ResidualProgram::function`).
-    pub(crate) fn prime_loop_decoding(&self) {
-        for function in self.functions.iter().filter_map(FunctionSlot::record) {
-            function.decoded.prime_loop(&function.code, &function.wide);
         }
     }
 

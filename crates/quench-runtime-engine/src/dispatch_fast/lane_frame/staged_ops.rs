@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 /// `LoadCapture` of the capture at `depth` and `slot` into `destination` (of the root's projected
@@ -31,7 +32,7 @@ fn staged_load_capture_walked(cx: *mut LaneContext, r: Registers, view: Carried,
 #[inline(always)]
 fn load_capture_with(cx: *mut LaneContext, r: Registers, view: Carried,
     (destination, (depth, slot), root): (u16, (u16, u16), bool), reads: Reads) -> bool {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut frame = LaneFrame::<ACC_NONE>::new(r, view);
     frame.capture_slots = Some(capture_reads(unsafe { (*cx).registers }.capture()));
     frame.reads = reads;
@@ -99,13 +100,13 @@ impl<const ACC: u8> quench_runtime::staged::PrologueFrame<Concrete> for LaneFram
 /// (and plain) as the bound `this`, sloppy through `bind_this` with the global object, else as it is.
 #[inline(always)]
 fn direct_plan(call: &LaneCall, target: &ScriptCallTarget, identity: quench_runtime::staged::Identity) -> quench_runtime::staged::CallEntry {
-    let lexical = || Some(quench_runtime::staged::plan::Bound { this: target.lexical_this.to_bits(),
+    let lexical = || Some(quench_runtime::staged::plan::Bound { this: target.closure.lexical_this.to_bits(),
         arguments: quench_runtime::staged::plan::WordList { start: 0, count: 0 } });
     let (sloppy, bound) = if call.form.plain {
         // A plain call's receiver is `undefined` by its record, whose `this` is its target's.
         (None, lexical())
     } else {
-        match target.this_binding {
+        match target.body.this_binding {
             ThisBinding::Lexical => (None, lexical()),
             // SAFETY: the realm's global object, read only for a sloppy callee.
             ThisBinding::Sloppy => (Some(unsafe { *call.globals }.to_bits()), None),
@@ -116,7 +117,7 @@ fn direct_plan(call: &LaneCall, target: &ScriptCallTarget, identity: quench_runt
         kind: quench_runtime::staged::CalleeKind::Script,
         identity,
         sloppy,
-        registers: target.registers,
+        registers: target.body.registers,
         returned: 0,
         bound,
     })
@@ -130,11 +131,11 @@ fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> q
     // SAFETY: the running lane's context; `target` is the entry the read resolved, which outlives the call.
     let (vm, target) = unsafe { (vm(cx), &*call.target.get()) };
     let returns = unsafe { (*call.record).a } & quench_runtime::bytecode::RETURN_REGISTER != 0;
-    if site.returns || returns || vm.with_scope_entered || !target.entry.activates() || target.forwards() || target.settles()
-        || target.program() != unsafe { (*cx).program } {
+    if site.returns || returns || vm.with_scope_entered || !target.body.entry.activates() || target.body.forwards() || target.body.settles()
+        || target.body.program() != unsafe { (*cx).program } {
         return quench_runtime::staged::CallEntry::Helper;
     }
-    direct_plan(call, target, quench_runtime::staged::Identity::Guarded(target.callee.to_bits()))
+    direct_plan(call, target, quench_runtime::staged::Identity::Guarded(target.closure.callee.to_bits()))
 }
 
 /// The call hooks of a call row's frame (`protocol_row`, `LaneCall`): the proved plain call
@@ -142,7 +143,7 @@ fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> q
 /// (`script_call_leaf_prove_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
 ///
 /// - `call_entry`: the site's entry, the link masked to the cache (no bounds test), tested whole by
-///   one admission compare (link-proofs.md: generation, program, the run's conditions, `DIAGNOSED`,
+///   one admission compare (link-proofs.md: generation, program, the run's conditions,
 ///   `UNPROVEN`), the argument count against its parameters, and a leaf row's form; the callee's
 ///   identity is the plan's guard (`Identity::Guarded`), the one compare `invoke` makes of it;
 /// - `this`: the plan binds as `direct_call_this_in_lane` does: an arrow's lexical `this` (and a plain
@@ -204,7 +205,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
             return getter_entry(call, site);
         }
         // The form the proved calls make: a callee and a receiver register and a window. A returning
-        // call is admitted by its form alone (`CallForm::returns`, which `specialize_script_calls` sets
+        // call is admitted by its form alone (`CallRow::returns`, which `specialize_script_calls` sets
         // where `returning_call_admitted` holds for the function); a forwarding call is never.
         let (Callee::Register(callee_register), Receiver::Register(_), Arguments::Window { count, .. }) = (site.callee, site.receiver, site.arguments) else {
             return quench_runtime::staged::CallEntry::Helper;
@@ -224,10 +225,10 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // callee's own entry in its set's two ways (`Vm::script_call_index`), which the link names from then
         // on: the row admits it as it would the linked one, and only a callee no set holds declines.
         let callee = self.registers.get(callee_register);
-        let target = if linked.callee == callee { linked } else {
+        let target = if linked.closure.callee == callee { linked } else {
             let Some(set) = stack.script_targets.set(callee) else { return quench_runtime::staged::CallEntry::Helper };
             let Some((way, entry)) = [set, set | 1].into_iter()
-                .find_map(|way| entries.get(way).filter(|entry| entry.callee == callee).map(|entry| (way, entry))) else {
+                .find_map(|way| entries.get(way).filter(|entry| entry.closure.callee == callee).map(|entry| (way, entry))) else {
                 return quench_runtime::staged::CallEntry::Helper;
             };
             // SAFETY: the call record the row runs; the entry count stays below `PLAIN_LINK` (`SCRIPT_CALL_TARGETS`).
@@ -236,18 +237,18 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         };
         // The callee and the entry's admission are checked here, once, at run time: the plan names the
         // callee folded (`Identity::Folded`), so the staged call reads and compares neither again.
-        if target.admission != stack.admission { return quench_runtime::staged::CallEntry::Helper; }
-        // A static count is the row's (`call_form`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
+        if target.body.admission != stack.admission { return quench_runtime::staged::CallEntry::Helper; }
+        // A static count is the row's (`call_row`), so its tests fold as `script_call_prove_miss`'s `ARGC`.
         let argc = if call.form.argc == ANY_ARGC { count } else { call.form.argc };
         let leaf = call.form.leaf;
         // The target's admission is checked with its callee in the row's one guard (`call_admission`).
         if (leaf == NOT_LEAF && argc > FIXED_ARGUMENT_COPIES)
-            || (leaf != NOT_LEAF && target.entry != CallEntry::leaf(leaf))
-            || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc))
+            || (leaf != NOT_LEAF && target.body.entry.leaf_form() != leaf)
+            || !quench_runtime::staged::call::concrete_fits(u64::from(target.body.params), u64::from(argc))
         {
             return quench_runtime::staged::CallEntry::Helper;
         }
-        debug_assert!(leaf != NOT_LEAF || target.entry.activates(), "a proved plain call's entry activates");
+        debug_assert!(leaf != NOT_LEAF || target.body.entry.activates(), "a proved plain call's entry activates");
         call.target.set(std::ptr::from_ref(target));
         direct_plan(call, target, quench_runtime::staged::Identity::Folded(callee.to_bits()))
     }
@@ -260,7 +261,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         let target = call.target.get();
         if target.is_null() || call.base != Value::UNDEFINED { return None; }
         // SAFETY: `call_entry` admitted the entry of the running lane's cache, which nothing before the hand-off changes.
-        Some(unsafe { ((*target).admission.0, (*call.stack).admission.0) })
+        Some(unsafe { ((*target).body.admission.0, (*call.stack).admission.0) })
     }
 
     /// A getter's base (`Receiver::Base`).
@@ -312,7 +313,7 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
         // The activation count and the values' room in one compare, the depth loaded once for the
         // push past it (`LaneStack::plain_room`); a leaf pushes none, so the bound stands for it too.
         let depth = stack.plain.depth.get();
-        if !stack.plain_room(depth, target.room) {
+        if !stack.plain_room(depth, target.body.room) {
             return None;
         }
         call.depth = depth;
@@ -323,10 +324,6 @@ impl<const ACC: u8> quench_runtime::staged::CallFrame<Concrete> for LaneFrame<AC
     #[inline(always)]
     fn call_hand_over(&mut self, _stage: &mut Concrete, this: u64, _room: quench_runtime::staged::Room<u64>) -> Option<LaneControl> {
         let call = self.call.as_ref()?;
-        // The activation's `this`, checked once where the call bound it: a bound direct object folds
-        // with the binding's own test (`bind_this_with`), so only a strict callee's receiver tests here.
-        // SAFETY: the running lane's context; the entry `call_entry` admitted.
-        unsafe { note_lane_this(vm(call.context.cast()), Value::from_bits(this), || (*(*call.target.get()).view).this_rows) };
         // SAFETY: the hand-off's contract (`CallActivation`): the context, record and registers are
         // the running call's, and the entry, its room at `depth` and `this` what the hooks before
         // admitted and bound.

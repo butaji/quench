@@ -163,7 +163,8 @@ fn release_read_only_pages_weighed(weighed: bool) {
     if weighed && !file_pages_weigh() {
         return;
     }
-    let segments = loaded_segments(ReleasedSegment::Clean);
+    // A native image's lane text was written in place at its init edge (`placed_text`): those pages are not the file's.
+    let segments: Vec<(usize, usize)> = loaded_segments(ReleasedSegment::Clean).into_iter().flat_map(quench_runtime::placed_text::clean_pieces).collect();
     for &(start, end) in segments.iter().chain(unwritten_relro_pages()) {
         // SAFETY: each range is a private file mapping that is never written, so discarding
         // its pages loses nothing.

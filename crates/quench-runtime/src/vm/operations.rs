@@ -1,6 +1,9 @@
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::*;
+use super::array_modern::ArrayFromTarget;
 use crate::value::NumericPair;
-use oxc_ast::ast::{BinaryOperator, UnaryOperator};
+use crate::operator::{BinaryOperator, UnaryOperator};
 
 mod number_operators;
 mod primitive_comparison;
@@ -10,6 +13,7 @@ pub(super) use number_operators::immediate_number_pair;
 use number_operators::*;
 mod number_rows;
 pub use number_rows::*;
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 // The operator codes the shared rows name (`number_rows::binary_operator`, `unary_operator`) are the parser's.
 const _: () = assert!(binary_operator::Equality == BinaryOperator::Equality as u32
@@ -255,7 +259,7 @@ pub fn number_relation(
 #[cfg(test)]
 mod numeric_instruction_tests {
     use super::{NumberArithmetic, NumberBitwise, NumberF64Stage, NumberUnary, Op, number_truthiness};
-    use oxc_ast::ast::{BinaryOperator, UnaryOperator};
+    use crate::operator::{BinaryOperator, UnaryOperator};
 
     #[test]
     fn arithmetic_bytecode_denotations_come_from_the_operation_table() {
@@ -687,98 +691,40 @@ impl Vm {
         result
     }
 
-    /// The family whose entry runs `native` (`NativeFamily`): the native alone decides it, so
-    /// each native's is derived once, on its first call, and read after.
-    #[inline(always)]
-    fn native_family_of(&mut self, native: Native) -> NativeFamily {
-        let index = native as usize;
-        if let Some(&family) = self.native_families.get(index)
-            && family != NativeFamily::Unresolved
-        {
-            return family;
-        }
-        self.resolve_native_family(native)
+    /// The input edge's capture (C5 D1c): the caller chain of the input native's call, with the
+    /// native's call parked on the chain's top record, kept for the build. The native does not run;
+    /// the run returns the chain as its outcome (`JsError::captured`, read as the run's `Captured` exit by `exit::Exit::of`). Only the input natives' own entries
+    /// reach it (Date call and construct, Date.now, Math.random), so no other call pays for the edge.
+    pub(super) fn capture_input_native(&mut self, native: Native, this: Value, args: &[Value], new_target: Option<Value>) -> JsError {
+        let callee = self.native_value(native);
+        JsError::captured(self.capture_chain_parked(0, callee, this, args.into(), new_target))
     }
 
-    #[cold]
-    #[inline(never)]
-    fn resolve_native_family(&mut self, native: Native) -> NativeFamily {
-        let family = Self::native_family(native);
-        let index = native as usize;
-        if self.native_families.len() <= index {
-            self.native_families.resize(index + 1, NativeFamily::Unresolved);
-        }
-        self.native_families[index] = family;
-        family
-    }
-
+    /// Runs `native` through its entry in the function table (`native_table::NativeTable`).
     #[inline(always)]
-    fn call_native_dispatch(
+    pub(super) fn call_native_dispatch(
         &mut self,
         p: &ResidualProgram,
         native: Native,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        match self.native_family_of(native) {
-            NativeFamily::WasmExport => self.call_wasm_exported_function(p, args),
-            NativeFamily::Generator => self.generator_prototype_method(p, native, this, args),
-            NativeFamily::ArrayCallback => self.array_callback_native(p, native, this, args),
-            NativeFamily::StringHtml => self
-                .string_html_method(p, native, this, args)
-                .expect("an HTML method's family is its own"),
-            NativeFamily::Finalization => self.call_finalization_registry_native(p, native, this, args),
-            NativeFamily::Disposal => self.call_disposal_native(p, native, this, args),
-            NativeFamily::Collection => self.call_collection_native(p, native, this, args),
-            #[cfg(feature = "wasm")]
-            NativeFamily::WasmJs => self.call_wasm_js_routed(p, native, this, args),
-            #[cfg(not(feature = "wasm"))]
-            NativeFamily::WasmJs => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
-            NativeFamily::ShadowRealm => self.shadow_realm_native(p, native, this, args),
-            NativeFamily::ShadowRealmCalled => {
-                Err(self.type_error(p, "ShadowRealm constructor requires 'new'".into()))
-            }
-            NativeFamily::WeakCalled => {
-                let constructor = match native {
-                    Native::WeakMap => "WeakMap",
-                    Native::WeakSet => "WeakSet",
-                    _ => "WeakRef",
-                };
-                Err(self.type_error(p, format!("Constructor {constructor} requires 'new'")))
-            }
-            NativeFamily::TypedArray => self
-                .maybe_call_typed_array_native(p, native, this, args)
-                .expect("a typed array method's family is its own"),
-            NativeFamily::TypedArrayCalled => {
-                Err(self.type_error(p, "typed array constructor requires new".into()))
-            }
-            NativeFamily::Atomics => self.atomics_native(p, native, args),
-            NativeFamily::Test262Agent => self.call_test262_agent(p, args),
-            NativeFamily::BigInt => self.bigint_native(p, native, this, args),
-            NativeFamily::Promise => self.call_promise_native(p, native, this, args),
-            NativeFamily::AsyncReaction => self.call_async_reaction_native(p, native, args),
-            NativeFamily::ObjectStatic => self.call_object_native(p, native, args),
-            NativeFamily::LazyDataProperty => self.lazy_data_property_access(p, this, args),
-            NativeFamily::ProxyRevoke => {
-                let callee = self
-                    .active_native_callable()
-                    .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
-                self.proxy_revoke(callee)
-            }
-            NativeFamily::DataView => self.data_view_native(p, native, this, args),
-            NativeFamily::Table | NativeFamily::Unresolved => self.call_native_table(p, native, this, args),
+        match self.native_table.entry(native) {
+            Some(entry) => entry(self, p, native, this, args),
+            None => Err(JsError(format!("native {native:?} has no entry in this runtime's table").into())),
         }
     }
 
-    /// The reaction natives of async iteration (`NativeFamily::AsyncReaction`), by kind.
-    fn call_async_reaction_native(&mut self, p: &ResidualProgram, native: Native, args: &[Value]) -> Result<Value, JsError> {
-        match native {
-            Native::AsyncFromSyncValue => self.async_from_sync_value(args),
-            Native::AsyncFromSyncValueRejected => self.async_from_sync_value_rejected(p, args),
-            Native::AsyncGeneratorReturnFulfilled => self.async_generator_return_fulfilled(p, args),
-            Native::AsyncGeneratorReturnRejected => self.async_generator_return_rejected(p, args),
-            _ => self.async_generator_delegate_return_start(p, args),
-        }
+    /// Runs `native` through its table entry, for a caller that holds no native activation (a
+    /// pure String method's in-place fallback, the engine's primitive leaves).
+    pub fn call_native_entry(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_native_dispatch(p, native, this, args)
     }
 
     /// The natives no family above claims, by kind.
@@ -790,326 +736,9 @@ impl Vm {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::MathInitialize => self.install_math(p).map(|()| Value::UNDEFINED),
-            Native::AtomicsInitialize => self.install_atomics(p).map(|()| Value::UNDEFINED),
-            #[cfg(feature = "wasm")]
-            Native::WebAssemblyInitialize => self.install_webassembly_routed(p).map(|()| Value::UNDEFINED),
-            #[cfg(not(feature = "wasm"))]
-            Native::WebAssemblyInitialize => Err(self.type_error(p, "WebAssembly is unavailable in this build".into())),
-            Native::IntlInitialize => {
-                let (global, object_prototype) = (self.realm.globals, self.object_proto);
-                layer_hooks::install_intl_for_realm(self, p, global, object_prototype).map(|()| Value::UNDEFINED)
-            }
             Native::ReflectInitialize => self.install_reflect(p).map(|()| Value::UNDEFINED),
             Native::ProxyInitialize => self.install_proxy(p).map(|()| Value::UNDEFINED),
-            Native::WeakRefInitialize => self.install_weak_ref(p).map(|()| Value::UNDEFINED),
-            Native::FinalizationRegistryInitialize => {
-                self.install_finalization_registry(p).map(|()| Value::UNDEFINED)
-            }
-            Native::DataViewInitialize => self.install_data_view(p).map(|()| Value::UNDEFINED),
-            Native::TemporalInitialize
-            | Native::IntlNumberFormat
-            | Native::IntlNumberFormatSupportedLocalesOf
-            | Native::IntlDisplayNamesSupportedLocalesOf
-            | Native::IntlNumberFormatFormatGetter
-            | Native::IntlNumberFormatFormat
-            | Native::IntlNumberFormatFormatToParts
-            | Native::IntlNumberFormatFormatRange
-            | Native::IntlNumberFormatFormatRangeToParts
-            | Native::IntlNumberFormatResolvedOptions
-            | Native::IntlPluralRulesSupportedLocalesOf
-            | Native::IntlPluralRulesSelect
-            | Native::IntlPluralRulesSelectRange
-            | Native::IntlPluralRulesResolvedOptions
-            | Native::IntlGetCanonicalLocales
-            | Native::IntlSupportedValuesOf
-            | Native::IntlLocale
-            | Native::IntlLocaleToString
-            | Native::IntlLocaleMaximize
-            | Native::IntlLocaleMinimize
-            | Native::IntlLocaleGetCalendars
-            | Native::IntlLocaleGetCollations
-            | Native::IntlLocaleGetHourCycles
-            | Native::IntlLocaleGetNumberingSystems
-            | Native::IntlLocaleGetTimeZones
-            | Native::IntlLocaleGetTextInfo
-            | Native::IntlLocaleGetWeekInfo
-            | Native::IntlLocaleBaseNameGetter
-            | Native::IntlLocaleLanguageGetter
-            | Native::IntlLocaleScriptGetter
-            | Native::IntlLocaleRegionGetter
-            | Native::IntlLocaleVariantsGetter
-            | Native::IntlLocaleCalendarGetter
-            | Native::IntlLocaleCollationGetter
-            | Native::IntlLocaleHourCycleGetter
-            | Native::IntlLocaleCaseFirstGetter
-            | Native::IntlLocaleFirstDayOfWeekGetter
-            | Native::IntlLocaleNumberingSystemGetter
-            | Native::IntlLocaleNumericGetter
-            | Native::IntlRelativeTimeFormat
-            | Native::IntlRelativeTimeFormatResolvedOptions
-            | Native::IntlRelativeTimeFormatSupportedLocalesOf
-            | Native::IntlRelativeTimeFormatFormat
-            | Native::IntlRelativeTimeFormatFormatToParts
-            | Native::IntlSegmenterSupportedLocalesOf
-            | Native::IntlSegmenterSegment
-            | Native::IntlSegmenterResolvedOptions
-            | Native::IntlSegmenterSegmentsIterator
-            | Native::IntlSegmenterSegmentsContaining
-            | Native::IntlSegmenterIteratorNext
-            | Native::IntlCollator
-            | Native::IntlCollatorSupportedLocalesOf
-            | Native::IntlCollatorCompareGetter
-            | Native::IntlCollatorCompare
-            | Native::IntlCollatorResolvedOptions
-            | Native::IntlDateTimeFormat
-            | Native::IntlDisplayNamesOf
-            | Native::IntlDisplayNamesResolvedOptions
-            | Native::IntlDurationFormatSupportedLocalesOf
-            | Native::IntlDurationFormatFormatGetter
-            | Native::IntlDurationFormatFormat
-            | Native::IntlDurationFormatFormatToParts
-            | Native::IntlDurationFormatResolvedOptions
-            | Native::IntlListFormatFormatGetter
-            | Native::IntlListFormatFormat
-            | Native::IntlListFormatFormatToParts
-            | Native::IntlListFormatResolvedOptions
-            | Native::IntlListFormatSupportedLocalesOf
-            | Native::IntlDateTimeFormatFormatGetter
-            | Native::IntlDateTimeFormatFormat
-            | Native::IntlDateTimeFormatFormatToParts
-            | Native::IntlDateTimeFormatFormatRange
-            | Native::IntlDateTimeFormatFormatRangeToParts
-            | Native::IntlDateTimeFormatSupportedLocalesOf
-            | Native::IntlDateTimeFormatResolvedOptions
-            | Native::TemporalToLocaleString
-            | Native::TemporalDuration
-            | Native::TemporalDurationFrom
-            | Native::TemporalDurationCompare
-            | Native::TemporalDurationAdd
-            | Native::TemporalDurationSubtract
-            | Native::TemporalDurationWith
-            | Native::TemporalDurationAbs
-            | Native::TemporalDurationNegated
-            | Native::TemporalDurationTotal
-            | Native::TemporalDurationRound
-            | Native::TemporalDurationToString
-            | Native::TemporalDurationToJSON
-            | Native::TemporalDurationValueOf
-            | Native::TemporalDurationYearsGetter
-            | Native::TemporalDurationMonthsGetter
-            | Native::TemporalDurationWeeksGetter
-            | Native::TemporalDurationDaysGetter
-            | Native::TemporalDurationHoursGetter
-            | Native::TemporalDurationMinutesGetter
-            | Native::TemporalDurationSecondsGetter
-            | Native::TemporalDurationMillisecondsGetter
-            | Native::TemporalDurationMicrosecondsGetter
-            | Native::TemporalDurationNanosecondsGetter
-            | Native::TemporalDurationSignGetter
-            | Native::TemporalDurationBlankGetter
-            | Native::TemporalPlainDate
-            | Native::TemporalPlainDateFrom
-            | Native::TemporalPlainDateCompare
-            | Native::TemporalPlainDateCalendarIdGetter
-            | Native::TemporalPlainDateYearGetter
-            | Native::TemporalPlainDateMonthGetter
-            | Native::TemporalPlainDateMonthCodeGetter
-            | Native::TemporalPlainDateDayGetter
-            | Native::TemporalPlainDateEraGetter
-            | Native::TemporalPlainDateEraYearGetter
-            | Native::TemporalPlainDateDayOfWeekGetter
-            | Native::TemporalPlainDateDayOfYearGetter
-            | Native::TemporalPlainDateWeekOfYearGetter
-            | Native::TemporalPlainDateYearOfWeekGetter
-            | Native::TemporalPlainDateDaysInWeekGetter
-            | Native::TemporalPlainDateDaysInMonthGetter
-            | Native::TemporalPlainDateDaysInYearGetter
-            | Native::TemporalPlainDateMonthsInYearGetter
-            | Native::TemporalPlainDateInLeapYearGetter
-            | Native::TemporalPlainDateToString
-            | Native::TemporalPlainDateToJSON
-            | Native::TemporalPlainDateToLocaleString
-            | Native::TemporalPlainDateToPlainDateTime
-            | Native::TemporalPlainDateToPlainMonthDay
-            | Native::TemporalPlainDateToPlainYearMonth
-            | Native::TemporalPlainDateToZonedDateTime
-            | Native::TemporalPlainDateEquals
-            | Native::TemporalPlainDateWith
-            | Native::TemporalPlainDateWithCalendar
-            | Native::TemporalPlainDateValueOf
-            | Native::TemporalPlainDateAdd
-            | Native::TemporalPlainDateSubtract
-            | Native::TemporalPlainDateUntil
-            | Native::TemporalPlainDateSince
-            | Native::TemporalPlainDateTime
-            | Native::TemporalPlainDateTimeFrom
-            | Native::TemporalPlainDateTimeCompare
-            | Native::TemporalPlainDateTimeAdd
-            | Native::TemporalPlainDateTimeSubtract
-            | Native::TemporalPlainDateTimeRound
-            | Native::TemporalPlainDateTimeUntil
-            | Native::TemporalPlainDateTimeSince
-            | Native::TemporalPlainDateTimeToString
-            | Native::TemporalPlainDateTimeToJSON
-            | Native::TemporalPlainDateTimeToPlainDate
-            | Native::TemporalPlainDateTimeToPlainTime
-            | Native::TemporalPlainDateTimeValueOf
-            | Native::TemporalPlainDateTimeToZonedDateTime
-            | Native::TemporalPlainDateTimeWith
-            | Native::TemporalPlainDateTimeWithCalendar
-            | Native::TemporalPlainDateTimeWithPlainTime
-            | Native::TemporalPlainDateTimeCalendarIdGetter
-            | Native::TemporalPlainDateTimeYearGetter
-            | Native::TemporalPlainDateTimeMonthGetter
-            | Native::TemporalPlainDateTimeMonthCodeGetter
-            | Native::TemporalPlainDateTimeDayGetter
-            | Native::TemporalPlainDateTimeEraGetter
-            | Native::TemporalPlainDateTimeEraYearGetter
-            | Native::TemporalPlainDateTimeDayOfWeekGetter
-            | Native::TemporalPlainDateTimeDayOfYearGetter
-            | Native::TemporalPlainDateTimeWeekOfYearGetter
-            | Native::TemporalPlainDateTimeYearOfWeekGetter
-            | Native::TemporalPlainDateTimeDaysInWeekGetter
-            | Native::TemporalPlainDateTimeDaysInMonthGetter
-            | Native::TemporalPlainDateTimeDaysInYearGetter
-            | Native::TemporalPlainDateTimeMonthsInYearGetter
-            | Native::TemporalPlainDateTimeInLeapYearGetter
-            | Native::TemporalPlainDateTimeHourGetter
-            | Native::TemporalPlainDateTimeMinuteGetter
-            | Native::TemporalPlainDateTimeSecondGetter
-            | Native::TemporalPlainDateTimeMillisecondGetter
-            | Native::TemporalPlainDateTimeMicrosecondGetter
-            | Native::TemporalPlainDateTimeNanosecondGetter
-            | Native::TemporalPlainDateTimeEquals
-            | Native::TemporalPlainTime
-            | Native::TemporalPlainTimeFrom
-            | Native::TemporalPlainTimeCompare
-            | Native::TemporalPlainTimeAdd
-            | Native::TemporalPlainTimeSubtract
-            | Native::TemporalPlainTimeEquals
-            | Native::TemporalPlainTimeHourGetter
-            | Native::TemporalPlainTimeMinuteGetter
-            | Native::TemporalPlainTimeSecondGetter
-            | Native::TemporalPlainTimeMillisecondGetter
-            | Native::TemporalPlainTimeMicrosecondGetter
-            | Native::TemporalPlainTimeNanosecondGetter
-            | Native::TemporalPlainTimeValueOf
-            | Native::TemporalPlainTimeRound
-            | Native::TemporalPlainTimeUntil
-            | Native::TemporalPlainTimeSince
-            | Native::TemporalPlainTimeToString
-            | Native::TemporalPlainTimeToJSON
-            | Native::TemporalPlainTimeWith
-            | Native::TemporalPlainMonthDay
-            | Native::TemporalPlainMonthDayFrom
-            | Native::TemporalPlainMonthDayCompare
-            | Native::TemporalPlainMonthDayCalendarIdGetter
-            | Native::TemporalPlainMonthDayDayGetter
-            | Native::TemporalPlainMonthDayMonthCodeGetter
-            | Native::TemporalPlainMonthDayEquals
-            | Native::TemporalPlainMonthDayToPlainDate
-            | Native::TemporalPlainMonthDayWith
-            | Native::TemporalPlainMonthDayValueOf
-            | Native::TemporalPlainYearMonth
-            | Native::TemporalPlainYearMonthFrom
-            | Native::TemporalPlainYearMonthCompare
-            | Native::TemporalPlainYearMonthCalendarIdGetter
-            | Native::TemporalPlainYearMonthYearGetter
-            | Native::TemporalPlainYearMonthMonthGetter
-            | Native::TemporalPlainYearMonthMonthCodeGetter
-            | Native::TemporalPlainYearMonthEraGetter
-            | Native::TemporalPlainYearMonthEraYearGetter
-            | Native::TemporalPlainYearMonthReferenceISODayGetter
-            | Native::TemporalPlainYearMonthDaysInMonthGetter
-            | Native::TemporalPlainYearMonthDaysInYearGetter
-            | Native::TemporalPlainYearMonthMonthsInYearGetter
-            | Native::TemporalPlainYearMonthInLeapYearGetter
-            | Native::TemporalPlainYearMonthEquals
-            | Native::TemporalPlainYearMonthAdd
-            | Native::TemporalPlainYearMonthSubtract
-            | Native::TemporalPlainYearMonthUntil
-            | Native::TemporalPlainYearMonthSince
-            | Native::TemporalPlainYearMonthWith
-            | Native::TemporalPlainYearMonthValueOf
-            | Native::TemporalPlainYearMonthToPlainDate
-            | Native::TemporalZonedDateTime
-            | Native::TemporalZonedDateTimeFrom
-            | Native::TemporalZonedDateTimeCompare
-            | Native::TemporalZonedDateTimeEquals
-            | Native::TemporalZonedDateTimeWith
-            | Native::TemporalZonedDateTimeWithTimeZone
-            | Native::TemporalZonedDateTimeWithCalendar
-            | Native::TemporalZonedDateTimeWithPlainTime
-            | Native::TemporalZonedDateTimeToInstant
-            | Native::TemporalZonedDateTimeToPlainDate
-            | Native::TemporalZonedDateTimeToPlainDateTime
-            | Native::TemporalZonedDateTimeToPlainTime
-            | Native::TemporalZonedDateTimeValueOf
-            | Native::TemporalZonedDateTimeAdd
-            | Native::TemporalZonedDateTimeSubtract
-            | Native::TemporalZonedDateTimeGetTimeZoneTransition
-            | Native::TemporalZonedDateTimeStartOfDay
-            | Native::TemporalZonedDateTimeRound
-            | Native::TemporalZonedDateTimeUntil
-            | Native::TemporalZonedDateTimeSince
-            | Native::TemporalZonedDateTimeToString
-            | Native::TemporalZonedDateTimeToJSON
-            | Native::TemporalZonedDateTimeToLocaleString
-            | Native::TemporalZonedDateTimeEpochNanosecondsGetter
-            | Native::TemporalZonedDateTimeTimeZoneIdGetter
-            | Native::TemporalZonedDateTimeCalendarIdGetter
-            | Native::TemporalZonedDateTimeYearGetter
-            | Native::TemporalZonedDateTimeMonthGetter
-            | Native::TemporalZonedDateTimeMonthCodeGetter
-            | Native::TemporalZonedDateTimeDayGetter
-            | Native::TemporalZonedDateTimeHourGetter
-            | Native::TemporalZonedDateTimeMinuteGetter
-            | Native::TemporalZonedDateTimeSecondGetter
-            | Native::TemporalZonedDateTimeMillisecondGetter
-            | Native::TemporalZonedDateTimeMicrosecondGetter
-            | Native::TemporalZonedDateTimeNanosecondGetter
-            | Native::TemporalZonedDateTimeEraGetter
-            | Native::TemporalZonedDateTimeEraYearGetter
-            | Native::TemporalZonedDateTimeDayOfWeekGetter
-            | Native::TemporalZonedDateTimeDayOfYearGetter
-            | Native::TemporalZonedDateTimeWeekOfYearGetter
-            | Native::TemporalZonedDateTimeYearOfWeekGetter
-            | Native::TemporalZonedDateTimeDaysInWeekGetter
-            | Native::TemporalZonedDateTimeDaysInMonthGetter
-            | Native::TemporalZonedDateTimeDaysInYearGetter
-            | Native::TemporalZonedDateTimeMonthsInYearGetter
-            | Native::TemporalZonedDateTimeInLeapYearGetter
-            | Native::TemporalZonedDateTimeEpochMillisecondsGetter
-            | Native::TemporalZonedDateTimeHoursInDayGetter
-            | Native::TemporalZonedDateTimeOffsetGetter
-            | Native::TemporalZonedDateTimeOffsetNanosecondsGetter
-            | Native::TemporalInstant
-            | Native::TemporalInstantFrom
-            | Native::TemporalInstantCompare
-            | Native::TemporalInstantFromEpochMilliseconds
-            | Native::TemporalInstantFromEpochNanoseconds
-            | Native::TemporalInstantEpochNanosecondsGetter
-            | Native::TemporalInstantEpochMillisecondsGetter
-            | Native::TemporalInstantToString
-            | Native::TemporalInstantToJSON
-            | Native::TemporalInstantValueOf
-            | Native::TemporalInstantEquals
-            | Native::TemporalInstantAdd
-            | Native::TemporalInstantSubtract
-            | Native::TemporalInstantRound
-            | Native::TemporalInstantSince
-            | Native::TemporalInstantUntil
-            | Native::TemporalInstantToZonedDateTimeISO
-            | Native::TemporalNowInstant
-            | Native::TemporalNowPlainDateISO
-            | Native::TemporalNowPlainDateTimeISO
-            | Native::TemporalNowPlainTimeISO
-            | Native::TemporalNowTimeZoneId
-            | Native::TemporalNowZonedDateTimeISO => super::layer_hooks::intl_temporal_call(self, p, native, this, args),
             Native::IsHTMLDDA => Ok(Value::NULL),
-            Native::Proxy => Err(self.type_error(p, "Proxy must be called with new".into())),
-            Native::DataView => Err(self.type_error(p, "DataView constructor requires new".into())),
             Native::AbstractModuleSourceToStringTag => {
                 Ok(self.abstract_module_source_to_string_tag(this))
             }
@@ -1133,7 +762,6 @@ impl Vm {
                 self.collect_now(p);
                 Ok(Value::UNDEFINED)
             }
-            Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
@@ -1144,86 +772,6 @@ impl Vm {
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => self.console_write(p, args, CapabilityId::WriteLine),
             Native::PrintError => self.console_write(p, args, CapabilityId::WriteErr),
-            Native::Date => self.date_call(),
-            Native::IntlPluralRules => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlDisplayNames => Err(self.type_error(p, "constructor requires new".into())),
-            Native::IntlDurationFormat => {
-                Err(self.type_error(p, "constructor requires new".into()))
-            }
-            Native::IntlListFormat => Err(self.type_error(p, "constructor requires new".into())),
-            Native::DateNow => Ok(self.date_now()),
-            Native::DateGetTime
-            | Native::DateValueOf
-            | Native::DateGetTimezoneOffset
-            | Native::DateGetFullYear
-            | Native::DateGetMonth
-            | Native::DateGetDate
-            | Native::DateGetDay
-            | Native::DateGetHours
-            | Native::DateGetMinutes
-            | Native::DateGetSeconds
-            | Native::DateGetMilliseconds
-            | Native::DateGetUTCFullYear
-            | Native::DateGetUTCMonth
-            | Native::DateGetUTCDate
-            | Native::DateGetUTCDay
-            | Native::DateGetUTCHours
-            | Native::DateGetUTCMinutes
-            | Native::DateGetUTCSeconds
-            | Native::DateGetUTCMilliseconds
-            | Native::DateGetYear
-            | Native::DateSetTime
-            | Native::DateSetFullYear
-            | Native::DateSetMonth
-            | Native::DateSetUTCMonth
-            | Native::DateSetDate
-            | Native::DateSetUTCDate
-            | Native::DateSetUTCFullYear
-            | Native::DateSetHours
-            | Native::DateSetMinutes
-            | Native::DateSetSeconds
-            | Native::DateSetMilliseconds
-            | Native::DateSetUTCHours
-            | Native::DateSetUTCMinutes
-            | Native::DateSetUTCSeconds
-            | Native::DateSetUTCMilliseconds
-            | Native::DateSetYear
-            | Native::DateToString
-            | Native::DateToDateString
-            | Native::DateToTimeString
-            | Native::DateToUTCString
-            | Native::DateToLocaleString
-            | Native::DateToLocaleDateString
-            | Native::DateToLocaleTimeString
-            | Native::DateToISOString
-            | Native::DateToJSON
-            | Native::DateToPrimitive
-            | Native::DateToTemporalInstant => self.date_native(p, native, this, args),
-            Native::DateParse | Native::DateUTC => self.date_static_native(p, native, args),
-            Native::RegExpCompile => self.regexp_compile_native(p, this, args),
-            Native::RegExpExec => self.regexp_builtin_exec(p, this, args),
-            Native::RegExpTest => self.regexp_test(p, this, args),
-            Native::RegExpEscape => self.regexp_escape_native(p, args),
-            Native::RegExpSymbolMatch => self.regexp_symbol_match(p, this, args),
-            Native::RegExpSymbolSearch => self.regexp_symbol_search(p, this, args),
-            Native::RegExpSymbolReplace => self.regexp_symbol_replace(p, this, args),
-            Native::RegExpSymbolMatchAll => self.regexp_symbol_match_all(p, this, args),
-            Native::RegExpSymbolSplit => self.regexp_symbol_split(p, this, args),
-            Native::RegExpToString => self.regexp_to_string_native(p, this),
-            Native::RegExpSpecies => Ok(this),
-            Native::RegExpLegacyGetter => self.regexp_legacy_getter_native(p, this),
-            Native::RegExpLegacySetter => self.regexp_legacy_setter_native(p, this, args),
-            Native::RegExpGlobal
-            | Native::RegExpIgnoreCase
-            | Native::RegExpMultiline
-            | Native::RegExpDotAll
-            | Native::RegExpUnicode
-            | Native::RegExpUnicodeSets
-            | Native::RegExpSticky
-            | Native::RegExpHasIndices => self.regexp_flag_native(p, native, this),
-            Native::RegExpSource => self.regexp_slot_native(p, native, this),
-            Native::RegExpFlags => self.regexp_flags_native(p, this),
             Native::ObjectPrototypeHasOwnProperty | Native::ObjectPrototypePropertyIsEnumerable => {
                 let key_value =
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -1271,7 +819,7 @@ impl Vm {
                 self.require_object_coercible(p, this)?;
                 let proto = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if self.is_object_like(this)
-                    && (proto.is_null() || self.object_data(proto).is_some())
+                    && (proto.is_null() || self.heap.object(proto).is_some())
                 {
                     self.object_set_prototype_of(p, this, proto)?;
                 }
@@ -1288,7 +836,7 @@ impl Vm {
             }),
             Native::ObjectPrototypeIsPrototypeOf => {
                 let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-                if self.object_data(target).is_none() {
+                if self.heap.object(target).is_none() {
                     return Ok(Value::FALSE);
                 }
                 let prototype = self.box_object(this)?;
@@ -1322,77 +870,11 @@ impl Vm {
             | Native::ReflectGetPrototypeOf
             | Native::ReflectSetPrototypeOf
             | Native::ReflectConstruct => self.call_reflect_native(p, native, args),
-            Native::JsonParse => self.json_parse(p, args),
-            Native::JsonStringify => self.json_stringify(p, args),
-            Native::JsonRawJson => self.json_raw_json(p, args),
-            Native::JsonIsRawJson => self.json_is_raw_json(args),
             Native::GlobalIsNaN | Native::GlobalIsFinite => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let number = self.to_number(p, value)?;
                 Ok(Value::boolean(super::number::global_number_predicate(native, number).unwrap_or_default()))
             }
-            // Each argument converted in order, then the one numeric body (`number::math_numbers`).
-            Native::MathLog | Native::MathPow => {
-                let a = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let x = self.to_number(p, a)?;
-                let y = if native == Native::MathPow {
-                    self.to_number(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?
-                } else {
-                    f64::NAN
-                };
-                let result = super::number::math_numbers(native, &[x, y]).or_else(|| super::number::math_unary(native, x));
-                Ok(Value::number(result.unwrap_or(f64::NAN)))
-            }
-            Native::ArrayPush => self.array_push_native(p, this, args),
-            Native::ArrayIsArray => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                Ok(if self.is_array(p, value)? {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
-            }
-            Native::ArrayPop => self.array_pop_native(p, this),
-            Native::ArraySlice => self.array_slice_native(p, this, args),
-            Native::ArrayIncludes => self.array_includes_native(p, this, args),
-            Native::ArrayJoin => self.array_join_native(p, this, args),
-            Native::ArrayConcat => self.array_concat_native(p, this, args),
-            Native::ArrayFlat => self.array_flatten_native(p, native, this, args),
-            Native::ArrayReverse => self.array_reverse_native(p, this),
-            Native::ArrayShift => self.array_shift_native(p, this),
-            Native::ArrayUnshift => self.array_unshift_native(p, this, args),
-            Native::ArraySplice => self.array_splice_native(p, this, args),
-            Native::ArrayFill => self.array_fill_native(p, this, args),
-            Native::ArrayAt
-            | Native::ArrayLastIndexOf
-            | Native::ArrayIndexOf
-            | Native::ArrayCopyWithin
-            | Native::ArrayWith
-            | Native::ArrayForEach
-            | Native::ArrayMap
-            | Native::ArrayFilter
-            | Native::ArraySome
-            | Native::ArrayEvery
-            | Native::ArrayFind
-            | Native::ArrayFindIndex
-            | Native::ArrayFindLast
-            | Native::ArrayFindLastIndex
-            | Native::ArrayGroup
-            | Native::ArrayGroupToMap
-            | Native::ArrayFlatMap
-            | Native::ArrayReduce
-            | Native::ArrayReduceRight => self.array_indexed_native(p, native, this, args),
-            Native::ArrayToReversed
-            | Native::ArrayToSpliced
-            | Native::ArraySort
-            | Native::ArrayToSorted
-            | Native::ArrayToString
-            | Native::ArrayToLocaleString
-            | Native::ArraySpecies => self.array_modern_native(p, native, this, args),
-            Native::ArrayKeys | Native::ArrayValues | Native::ArrayEntries => {
-                self.array_iterator_native(p, native, this)
-            }
-            Native::StringValues => self.string_iterator_native(p, this),
             Native::ArrayBufferSlice => self.array_buffer_slice_native(p, this, args, false),
             Native::SharedArrayBufferSlice => self.array_buffer_slice_native(p, this, args, true),
             Native::ArrayBufferTransfer => {
@@ -1420,11 +902,8 @@ impl Vm {
             }
             Native::DetachArrayBuffer => self.detach_array_buffer_native(p, args),
             Native::SharedArrayBufferGrow => self.shared_array_buffer_grow_native(p, this, args),
-            Native::ArrayFrom
-            | Native::ArrayFromAsync
-            | Native::ArrayOf
-            | Native::TypedArrayFrom
-            | Native::TypedArrayOf => self.array_modern_native(p, native, this, args),
+            Native::TypedArrayFrom => self.array_from_native(p, this, args, ArrayFromTarget::TypedArray),
+            Native::TypedArrayOf => self.typed_array_of_native(p, this, args),
             Native::TypedArrayToStringTag => Ok(self.typed_array_to_string_tag_native(this)),
             Native::TypedArrayBufferGetter
             | Native::TypedArrayByteLengthGetter
@@ -1470,46 +949,17 @@ impl Vm {
             | Native::NumberIsFinite
             | Native::NumberIsInteger
             | Native::NumberIsSafeInteger => self.call_number_native(p, native, args),
-            Native::NumberFixed => self.number_format(p, this, args, native),
-            Native::NumberPrecision => self.number_format(p, this, args, native),
-            Native::String => {
-                let argument = self.string_constructor_argument(args);
-                let text = if let Some(description) = self.heap.symbol_data(argument) {
-                    JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
-                } else {
-                    self.coerce_js_string(p, argument)?
-                };
-                Ok(self.heap.alloc_string(text))
-            }
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString
             | Native::SymbolToPrimitive
             | Native::SymbolValueOf
             | Native::SymbolDescriptionGetter => self.call_symbol_value_native(p, native, this),
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
-            Native::TemporalPlainMonthDayToString
-            | Native::TemporalPlainMonthDayToJSON
-            | Native::TemporalPlainMonthDayToLocaleString
-            | Native::TemporalPlainYearMonthToString
-            | Native::TemporalPlainYearMonthToJSON
-            | Native::TemporalPlainYearMonthToLocaleString => {
-                layer_hooks::intl_temporal_call(self, p, native, this, args)
+            Native::Array | Native::Map | Native::Set => {
+                self.construct_native(p, native, args)
             }
-            Native::Object
-            | Native::Array
-            | Native::Map
-            | Native::Set
-            | Native::WeakMap
-            | Native::WeakSet
-            | Native::WeakRef
-            | Native::DisposableStack
-            | Native::AsyncDisposableStack => self.construct_native(p, native, args),
-            Native::RegExp => self.construct_regexp_native(p, args, None),
             Native::ThrowTypeError => {
                 Err(self.type_error(p, "restricted arguments property".into()))
-            }
-            Native::FinalizationRegistry => {
-                Err(self.type_error(p, "Constructor FinalizationRegistry requires 'new'".into()))
             }
             Native::FunctionCaller => {
                 if self.function_caller_is_restricted(this) {
@@ -1544,7 +994,6 @@ impl Vm {
             | Native::CallSiteIsNative
             | Native::CallSiteToString => self.call_site_native(p, native, this),
             Native::ArrayBufferSpecies => Ok(this),
-            Native::NumberExponential => self.number_exponential(p, this, args),
             native if native.is_error_constructor() => {
                 let callee = self
                     .active_native_callable()
@@ -2175,111 +1624,91 @@ impl Vm {
     }
 }
 
-/// `Number ** Number` (`Math.pow`), the value `staged::math::power` computes.
+/// `Number ** Number` (`Math.pow`), the value `staged::power::power` computes.
 pub fn exponentiate(base: f64, exponent: f64) -> f64 {
-    crate::staged::math::power(base, exponent)
+    crate::staged::power::power(base, exponent)
 }
 
-/// The entry that runs a native's call (`Vm::call_native_dispatch`), one per family of
-/// natives that share an implementation; `Table` for the natives no family claims.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub(super) enum NativeFamily {
-    /// Not derived yet (`Vm::native_families`).
-    Unresolved,
-    WasmExport,
-    Generator,
-    ArrayCallback,
-    StringHtml,
-    Finalization,
-    Disposal,
-    Collection,
-    WasmJs,
-    ShadowRealm,
-    ShadowRealmCalled,
-    WeakCalled,
-    TypedArray,
-    TypedArrayCalled,
-    Atomics,
-    Test262Agent,
-    BigInt,
-    Promise,
-    /// The reaction natives of async-from-sync iteration and async generators' `return`.
-    AsyncReaction,
-    ObjectStatic,
-    LazyDataProperty,
-    ProxyRevoke,
-    DataView,
-    Table,
+/// The entry that runs `native`'s call. The families' membership tests keep their precedence: the
+/// first group that claims a native decides it, and the string and Math methods belong to no
+/// family after them. The natives' table (`native_table::NativeTable::all`) holds each entry,
+/// built once from here.
+pub(super) fn native_entry(native: Native) -> native_table::NativeFn {
+    super::generator::entry(native)
+        .or_else(|| method_entry(native))
+        .or_else(|| realm_entry(native))
+        .or_else(|| super::promise::entry(native))
+        .or_else(|| value_entry(native))
+        .or_else(|| json::entry(native))
+        .or_else(|| super::date::entry(native))
+        .or_else(|| super::number_natives::entry(native))
+        .or_else(|| super::intl_core::entry(native))
+        .unwrap_or(enter_table)
 }
 
-impl Vm {
-/// `native`'s family, by the families' own membership tests in their precedence order: the
-/// string, RegExp and Math methods belong to none of the families after them.
-fn native_family(native: Native) -> NativeFamily {
-    use NativeFamily as F;
-    match native {
-        Native::WasmExportedFunction => return F::WasmExport,
-        Native::GeneratorNext | Native::GeneratorReturn | Native::GeneratorThrow => return F::Generator,
-        _ => {}
+/// The method families: RegExp, string, array callbacks, finalization, disposal, the collections
+/// and the WebAssembly JS API.
+fn method_entry(native: Native) -> Option<native_table::NativeFn> {
+    if let Some(entry) = super::regexp::natives::entry(native) {
+        return Some(entry);
+    }
+    if let Some(entry) = super::primitives::string_entry(native) {
+        return Some(entry);
     }
     if native.is_string_regexp_or_math() {
-        return F::Table;
+        return Some(enter_table);
     }
-    if native.is_array_callback() {
-        return F::ArrayCallback;
+    if let Some(entry) = super::array_builtins::entry(native) {
+        return Some(entry);
     }
-    if super::string::is_string_html_method(native) {
-        return F::StringHtml;
+    if let Some(entry) = super::finalization::finalization_entry(native) {
+        return Some(entry);
     }
-    if Self::is_finalization_native(native) {
-        return F::Finalization;
+    if let Some(entry) = super::finalization::disposal_entry(native) {
+        return Some(entry);
     }
-    if Self::is_disposal_native(native) {
-        return F::Disposal;
+    if let Some(entry) = super::collections::entry(native) {
+        return Some(entry);
     }
-    if Self::is_collection_native(native) {
-        return F::Collection;
-    }
-    #[cfg(feature = "wasm")]
-    if super::wasm_js::is_wasm_js_native(native) {
-        return F::WasmJs;
-    }
-    match native {
-        Native::ShadowRealmEvaluate
-        | Native::ShadowRealmImportValue
-        | Native::ShadowRealmImportValueFulfilled
-        | Native::ShadowRealmWrappedFunction => return F::ShadowRealm,
-        Native::ShadowRealm => return F::ShadowRealmCalled,
-        Native::WeakMap | Native::WeakSet | Native::WeakRef => return F::WeakCalled,
-        _ => {}
-    }
-    if native.is_typed_array_method() || native.is_typed_array_iterator() {
-        return F::TypedArray;
-    }
-    if native.is_typed_array_constructor() {
-        return F::TypedArrayCalled;
-    }
-    if native.is_atomics_native() {
-        return F::Atomics;
-    }
-    match native {
-        Native::Test262Agent => return F::Test262Agent,
-        _ if native.is_bigint_native() => return F::BigInt,
-        _ if native.is_promise_native() => return F::Promise,
-        Native::AsyncFromSyncValue
-        | Native::AsyncFromSyncValueRejected
-        | Native::AsyncGeneratorReturnFulfilled
-        | Native::AsyncGeneratorReturnRejected
-        | Native::AsyncGeneratorDelegateReturnStart => return F::AsyncReaction,
-        _ if native.is_object_static() => return F::ObjectStatic,
-        Native::LazyDataProperty => return F::LazyDataProperty,
-        Native::ProxyRevoke => return F::ProxyRevoke,
-        _ if native.is_data_view_native() => return F::DataView,
-        _ => {}
-    }
-    F::Table
+    super::wasm_js::entry(native)
 }
+
+/// The realm-level families: ShadowRealm, weak references, typed arrays and Atomics.
+fn realm_entry(native: Native) -> Option<native_table::NativeFn> {
+    if let Some(entry) = super::shadow_realm::entry(native) {
+        return Some(entry);
+    }
+    if let Some(entry) = super::finalization::weak_entry(native) {
+        return Some(entry);
+    }
+    super::typed_array::entry(native).or_else(|| super::atomics::entry(native))
+}
+
+/// The value families: Test262's agent, BigInt, Object statics, lazy
+/// properties, proxy revocation and DataView.
+fn value_entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::Test262Agent => Some(enter_test262_agent),
+        _ if native.is_bigint_native() => Some(enter_bigint),
+        _ if let Some(entry) = super::object_static::entry(native) => Some(entry),
+        _ if let Some(entry) = super::lazy_data_property::entry(native) => Some(entry),
+        _ if let Some(entry) = super::proxy::entry(native) => Some(entry),
+        _ => super::data_view::entry(native),
+    }
+}
+
+// The entries `native_entry` names for the families that have no module of their own yet.
+
+fn enter_test262_agent(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_test262_agent(p, args)
+}
+
+fn enter_bigint(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.bigint_native(p, native, this, args)
+}
+
+fn enter_table(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    vm.call_native_table(p, native, this, args)
 }
 
 impl Vm {

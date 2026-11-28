@@ -66,7 +66,7 @@ impl<W: Copy> Int32<W> {
     pub fn by_fact(word: W, _fact: IntFact) -> Self { Int32(word) }
     /// A word a staged row computed as an int32.
     #[inline(always)]
-    pub(crate) fn of_row(word: W) -> Self { Int32(word) }
+    pub fn of_row(word: W) -> Self { Int32(word) }
     /// The proved word.
     #[inline(always)]
     pub fn word(self) -> W { self.0 }
@@ -93,7 +93,7 @@ impl<W: Copy> Float64<W> {
     pub fn by_fact(word: W, _fact: NumberFact) -> Self { Float64(word) }
     /// A word a staged row computed as a binary64.
     #[inline(always)]
-    pub(crate) fn of_row(word: W) -> Self { Float64(word) }
+    pub fn of_row(word: W) -> Self { Float64(word) }
     /// The proved word.
     #[inline(always)]
     pub fn word(self) -> W { self.0 }
@@ -129,7 +129,7 @@ impl Int32<u64> {
     /// `guard` at the interpreter's stage: a tagged value's int32; `None` where it holds none.
     #[inline(always)]
     pub fn checked(value: crate::Value) -> Option<Self> {
-        Self::guard(&mut super::Concrete::new(core::ptr::null()), value.to_bits(), ())
+        Self::guard(&mut super::Concrete::pure(), value.to_bits(), ())
     }
 }
 
@@ -174,7 +174,7 @@ impl Float64<u64> {
     /// `guard` at the interpreter's stage: a tagged value's Number; `None` where it is none.
     #[inline(always)]
     pub fn checked(value: crate::Value) -> Option<Self> {
-        Self::guard(&mut super::Concrete::new(core::ptr::null()), value.to_bits(), ())
+        Self::guard(&mut super::Concrete::pure(), value.to_bits(), ())
     }
 }
 
@@ -243,19 +243,26 @@ pub type IntOf<S> = Int32<<S as Stage>::Word>;
 /// The proved binary64 operand type a stage's numeric rows take.
 pub type NumberOf<S> = Float64<<S as Stage>::Word>;
 
-/// An object record whose exact shape a guard proved (`ic::guard_shape`, `ic::guard_layout`,
-/// `guard::shape`, `guard::prototype`), or a fact holds (`by_fact`): its slots are read at the
-/// shape's offsets with no test of their own. The field is private, so a slot read
-/// (`ic::slot_layout`, `object::proved_own_layout`) runs only past a guard or a fact.
+/// The object a guard proved, with its exact shape: either an object record (`ic::guard_shape`,
+/// `ic::guard_layout`, `guard::shape`, `guard::prototype`, or a fact (`by_fact`)), whose slots sit
+/// behind the record's payload, or a live class cell (`ic::guard_class`, `guard::class`), whose
+/// fields are one flat run at the cell (`object::cell_fields`). The variant is chosen where the
+/// guard is planned: a class-keyed guard never tests a record, and a record guard never a cell.
+/// The fields are private, so a slot read (`ic::slot_layout`, `object::proved_own_layout`) runs
+/// only past a guard or a fact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct Shaped<W>(W);
+pub enum Shaped<W> {
+    /// A record whose exact shape a guard or fact proved.
+    Record(W),
+    /// A live class cell whose class a guard proved, the class fixing the shape and prototype link.
+    Cell(W),
+}
 
 /// A fact that a record has the exact shape a read was planned for. Only a guard
 /// (`Shaped::fact`), a type (`of_type`), a region's entry guard (`entry_guard`) or a held code
 /// dependency (`HeldShapes::hold`, `HeldLayouts::hold`) makes one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ShapeFact(());
+pub struct ShapeFact(pub ());
 
 impl ShapeFact {
     /// The analysis proved the value a direct object of one exact shape (`Type::object_shape`):
@@ -268,52 +275,37 @@ impl ShapeFact {
     /// Only a stencil row makes one (and the tests): the region's entry guard runs in another
     /// compilation unit, so no runtime code can name the fact without its guard.
     #[cfg(any(stencil_build, test))]
-    pub(crate) const fn entry_guard() -> Self { ShapeFact(()) }
-}
-
-/// The exact shapes a compiled unit holds under code dependencies (`StableFacts::shapes`), which
-/// its publication subscribes: holding one is the only way a dependency makes a `ShapeFact`, so
-/// a read under a held shape always retires with the code the moment an object leaves it. The
-/// guard became the invalidation hook: the code tests nothing, the departure retires it.
-#[cfg(not(stencil_build))]
-#[derive(Default)]
-pub struct HeldShapes(crate::bitset::BitSet);
-
-#[cfg(not(stencil_build))]
-impl HeldShapes {
-    /// Holds `shape`: the code depends on it from now on, and the fact is the proof.
-    #[inline]
-    pub fn hold(&mut self, shape: u32) -> ShapeFact { self.0.insert_growing(shape as usize); ShapeFact(()) }
-    /// The held shapes, leaving none.
-    pub fn take(&mut self) -> Box<[u32]> { std::mem::take(&mut self.0).iter().map(|shape| shape as u32).collect() }
-}
-
-/// The global objects' layouts a compiled unit holds under code dependencies
-/// (`StableFacts::layouts`, `subscribe_global_layout`): holding one is the only way a global
-/// object's slot read gets its `ShapeFact`, as `HeldShapes::hold` is for an object's shape.
-#[cfg(not(stencil_build))]
-#[derive(Default)]
-pub struct HeldLayouts(std::collections::BTreeSet<crate::heap::GlobalLayoutFact>);
-
-#[cfg(not(stencil_build))]
-impl HeldLayouts {
-    /// Holds `layout`: the code depends on it from now on, and the fact is the proof.
-    #[inline]
-    pub fn hold(&mut self, layout: crate::heap::GlobalLayoutFact) -> ShapeFact { self.0.insert(layout); ShapeFact(()) }
-    /// The held layouts, leaving none.
-    pub fn take(&mut self) -> Box<[crate::heap::GlobalLayoutFact]> { std::mem::take(&mut self.0).into_iter().collect() }
+    pub const fn entry_guard() -> Self { ShapeFact(()) }
 }
 
 impl<W: Copy> Shaped<W> {
     /// The record `record` of the shape a fact proved; no test runs.
     #[inline]
-    pub fn by_fact(record: W, _fact: ShapeFact) -> Self { Shaped(record) }
+    pub fn by_fact(record: W, _fact: ShapeFact) -> Self { Shaped::Record(record) }
     /// A record a staged guard in this module tree just tested.
     #[inline]
-    pub(super) fn of_guard(record: W) -> Self { Shaped(record) }
-    /// The proved record.
+    pub fn of_guard(record: W) -> Self { Shaped::Record(record) }
+    /// A live class cell proved by its class: a class guard just tested it (`guard::class`, `ic::guard_class`), or
+    /// the program's fact that every instance of the class is a fixed cell (`AotFacts::class_fixed_cell`) holds, with
+    /// no guard at all. The caller holds that fact; this constructor tests nothing.
     #[inline]
-    pub fn record(self) -> W { self.0 }
+    pub fn of_cell(cell: W) -> Self { Shaped::Cell(cell) }
+    /// The proved record. A record's payload and layout reads take it; a cell's reads take `cell`.
+    #[inline]
+    pub fn record(self) -> W {
+        match self {
+            Shaped::Record(record) => record,
+            Shaped::Cell(_) => unreachable!("a record's read follows a record's guard, not a class guard"),
+        }
+    }
+    /// The proved class cell, where a class guard proved the object.
+    #[inline]
+    pub fn cell(self) -> Option<W> {
+        match self {
+            Shaped::Cell(cell) => Some(cell),
+            Shaped::Record(_) => None,
+        }
+    }
     /// The fact this proof stands for, which a frame keeps for the later reads of the same record.
     #[inline]
     pub fn fact(self) -> ShapeFact { ShapeFact(()) }
@@ -329,10 +321,10 @@ pub struct Linked<W>(W);
 impl<W: Copy> Linked<W> {
     /// A record the shape-and-link guard just tested.
     #[inline]
-    pub(super) fn of_guard(record: W) -> Self { Linked(record) }
+    pub fn of_guard(record: W) -> Self { Linked(record) }
     /// The record's shape proof, which the link proof includes.
     #[inline]
-    pub fn shaped(self) -> Shaped<W> { Shaped(self.0) }
+    pub fn shaped(self) -> Shaped<W> { Shaped::Record(self.0) }
 }
 
 /// A typed array's elements proved for one native kind: their address, their count and the kind
@@ -357,7 +349,7 @@ pub struct TypedViewFact(());
 impl<W: Copy> Viewed<W> {
     /// The view the guard in this module tree (`typed_view::prove_viewed`) just tested.
     #[inline]
-    pub(super) fn of_guard(values: W, length: W, kind: super::typed_elements::NativeKind) -> Self { Viewed { values, length, kind } }
+    pub fn of_guard(values: W, length: W, kind: super::typed_elements::NativeKind) -> Self { Viewed { values, length, kind } }
     /// The view `(values, length)` of kind `kind` an earlier guard proved and a fact keeps; no test runs.
     #[inline]
     pub fn by_fact(values: W, length: W, kind: super::typed_elements::NativeKind, _fact: TypedViewFact) -> Self { Viewed { values, length, kind } }
@@ -385,7 +377,7 @@ impl TypedViewFact {
     /// The loop's entry proved the view once (`entry::entry_typed` reads what it recorded), and a
     /// row inside the loop reads under it. Only a stencil row makes one (and the tests).
     #[cfg(any(stencil_build, test))]
-    pub(crate) const fn entry_guard() -> Self { TypedViewFact(()) }
+    pub const fn entry_guard() -> Self { TypedViewFact(()) }
 }
 
 /// Whether a compiled unit holds the views it proved under a code dependency
@@ -440,3 +432,8 @@ impl<W: Copy> ArrayRecord<W> {
         Some(header)
     }
 }
+
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;

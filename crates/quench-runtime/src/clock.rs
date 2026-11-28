@@ -1,101 +1,81 @@
-//! The clocks the engine and its host read, in one place (M6, P6 work clock).
-//!
-//! By default every reader gets the operating system's clocks. Under `QUENCH_DEV=virtual-clock`
-//! the JavaScript-visible clocks (`Date.now`, `performance.now`, `process.hrtime`, timers) read
-//! one virtual clock instead: it starts at a fixed instant, moves forward a fixed step on each
-//! read, and jumps to the next timer when the event loop would otherwise wait. `Math.random`
-//! then starts from a fixed seed. A run's instruction count no longer depends on how fast the
-//! host is, so A/B comparisons can trust small deltas. Scores printed in this mode measure
-//! virtual time and must not be used.
-use std::sync::OnceLock;
+//! The clocks the engine and its host read, in one place (M6, P6 work clock): the operating
+//! system's clocks for the JavaScript-visible reads, and the engine work clock (`now_work`) that
+//! the policies read in place of wall time.
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-/// How far the virtual clock moves on each read: enough that two reads differ, as
-/// benchmark harnesses divide by elapsed time.
-const VIRTUAL_STEP_NS: u64 = 100_000;
-/// Where virtual wall time starts: 2026-01-01T00:00:00Z.
-const VIRTUAL_EPOCH_SECS: u64 = 1_767_225_600;
-/// The `Math.random` seed under the virtual clock (any odd value).
-const VIRTUAL_RANDOM_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
-
-static VIRTUAL_NS: AtomicU64 = AtomicU64::new(0);
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Whether a build-time evaluation watches the program's inputs from its environment
 /// (`watch_inputs`): strict AOT runs an entry at build time, and a run that read the clock
 /// (`CapabilityId::ClockMillis`), the local time zone or `Math.random` computed values a later
 /// run would not. The host's own clock reads (its event loop's) are no input of the program.
 static INPUTS_WATCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// The first input a watched run read (`note_input`).
-static FIRST_INPUT: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+thread_local! {
+    /// The execution a watched run is on, which the first input ends (`watch_inputs`). The run
+    /// and its clock reads share the thread that watches them.
+    static WATCHED_RUN: std::cell::RefCell<Option<crate::ExecutionInterrupt>> = const { std::cell::RefCell::new(None) };
+}
 
 /// Starts watching the process's environment inputs (`note_input`), for the rest of the process.
-pub fn watch_inputs() {
+/// The watched run is `run`: its first input requests its termination (`note_watched_input`), so
+/// the input's handler ends the run there rather than letting the run go on past an input. An input
+/// native's own entry captures instead (`input_edge_armed`): its run returns the caller chain as its
+/// outcome (`JsError::captured`), with no interrupt flag set.
+pub fn watch_inputs(run: crate::ExecutionInterrupt) {
+    WATCHED_RUN.with(|watched| *watched.borrow_mut() = Some(run));
     INPUTS_WATCHED.store(true, Ordering::Relaxed);
 }
 
-/// Notes a read of an input from the environment, `what`, while inputs are watched: one
+/// Whether a watched run's input edge is armed: a native that reads an input captures its
+/// caller chain at its entry, before it runs (`Vm::capture_input_native`).
+#[inline]
+pub fn input_edge_armed() -> bool {
+    INPUTS_WATCHED.load(Ordering::Relaxed)
+}
+
+/// Ends the watched run, if one is watched on this thread.
+fn request_watched_termination() {
+    WATCHED_RUN.with(|watched| {
+        if let Some(run) = watched.borrow().as_ref() {
+            run.request_termination();
+        }
+    });
+}
+
+/// Notes a read of an input from the environment while inputs are watched: one
 /// relaxed load otherwise.
 #[inline]
-pub fn note_input(what: &'static str) {
+pub fn note_input() {
     if INPUTS_WATCHED.load(Ordering::Relaxed) {
-        note_watched_input(what);
+        note_watched_input();
     }
 }
 
 /// The watched half of `note_input`, out of line so a run that watches nothing (every run but a
-/// strict AOT build) pays the one load and branch, not the lock's code in its clock read.
+/// strict AOT build) pays the one load and branch, not the clock read. Its handler ends the
+/// watched run: the run's effects past the input are never the build's to keep, since a build
+/// keeps only the state before its first input. The input's name is not kept here: the caller
+/// that ends the run names it.
 #[cold]
 #[inline(never)]
-fn note_watched_input(what: &'static str) {
-    FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert(what);
-}
-
-/// The first environment input a watched run read, if any.
-pub fn first_input() -> Option<&'static str> {
-    *FIRST_INPUT.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Whether the JavaScript-visible clocks are virtual (`QUENCH_DEV=virtual-clock`), read once.
-pub fn is_virtual() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| crate::trace::Dev::VirtualClock.on())
-}
-
-/// The instant the virtual clock counts from, taken on first use.
-fn virtual_base() -> Instant {
-    static BASE: OnceLock<Instant> = OnceLock::new();
-    *BASE.get_or_init(Instant::now)
-}
-
-/// Nanoseconds of virtual time after a read, which moves the clock one step.
-fn virtual_tick() -> u64 {
-    VIRTUAL_NS.fetch_add(VIRTUAL_STEP_NS, Ordering::Relaxed) + VIRTUAL_STEP_NS
+fn note_watched_input() {
+    request_watched_termination();
 }
 
 /// The monotonic instant now.
 pub fn instant_now() -> Instant {
-    if is_virtual() {
-        virtual_base() + Duration::from_nanos(virtual_tick())
-    } else {
-        Instant::now()
-    }
+    Instant::now()
 }
 
 /// The wall-clock time now.
 pub fn system_now() -> SystemTime {
-    if is_virtual() {
-        UNIX_EPOCH + Duration::from_secs(VIRTUAL_EPOCH_SECS) + Duration::from_nanos(virtual_tick())
-    } else {
-        SystemTime::now()
-    }
+    SystemTime::now()
 }
 
 /// Milliseconds since the Unix epoch, as `Date.now` reads them.
 pub fn unix_millis() -> f64 {
     // One `CLOCK_REALTIME` read, as `SystemTime::now` makes, without its `Duration` steps.
     #[cfg(unix)]
-    if !is_virtual() {
+    {
         let mut time: libc::timespec = unsafe { std::mem::zeroed() };
         // SAFETY: `time` is a valid out-pointer for the call.
         if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut time) } == 0 && time.tv_sec >= 0 {
@@ -107,10 +87,6 @@ pub fn unix_millis() -> f64 {
 
 /// A monotonic clock in nanoseconds (`CLOCK_MONOTONIC` by default); `None` where unavailable.
 pub fn monotonic_ns() -> Option<f64> {
-    if is_virtual() {
-        // Offset by a day so that origins taken from it are never zero.
-        return Some(86_400.0 * 1e9 + virtual_tick() as f64);
-    }
     #[cfg(unix)]
     {
         let mut time: libc::timespec = unsafe { std::mem::zeroed() };
@@ -192,20 +168,4 @@ pub fn note_lane_run() {
 /// Adds `units` of work to the work clock (`now_work`); heaps call it once per collection.
 pub fn charge_work(units: u64) {
     WORK.fetch_add(units, Ordering::Relaxed);
-}
-
-/// Under the virtual clock, moves virtual time forward to `due` (a waiting event loop's next
-/// timer) and returns true, so the loop runs the timer without sleeping; false otherwise.
-pub fn skip_to(due: Instant) -> bool {
-    if !is_virtual() {
-        return false;
-    }
-    let target = due.saturating_duration_since(virtual_base()).as_nanos() as u64;
-    VIRTUAL_NS.fetch_max(target, Ordering::Relaxed);
-    true
-}
-
-/// The fixed `Math.random` seed under the virtual clock.
-pub fn fixed_random_seed() -> Option<u64> {
-    is_virtual().then_some(VIRTUAL_RANDOM_SEED)
 }

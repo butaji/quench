@@ -17,22 +17,30 @@ pub(crate) use quench_runtime::vm::engine_types::FrozenAssumptions;
 
 
 pub use quench_runtime::vm::engine_types::NativeJsProgram;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 
 #[quench_macros::ext(NativeJsProgramOps1)]
 impl NativeJsProgram {
-    /// Compile every function before execution as one AOT image. No hotness or fallback tier.
-    pub fn compile_eager(program: ResidualProgram) -> Result<Self, String> {
-        let unit = crate::compiled::admission::ahead_unit(0).ok_or_else(|| "eager publication was declined".to_string())?;
-        crate::compiled::compile_eager_native(program, unit)
-    }
-
-    /// Adopt an image compiled into this process (`AheadImages::compile`): its file, which each VM
-    /// that attaches it links (`aot_image::live::install`).
-    pub fn compile_eager_at(program: ResidualProgram, images: quench_runtime::vm::engine_types::AheadImages) -> Result<Self, String> {
-        let counts = NativeJsPublicationCounts { functions: program.function_count(), ..Default::default() };
-        Self::bind(program, NativeJsCode::Eager(images.to_bytes()), counts, None)
+    /// Publish `program` as one AOT image of the functions the tier policy runs in AOT mode
+    /// (`tier_policy::body_tier`, u-jit over every function). The one publication entry point.
+    /// Not on the `quench aot` build path (`lower_native_js_module_for`) nor on image load (`from_linked_image`); its callers are the
+    /// test262 harness's in-process compile-and-run (`execute_after_harness`) and tests.
+    pub fn publish(program: ResidualProgram) -> Result<Self, String> {
+        let _admitted = crate::compiled::admission::ahead_unit();
+        #[cfg(feature = "jit")]
+        {
+            let images = quench_runtime::vm::engine_types::AheadImages::compile(&program)?;
+            if images.is_empty() { return Err("publication compiled no image".into()); }
+            let counts = NativeJsPublicationCounts { functions: program.function_count(), ..Default::default() };
+            Self::bind(program, NativeJsCode::Image(images.to_bytes()), counts, None)
+        }
+        #[cfg(not(feature = "jit"))]
+        {
+            let _ = program;
+            Err("native publication requires the jit feature".into())
+        }
     }
 
     /// Adopt a statically linked image table emitted by `lower_native_js_module`.
@@ -90,7 +98,7 @@ impl NativeJsProgram {
         self.frozen.as_ref().is_some_and(|frozen| quench_runtime::test_support::invalidation_is_set(&frozen.invalidation))
     }
     fn bind(program: ResidualProgram, code: NativeJsCode, counts: NativeJsPublicationCounts, frozen: Option<FrozenAssumptions>) -> Result<Self, String> {
-        if !quench_runtime::DYNAMIC_EXECUTION_ENABLED && program.source.as_ref().is_some_and(|source| source.call_sites.get().is_none()) {
+        if !quench_runtime::DYNAMIC_EXECUTION_ENABLED && program.call_sites.get().is_none() {
             return Err("native program has no frozen call-site descriptions".into());
         }
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
@@ -114,7 +122,7 @@ impl Vm {
         let program = self.programs.get(id).ok_or("native JS program is missing")?;
         match code {
             NativeJsCode::Placed(table) => self.load_linked_image(&program, table),
-            NativeJsCode::Eager(file) => {
+            NativeJsCode::Image(file) => {
                 self.load_ahead_images(quench_runtime::vm::engine_types::AheadImages::from_bytes(file)?);
                 Ok(())
             }
@@ -140,7 +148,7 @@ impl Vm {
     pub(crate) fn kept_native_module_program(
         &mut self, module: &quench_runtime::ModuleSource,
     ) -> Result<Option<ProgramId>, JsError> {
-        let parts = [self.specialization_part(), module.compilation_goal(), &module.source];
+        let parts = [module.compilation_goal(), &module.source];
         let Some(native) = self.resolve_native_program(&module.name, &parts).map_err(|error| JsError::validation(error.to_string()))? else {
             return Ok(None);
         };
@@ -174,9 +182,6 @@ impl Vm {
     }
 
     fn validate_native_namespace(&self, native: &NativeJsProgram) -> Result<(), JsError> {
-        if native.program.specialized != self.specialized {
-            return Err(JsError::validation("native script specialization does not match runtime".into()));
-        }
         if !self.atom_sequence.proves_prefix(&native.program.atoms)
             && (native.program.atoms.len() > self.atom_sequence.len()
             || native.program.atoms.iter().enumerate().any(|(id, name)| {
@@ -198,6 +203,13 @@ impl Vm {
         self.check_execution_interrupt()?;
         self.restore_snapshot_state(bytes, Some(&native.program), read_host).map_err(|error| JsError::validation(error.0))?;
         self.install_restored_main(native.program.clone());
+        self.attach_native_js(ProgramId::MAIN, &native.code).map_err(JsError::validation)
+    }
+
+    /// Binds `native`'s code to the main program the realm was initialized with, as
+    /// `restore_native_snapshot` does for a restored realm.
+    pub(crate) fn install_native_main(&mut self, native: &NativeJsProgram) -> Result<(), JsError> {
+        self.check_execution_interrupt()?;
         self.attach_native_js(ProgramId::MAIN, &native.code).map_err(JsError::validation)
     }
 
@@ -276,7 +288,7 @@ impl Vm {
             let prepared = self.prepare_native_script(script.clone())?;
             self.evaluate_prepared_global_script(&prepared)?;
         }
-        self.run_main(&native.program, drain_jobs)
+        self.run_main(&native.program, drain_jobs).map_err(JsError::from)
     }
 }
 
@@ -290,3 +302,10 @@ unsafe fn quench_engine_native_from_linked_image(program: ResidualProgram, image
     unsafe { <NativeJsProgram as NativeJsProgramOps1>::from_linked_image(program, image) }
 }
 const _: unsafe fn(ResidualProgram, *const u8) -> Result<NativeJsProgram, String> = quench_engine_native_from_linked_image;
+
+/// The core's `NativeJsProgram::install_linked_lane_stubs` (a link-time hook): `lane_body_abi::install_linked`.
+#[unsafe(no_mangle)]
+fn quench_engine_install_linked_lane_stubs(body_shim: usize, entry_stub: usize) -> Result<(), String> {
+    crate::compiled::lane_body_abi::install_linked(body_shim, entry_stub)
+}
+const _: fn(usize, usize) -> Result<(), String> = quench_engine_install_linked_lane_stubs;

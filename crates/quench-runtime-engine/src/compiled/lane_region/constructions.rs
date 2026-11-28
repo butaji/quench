@@ -34,12 +34,15 @@ impl Lowering<'_, '_> {
                 && instruction.result_flags() == quench_runtime::bytecode::RETURN_REGISTER => Some(record),
             _ => return None,
         };
+        // No class known at compile time: the construction takes the generic path (`None`).
+        let class = self.construct_class(pc, Some(instruction.register_b()))?;
         let exit = self.guard_exit_for(state, pc as u32, ExitFact::Callee);
         let arguments = self.construct_arguments(state, window);
         let callee = self.tagged(state, instruction.register_b());
+        let class = self.raw_const(Lane::I64, i64::from(class));
         let argc = self.raw_const(Lane::I64, i64::from(window.count));
         let payload = self.payload;
-        let this = self.helper_call(LaneHelper::Construct, &[payload, callee, arguments, argc]);
+        let this = self.helper_call(LaneHelper::Construct, &[payload, callee, class, arguments, argc]);
         let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
         emit_js_guard(&mut self.builder, built, exit);
         self.reshaped(state);

@@ -9,6 +9,7 @@ use quench_runtime::staged::wasm_activation::{self as activation, offer_entry, C
 use quench_runtime::vm::program_store::HandoffTiers;
 use super::lane_stack_growth::LaneStackFull;
 use quench_runtime::vm::JsError;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The known call's handler, for the shared handler table.
 pub(crate) const fn known_call_handler() -> Handler {
@@ -74,7 +75,7 @@ impl WasmNativeEntry for LaneCall<'_> {
     type Resume = Resumed;
     #[inline(always)]
     fn native_mode(&mut self) -> bool {
-        unsafe { vm(self.cx) }.execution_mode == super::ExecutionMode::Compiled && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
+        quench_runtime::vm::tier_policy::wasm_runs_native(unsafe { vm(self.cx) }.execution_mode) && self.i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
     }
 
     /// The lane makes no compile: one an entry makes due leaves for the general loop (`HandoffTiers`).
@@ -324,7 +325,7 @@ impl WasmActivation for LaneCall<'_> {
         let vm = unsafe { vm(cx) };
         // A tier that may run the callee enters it natively from the general call, which a
         // lane activation would bypass.
-        if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 || vm.tier_may_run(crate::compiled::admission::Tier::ANY) {
+        if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 || quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY) {
             return None;
         }
         let plan = js_import_of(vm, r.get(i.b))?;
@@ -361,7 +362,7 @@ impl WasmActivation for LaneCall<'_> {
         let called = in_place_in_lane(self.cx, self.ip, |vm, code| {
             vm.call_compiled_js_wasm_import(
                 program, code, callee, target, capture, &signature, Value::UNDEFINED, &args,
-                Value::UNDEFINED, std::ptr::null_mut(),
+                Value::UNDEFINED,
             )
         });
         match called {
@@ -506,10 +507,10 @@ fn import_activation_target(
         Some(entry) => unsafe { *entry },
         None => vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)?,
     };
-    if target.program() == unsafe { (*cx).program }
-        || !target.entry.activates_across()
-        || target.forwards()
-        || !(argc <= target.params || target.drops_extra_arguments())
+    if target.body.program() == unsafe { (*cx).program }
+        || !target.body.entry.activates_across()
+        || target.body.forwards()
+        || !(argc <= target.body.params || target.body.drops_extra_arguments())
         || !activation_room_in_lane(vm, &target)
     {
         return None;
@@ -534,7 +535,7 @@ fn push_import_activation(
 ) -> Resumed {
     let instance = unsafe { (*cx).instance };
     let (registers, start) =
-        push_passed_in_lane::<true, false>(cx, r, ip, target, args.as_ptr(), argc.min(target.params), this, false);
+        push_passed_in_lane::<true, false>(cx, r, ip, target, args.as_ptr(), argc.min(target.body.params), this, false);
     let vm = unsafe { vm(cx) };
     vm.lane_stack.recomplete_top(Completion::ToWasm);
     vm.lane_stack.attach_payload(SidePayload::ToWasm(ToWasmCall { instance, memory, result }));

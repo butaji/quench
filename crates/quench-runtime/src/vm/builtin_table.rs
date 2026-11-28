@@ -54,6 +54,9 @@ pub type Installer = fn(&mut Vm, &ResidualProgram) -> Result<(), JsError>;
 #[derive(Clone, Copy)]
 pub struct BuiltinTable {
     pub families: BuiltinFamilies,
+    /// The natives the runtime's table keeps: `None` keeps every native (`NativeTable::all`), a
+    /// closed world keeps the list it proved reachable and leaves every other entry `None`.
+    pub natives: Option<&'static [Native]>,
     pub regexp: Option<Installer>,
     pub typed_memory: Option<Installer>,
     pub collections: Option<Installer>,
@@ -66,6 +69,7 @@ pub struct BuiltinTable {
 impl BuiltinTable {
     pub const ALL: Self = Self {
         families: BuiltinFamilies::ALL,
+        natives: None,
         regexp: Some(install_regexp),
         typed_memory: Some(install_typed_memory),
         collections: Some(install_collections),

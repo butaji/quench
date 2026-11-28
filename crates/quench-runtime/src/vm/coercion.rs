@@ -1,6 +1,6 @@
 use super::wtf16::JsString;
 use super::*;
-use oxc_ast::ast::UnaryOperator;
+use crate::operator::UnaryOperator;
 
 #[path = "switch_selection.rs"]
 mod switch_selection;
@@ -24,7 +24,7 @@ const VOID: u32 = UnaryOperator::Void as u32;
 
 impl Vm {
     pub fn typeof_value(&mut self, value: Value) -> Value {
-        let mut stage = crate::staged::Concrete::new(std::ptr::null());
+        let mut stage = crate::staged::Concrete::pure();
         let names = self.typeof_names.as_ptr() as u64;
         match crate::staged::value::immediate_typeof_string(&mut stage, value.to_bits(), names, ()) {
             Some(name) => Value::from_bits(name),
@@ -146,7 +146,8 @@ impl Vm {
         // An array index's key, as a native's loop over a proxy or an array-like makes one per
         // element: the string its atom keeps, which a later ToPropertyKey of it reads back as
         // that atom (`string_key_atom`) instead of parsing it.
-        if let Some(index) = primitive.as_int().and_then(|index| usize::try_from(index).ok()) {
+        // The int32 arm, then (fallback only, before any string is made) a double-encoded integer (R4-M2).
+        if let Some(index) = primitive.as_int().or_else(|| primitive.numeric_key()).and_then(|index| usize::try_from(index).ok()) {
             let atom = self.index_key_atom(index);
             return Ok(self.atom_string(atom));
         }
@@ -262,7 +263,7 @@ impl Vm {
         if let Some(number) = self.primitive_to_number(value) {
             return Ok(number);
         }
-        if self.object_data(value).is_some() {
+        if self.heap.object(value).is_some() {
             let primitive = self.to_primitive(program, value, "number")?;
             return self.to_number(program, primitive);
         }
@@ -297,7 +298,7 @@ impl Vm {
         if let Some(text) = immediate_to_string(value) {
             return Ok(text.into());
         }
-        if self.object_data(value).is_some() {
+        if self.heap.object(value).is_some() {
             let primitive = self.to_primitive(program, value, "string")?;
             return self.to_string(program, primitive);
         }

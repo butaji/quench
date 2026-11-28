@@ -1,6 +1,10 @@
 //! Functions of `dispatch_fast` in a codegen unit of their own (B1: a staged edit recompiles only the units that inline it).
 #![allow(unused_imports)]
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
+use crate::operand_class::{int32_cell, int32_result_cell, number_cell, object_cell, operand_type};
+use quench_runtime::vm::engine_types::Records;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether the iteration step at `pc` (`iteration_step_in_lane`) is a destructuring step as
 /// `binding_iterator_step` emits it once its test is threaded: a plain read of the result's
@@ -121,10 +125,16 @@ pub(super) fn writes_in_lane(instruction: WideInstruction, register: u16) -> boo
 }
 
 /// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form:
-/// each kind is one opcode's (its traits name it), so the record is that opcode's `returning_row`.
-pub(super) fn returning_handler(kind: u8) -> Handler {
+/// each kind is one opcode's (its traits name it), so the record is that opcode's `returning_row`. A returning
+/// `GetField` takes its row at load: a private name its private row (`Vm::is_private_name`, the atom alone decides),
+/// a read whose base a fact proves its trusted returning row (`trusted`, `trusted_read`), any other the general
+/// returning read.
+pub(super) fn returning_handler(kind: u8, vm: &Vm, instruction: WideInstruction, trusted: Option<Handler>) -> Handler {
     match kind {
-        RETURNING_FIELD => row_returning_field_first::<NOT_LEAF>,
+        RETURNING_FIELD if instruction.b() != quench_runtime::bytecode::FieldBase::NESTED && vm.is_private_name(instruction.imm()) => {
+            field_return_row::<NOT_LEAF>(RETURNING_FIELD_PRIVATE)
+        }
+        RETURNING_FIELD => trusted.unwrap_or_else(|| field_return_row::<NOT_LEAF>(RETURNING_FIELD)),
         RETURNING_UNARY => returning_row_of!(quench_runtime::bytecode::UNARY_ROW, RETURNING_UNARY, NOT_LEAF) as Handler,
         RETURNING_BINARY => returning_row_of!(quench_runtime::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
         RETURNING_OBJECT => returning_row_of!(quench_runtime::bytecode::OBJECT_PAIR, RETURNING_OBJECT, NOT_LEAF) as Handler,
@@ -142,23 +152,30 @@ pub(super) fn plain_frame_local(function: &Function, slot: usize) -> bool {
         && !function.is_self_binding_slot(slot)
 }
 
+/// The lane view of `function_id`'s `function`. Each record's row instance is chosen here, once, from the program's
+/// solve (`facts`, the cells `operand_type` reads): a record is quickened to the instance its
+/// cells pick and is never reclassified per run. A record no cell decides keeps its first-run choice (`row_jump`).
+/// Without facts (`None`) the view takes no cell's instance.
 #[cfg(feature = "jit")]
 pub(crate) fn derive_lane_view<'live>(
+    program: quench_runtime::vm::ProgramId,
     function_id: u32,
     function: &Function,
     constants: &[Value],
-    heap: quench_runtime::vm::tier_queries::HeapReads<'_>,
+    vm: &quench_runtime::vm::Vm,
     kind: quench_runtime::bytecode::ProgramKind,
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
     sites: &[quench_runtime::bytecode::FieldSite],
     plan: crate::compiled::admission::RecordPlan,
-    diagnostics: bool,
-    proper_tail_calls: bool,
-    tiers: &'static Tiers,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
+    planned: Vec<quench_runtime::vm::engine_types::PlannedSite>,
 ) -> LaneView {
+    let heap = vm.heap_reads();
+    // Boxed before the records name it: a planned record's `mode` points at its site, which the view keeps in place.
+    let planned = planned.into_boxed_slice();
     let loop_tier = plan.loop_sites;
-    // A returning call is admitted by its function and host (`returning_call_admitted`), both fixed here.
-    let admits_returns = quench_runtime::staged::call_complete::concrete_admits_returning_call(proper_tail_calls, function.strict);
+    // A returning call is admitted by its function's strictness alone (`returning_call_admitted`), fixed here.
+    let admits_returns = quench_runtime::staged::call_complete::concrete_admits_returning_call(function.strict);
     // Each pass below reads instructions by PC; they are decoded once, here.
     let decoded: Vec<WideInstruction> = function.instructions().collect();
     // Every backward jump observes host termination, including allocation-free
@@ -169,6 +186,8 @@ pub(crate) fn derive_lane_view<'live>(
         .then(|| memory_register(function))
         .flatten();
     let entries = entered_records(&decoded, function.parameter_end_pc);
+    // The program and its facts that decide the by-name rows (`named_name_row`); none where the facts do not decide.
+    let named_program = facts.and_then(|facts| vm.programs.get(program).map(|residual| (residual, facts)));
     // Wasm instructions, whose fusions the passes under `wasm` make, occur only in Wasm
     // bodies: JavaScript compiles to none of them.
     let wasm = kind == quench_runtime::bytecode::ProgramKind::Wasm;
@@ -195,14 +214,20 @@ pub(crate) fn derive_lane_view<'live>(
             let op = instruction.op();
             let binds_memory =
                 quench_runtime::staged::wasm_instance_binding(op) && Some(instruction.a()) == memory_register;
-            let memory_access = MemoryLoad::from_direct_op(op).is_some()
-                || MemoryStore::from_direct_op(op).is_some();
+            let memory_access = quench_runtime::staged::wasm_memory::memory_load_from_direct_op(op).is_some()
+                || quench_runtime::staged::wasm_memory::memory_store_from_direct_op(op).is_some();
             let keeps_view = if memory_access {
                 Some(instruction.b()) == memory_register
             } else {
                 binds_memory
                     || memory_register.is_none_or(|register| !writes_in_lane(instruction, register))
             };
+            // The native kind the solve proves of this element access's base (`element_view`), where it names one: the
+            // record's immediate holds the kind's index and its row is that kind's typed row (`element_typed_row`).
+            let typed_element = facts
+                .and_then(|facts| facts.function_facts(function_id).element_view(pc as u32))
+                .and_then(quench_runtime::staged::typed_elements::native_kind_index)
+                .filter(|_| quench_runtime::staged::element_read_family(op) || quench_runtime::staged::element_write_family(op));
             let operand = operand_in_lane(instruction, pc, constants)
                 .filter(|_| {
                     keeps_view && fields_fit_in_lane(instruction, function) && call_fits_in_lane(instruction)
@@ -295,11 +320,34 @@ pub(crate) fn derive_lane_view<'live>(
                 // `super(...)`: the parent pushed in place in the frame the lane runs (`derived_frames`).
                 Some(LaneHandler { handler: derived_frames::super_construct_in_frame as Handler, produces: false })
             } else if let Some(kind) = returning_kind(instruction) {
-                Some(LaneHandler { handler: returning_handler(kind), produces: false })
+                let trusted = trusted_read(facts, vm, sites, function, function_id, pc as u32, instruction).map(|(handler, _, _)| handler);
+                Some(LaneHandler { handler: returning_handler(kind, vm, instruction, trusted), produces: false })
+            } else if let Some(index) = typed_element.filter(|_| acc == ACC_NONE) {
+                Some(LaneHandler {
+                    handler: element_typed_row(quench_runtime::staged::element_read_family(op), index),
+                    produces: false,
+                })
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler(instruction)).flatten() {
                 handler
             } else {
-                handler_in_lane(backward_jump, acc, op as usize)
+                // The installed row of the opcode and accumulator. Where that is the first-run field read, the load chooses its
+                // row from the atom and base instead (`named_read_row`); a by-name load or store chooses its row from its name's
+                // static resolution (`named_name_row`); a named store's default, from the class its receiver is proven to be
+                // (`named_store_row`). Either keeps the row's `produces`.
+                handler_in_lane(backward_jump, acc, op as usize).and_then(|row| {
+                    if by_name_default(op).is_some_and(|default| default as usize == row.handler as usize) {
+                        let (residual, facts) = named_program.as_ref()?;
+                        return named_name_row(vm, residual, program, facts, function_id, op, instruction.imm())
+                            .map(|handler| LaneHandler { handler, ..row });
+                    }
+                    if let Some(handler) = named_store_row(facts, function_id, pc as u32, instruction, row.handler) {
+                        return Some(LaneHandler { handler, ..row });
+                    }
+                    Some(match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, program, instruction, facts, function, sites, function_id, pc as u32)).flatten() {
+                        Some(handler) => LaneHandler { handler, ..row },
+                        None => row,
+                    })
+                })
             });
             // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
             // a record whose `a` carries result flags (a numeric local target) runs the general
@@ -327,6 +375,14 @@ pub(crate) fn derive_lane_view<'live>(
                     chosen
                 }
             });
+            // The trusted row a fact chose (`trusted_read`) reads its slot from the record's operand word: its field operand
+            // keeps the atom and holds the slot word, and a nested read's second word is its mode, where that row was chosen.
+            let trusted = trusted_read(facts, vm, sites, function, function_id, pc as u32, instruction)
+                .filter(|(handler, _, _)| selected.is_some_and(|chosen| chosen.handler as usize == *handler as usize));
+            // The closure read a fact chose (`named_read_row`) reads the closure cell its record's `mode` word addresses.
+            let closure_cell = selected.is_some_and(|chosen| chosen.handler as usize == closure_cell_handler() as usize)
+                .then(|| closure_cell_of(vm, program, facts, function_id, pc as u32, instruction))
+                .flatten();
             producer = selected
                 .filter(|selected| selected.produces)
                 .map(|_| instruction.a());
@@ -336,10 +392,19 @@ pub(crate) fn derive_lane_view<'live>(
             accumulator_registers.push(
                 carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
             );
+            // The kind's index goes to the immediate only where the typed row was the one chosen; any other row keeps
+            // the record's own immediate (a store's strictness among them).
+            let typed_element = typed_element.filter(|&index| selected.is_some_and(|selected| selected.handler as usize
+                == element_typed_row(quench_runtime::staged::element_read_family(op), index) as usize));
             let handler = selected.map_or(exit_lane as Handler, |selected| selected.handler) as *const ();
+            let name_native = named_program.as_ref().and_then(|(residual, _)| name_native_operand(residual, op, handler, instruction.imm()));
+            let name_global = named_program.as_ref().and_then(|(_, facts)| name_global_operand(vm, facts, op, handler, instruction.imm()));
             LaneInstruction {
                 handler,
-                operand: operand.unwrap_or(LaneOperand { imm: 0 }),
+                operand: match trusted {
+                    Some((_, word, _)) => LaneOperand { field: quench_runtime::vm::engine_types::FieldOperand { imm: instruction.imm(), shape: word } },
+                    None => typed_element.map(|index| LaneOperand { imm: index }).or(name_native).or(name_global).or(operand).unwrap_or(LaneOperand { imm: 0 }),
+                },
                 a: instruction.a(),
                 b: instruction.b(),
                 // A kept argument read finds the values after the function's registers, whose
@@ -350,18 +415,15 @@ pub(crate) fn derive_lane_view<'live>(
                     instruction.c()
                 },
                 call_link: std::cell::Cell::new(NO_CALL_LINK),
-                mode: 0,
+                // A closure read's record holds its closure cell's address here (`closure_cell_read`); a trusted nested
+                // read's, its second slot word (`trusted_nested`).
+                mode: closure_cell.map_or_else(|| trusted.map_or(0, |(_, _, mode)| mode), |cell| cell as u64),
             }
         })
         .collect();
     // Each record's handler before any fusion: a record still holding it
     // runs only its own instruction.
     let mut selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
-    // Whether a record's handler serves `op` with accumulator field `acc`.
-    let serves = |handler: *const (), op: u16, acc: u8| {
-        handler_in_lane(false, acc, usize::from(op))
-            .is_some_and(|served| handler == served.handler as *const ())
-    };
     // The direction and accumulator field (among `accs`) of the plain handler serving `op`
     // that `handler` is, for an instruction whose handler depends on its jump's direction.
     let plain_served = |handler: *const (), op: u16, accs: &[u8]| {
@@ -373,29 +435,6 @@ pub(crate) fn derive_lane_view<'live>(
             .map(|acc| (backward, acc))
         })
     };
-    // Runs of vector instructions execute as one record each (`vector_region`): placed
-    // before the fusions below, which then leave each region's first record alone. Only a
-    // body with SIMD operators derives the liveness they read.
-    let vectors = wasm
-        && decoded.iter().any(|instruction| quench_runtime::staged::wasm_simd(instruction.op()) || quench_runtime::staged::wasm_simd_shuffle(instruction.op()));
-    let vector_regions: Box<[vector_region::VectorRegion]> = match vectors.then(live).flatten() {
-        Some(live) => vector_region::vector_regions(
-            &decoded,
-            constants,
-            heap,
-            memory_register,
-            live,
-            &entries,
-            &exits,
-            &produced,
-        ),
-        None => Vec::new(),
-    }
-    .into_boxed_slice();
-    for region in &vector_regions {
-        records[region.first()].handler = vector_region::region_handler() as *const ();
-        records[region.first()].operand = LaneOperand { region };
-    }
     if wasm {
         // A table follows its selected entry's jump, so every entry must run in
         // the lane.
@@ -410,29 +449,13 @@ pub(crate) fn derive_lane_view<'live>(
             }
         }
     }
-    // A record's plain jump, with its direction.
-    let jump_direction = |handler: *const ()| {
-        [false, true].into_iter().find(|&backward| {
-            handler_in_lane(backward, ACC_NONE, quench_runtime::staged::JUMP_ROW as usize)
-                .is_some_and(|jump| handler == jump.handler as *const ())
-        })
-    };
-    let _entry_jumps = branch_table_entry_records(&decoded);
-    // A plain move or add of a constant whose next record jumps fuses with that jump
-    // (`staged::FUSED_ROWS`, `fuse_rows`), except at a hot OSR latch: its jump record stays
-    // visible to `install_loop_sites`, which runs before the fusion pass.
-    let _then_fuses = |records: &[LaneInstruction], pc: usize| {
-        pc + 1 < records.len()
-            && (serves(records[pc].handler, quench_runtime::staged::MOVE_ROW, ACC_NONE) || serves(records[pc].handler, quench_runtime::staged::WASM_I32_ADD_IMMEDIATE_ROW, ACC_NONE))
-            && jump_direction(records[pc + 1].handler).is_some_and(|backward| !(loop_tier && backward))
-    };
     specialize_returning_binaries(&decoded, constants, &mut records);
     specialize_frame_locals(function, &mut records);
-    specialize_captures(&mut records);
+    specialize_captures(function_id, facts, &mut records);
     // A Wasm view's records take no JavaScript context (`script_handler!`): it has no environment windows.
     let environment_window = (kind != quench_runtime::bytecode::ProgramKind::Wasm)
         .then(|| specialize_environment_window(function, &decoded, &mut records)).flatten();
-    let (loops, osr_rejections) = if loop_tier && kind != quench_runtime::bytecode::ProgramKind::Wasm {
+    let loops = if loop_tier && kind != quench_runtime::bytecode::ProgramKind::Wasm {
         install_loop_sites(
             function_id,
             function,
@@ -440,7 +463,6 @@ pub(crate) fn derive_lane_view<'live>(
             constants,
             sites,
             live,
-            (diagnostics, tiers),
             &mut records,
         )
     } else {
@@ -449,42 +471,36 @@ pub(crate) fn derive_lane_view<'live>(
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_constant_returns(&mut records);
-        specialize_script_calls(&mut records, function.undefined_register, admits_returns);
+        specialize_script_calls(&mut records, function.undefined_register, admits_returns, &planned, vm, facts, function_id);
+        specialize_constructs(&mut records, function_id, vm.programs.residual(program), facts);
         specialize_proved_arrays(&decoded, &mut records);
     }
-    // Loop kernels take their test records last, keeping each record's final handler.
-    // Every mode runs them: a loop a kernel takes keeps no tier site (`loop_sites`), since the
-    // compiled tiers project the interpreter's fastest form of the loop, its kernel.
-    let loop_kernels = if !wasm {
-        loop_kernel::install_loop_kernels(&decoded, constants, function, &exits, &mut records, live().map(|masks| &**masks))
-    } else {
-        Box::default()
-    };
+    // A Math call whose callee's field read the solve names (`fuse_math_calls`) takes its field record's row here, before the
+    // fusion passes read the records' handlers.
+    if let Some(facts) = facts.filter(|_| !wasm) {
+        fuse_math_calls(facts, function_id, vm, &decoded, &mut records);
+    }
     // Adjacent generated rows the staged pair list names run as one generated record.
     // Wasm records fuse too (a bit-field extraction then its i32 operator).
     // A plain `Binary` record with no accumulator field runs its operator's row rather than fusing
     // (`operator_row`): its operator and operand tests fold, which a fused pair's or chain's run-time
     // operator does not. Records that read the accumulator wait for the pass at the end, past the
     // accumulator hazard check, which recognizes only generated rows.
-    // The int32 kinds of the registers (`int_kinds`), which pick the operator records' proven forms.
-    // A loop kernel or vector region writes its registers from its own code, under no kind.
-    let int_kinds = (!wasm && loop_kernels.is_empty() && vector_regions.is_empty())
-        .then(|| int_kinds::analyze(&decoded, constants, live().map(|masks| &**masks), usize::from(function.registers),
-            resolves_names, plan.speculates))
-        .flatten();
-    let mut int_speculating = Vec::new();
+    // The solve's cells of this function's registers choose the operator records' instances (`operand_type`).
+    let facts = facts.filter(|_| !wasm && int32_projectable(&decoded, resolves_names));
+    let types = |pc: u32, register: u16| operand_type(facts, function_id, pc, register);
     if !wasm {
         let before: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
-        specialize_plain_operators(&decoded, constants, &mut records, true, int_kinds.as_ref(), &mut int_speculating);
+        specialize_plain_operators(&decoded, constants, &mut records, true, &types);
         for ((record, selected), before) in records.iter().zip(selected.iter_mut()).zip(before) {
             if record.handler != before {
                 *selected = record.handler;
             }
         }
     }
-    let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, constants, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
-    let proven_counters = int_kinds.as_ref().map(|kinds| int_steps::prove_loop_steps(&decoded, &mut records, kinds, &mut int_speculating)).unwrap_or_default();
-    if let Some(kinds) = int_kinds.as_ref() { prove_compare_jumps(constants, &mut records, kinds, &mut int_speculating); }
+    let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
+    let proven_counters = int_steps::prove_loop_steps(&decoded, &mut records, facts, function_id);
+    specialize_compare_jumps(constants, &mut records, facts, function_id);
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -521,57 +537,27 @@ pub(crate) fn derive_lane_view<'live>(
     }
     // Last, so the fusions above and the accumulator check see each record's generated row.
     if !wasm {
-        specialize_plain_operators(&decoded, constants, &mut records, false, None, &mut int_speculating);
+        specialize_plain_operators(&decoded, constants, &mut records, false, &|_, _| quench_runtime::typed_ir::Type::ANY);
         specialize_register_operands(&mut records);
+        specialize_boolean_flags(&mut records);
     }
-    let min_run = if closes_loop(&decoded, &exits) {
-        LANE_ENTRY_MIN_RUN
-    } else {
-        LANE_ENTRY_MIN_CALL_RUN
-    };
-    // A resumed JavaScript loop body's straight tail jumps back to its head, so its run
-    // continues there; a Wasm body resumes nowhere, and following its jumps only made more
-    // of its PCs entries, whose lane runs a `return_call` chain left at once (TOD-19:
-    // `return_call_ref.wast` 510 -> 797 ms).
-    let runs = runs_ahead_in_lane(&decoded, &exits, min_run, !wasm);
-    let mut entries = vec![0u64; runs.len().div_ceil(u64::BITS as usize)];
-    for (pc, (run, reads)) in runs.iter().zip(&reads_accumulator).enumerate() {
-        if *run >= min_run && !reads {
+    let mut entries = vec![0u64; exits.len().div_ceil(u64::BITS as usize)];
+    for (pc, (&exit, reads)) in exits.iter().zip(&reads_accumulator).enumerate() {
+        if (!exit || quench_runtime::staged::awaits(decoded[pc].op())) && !reads {
             entries[pc / u64::BITS as usize] |= 1 << (pc % u64::BITS as usize);
         }
     }
     let entries = entries.into_boxed_slice();
     let returns_from_entry = reads_accumulator.first() == Some(&false) && entry_run_returns(&decoded, &exits);
     let activation = ActivationShape::of(function);
-    let hinted_records = |names: bool| -> Box<[u32]> {
-        decoded
-            .iter()
-            .enumerate()
-            .filter(|&(pc, instruction)| {
-                holds_field_hint(instruction.op())
-                    && is_global_name_access(instruction.op()) == names
-                    && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
-            })
-            .map(|(pc, _)| pc as u32)
-            .collect()
-    };
-    let (field_records, name_records) = (hinted_records(false), hinted_records(true));
+    let field_records: Box<[u32]> = decoded
+        .iter()
+        .enumerate()
+        .filter(|&(pc, instruction)| holds_field_hint(instruction.op()) && !loops.iter().any(|site| site.hookable && site.header as usize == pc))
+        .map(|(pc, _)| pc as u32)
+        .collect();
     let string_case_filters = string_case_filter::specialize(heap, constants, &decoded, &mut records);
-    let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
-    seed_declared_feedback(function, &records);
-    // Whether a record may read a field through `this`: the trusted rows' sites (`note_lane_this`).
-    let this_rows = decoded.iter().any(|instruction| {
-        matches!(instruction.op(), quench_runtime::bytecode::Op::SetThisField | quench_runtime::bytecode::Op::SetThisFieldStrict | quench_runtime::bytecode::Op::CallThisMethod)
-            || match instruction.field_lookup() {
-                Some(quench_runtime::bytecode::FieldLookup::Atom { base, .. }) => base == quench_runtime::bytecode::FieldBase::THIS,
-                Some(quench_runtime::bytecode::FieldLookup::Site(index)) => sites.get(index).is_none_or(|site| site.base == quench_runtime::bytecode::FieldBase::THIS),
-                None => false,
-            }
-            || [instruction.a(), instruction.b(), instruction.c()].into_iter().any(|word| {
-                let operand = Operand(word);
-                operand.kind() == Some(quench_runtime::bytecode::OperandKind::Field) && sites.get(usize::from(operand.payload())).is_none_or(|site| site.base == quench_runtime::bytecode::FieldBase::THIS)
-            })
-    });
+    let records = Records::new(records);
     let first = records.base();
     // The first loop closing at a backedge owns it, as a front-to-back search would find it.
     let mut loop_at_backedge: Vec<(u32, u32)> = loops.iter().enumerate().map(|(index, site)| (site.backedge, index as u32)).collect();
@@ -580,18 +566,14 @@ pub(crate) fn derive_lane_view<'live>(
     LaneView {
         records,
         entries,
-        tiers,
         memory_register,
         activation,
-        this_rows,
         target_body: std::cell::OnceCell::new(),
         _string_case_filters: string_case_filters,
         environment_window,
         returns_from_entry,
         loops,
         loop_at_backedge: loop_at_backedge.into_boxed_slice(),
-        vector_regions,
-        _loop_kernels: loop_kernels.into_iter().map(|kernel| kernel as Box<dyn std::any::Any>).collect(),
         start: std::cell::Cell::new(first),
         prologue: std::cell::UnsafeCell::new(LaneInstruction {
             handler: std::ptr::null(),
@@ -604,34 +586,25 @@ pub(crate) fn derive_lane_view<'live>(
         }),
         tier_direct: std::cell::Cell::new(None),
         tier: std::cell::OnceCell::new(),
-        entry: crate::compiled::entry_cell::EntryCell::new(),
+        entry: crate::compiled::entry_cell::EntryCell::new(crate::compiled::lane_body_abi::entry_stub()),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
-        plain_backward_jump_sites: decoded
-            .iter()
-            .enumerate()
-            .filter(|(pc, instruction)| quench_runtime::staged::jumps(instruction.op()) && instruction.jump_target() <= *pc as u32)
-            .count(),
-        osr_rejections: (!osr_rejections.is_empty())
-            .then(|| osr_rejections.into_boxed_slice()),
         field_records,
-        name_records,
-        int_speculating: int_speculating.into_boxed_slice(),
         proven_counters: proven_counters.into_boxed_slice(),
-        speculative_registers: int_kinds.as_ref().map(|kinds| kinds.speculative().collect()).unwrap_or_default(),
+        planned_calls: planned,
     }
 }
 
-/// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`
-/// operand: every field read or store's of its receiver, and a global name access's or top-level
-/// `var` capture read's of the global object (`name_row`, `lane_load_root_var`).
-pub(super) fn holds_field_hint(op: Op) -> bool {
-    quench_runtime::staged::stores_field(op) || quench_runtime::staged::reads_named_field(op) || quench_runtime::staged::reads_capture(op) || is_global_name_access(op)
+/// Whether the solve's int32 cells hold for this body's registers. A dynamic scope access (`resolves_names`) or a
+/// superinstruction writes registers the solve does not follow, so a body with either takes no cell's int32.
+fn int32_projectable(decoded: &[WideInstruction], resolves_names: bool) -> bool {
+    !resolves_names && !decoded.iter().any(|instruction| instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::SuperinstructionIndex)
 }
 
-/// Whether an instruction is a by-name load (`LOAD_NAME`) or store, whose hint a global
-/// lexical declaration clears (`LaneView::clear_name_hints`).
-pub(super) fn is_global_name_access(op: Op) -> bool {
-    op.traits().has(quench_runtime::bytecode::Traits::GLOBAL_NAME_ACCESS)
+/// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field` operand: every field read or
+/// store's of its receiver, and a top-level `var` capture read's of the global object (`lane_load_root_var`). A by-name
+/// load keeps no hint: its field operand, where its row reads one, is a slot word the load chose (`name_global_operand`).
+pub(super) fn holds_field_hint(op: Op) -> bool {
+    quench_runtime::staged::stores_field(op) || quench_runtime::staged::reads_named_field(op) || quench_runtime::staged::reads_capture(op)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
@@ -656,9 +629,8 @@ pub(super) fn install_loop_sites<'live>(
     constants: &[Value],
     sites: &[quench_runtime::bytecode::FieldSite],
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
-    (diagnostics, tiers): (bool, &'static Tiers),
     records: &mut [LaneInstruction],
-) -> (Box<[LoopSite]>, Vec<(crate::compiled::RegionRejection, usize)>) {
+) -> Box<[LoopSite]> {
     let backward = jump_row::<JUMP>(true) as *const ();
     let table_entries = branch_table_entry_records(decoded);
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
@@ -678,7 +650,6 @@ pub(super) fn install_loop_sites<'live>(
     // --jit: axios -3.6%, playwright -2.5% instructions).
     let masks = std::cell::OnceCell::new();
     let live = || *masks.get_or_init(live);
-    let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
         .filter(|pc| records[*pc].handler == backward && matches!(quench_runtime::staged::Operation::<(), ()>::decode(decoded[*pc], quench_runtime::staged::DecodeContext::EMPTY), Some(quench_runtime::staged::Operation::Jump)) && !fused_into(*pc))
         .map(|pc| {
@@ -708,20 +679,7 @@ pub(super) fn install_loop_sites<'live>(
                     )
                 }
                 Err(failure) => {
-                    let reason = failure.reason;
-                    if diagnostics {
-                        if let Some((_, count)) =
-                            rejections.iter_mut().find(|(existing, _)| *existing == reason)
-                        {
-                            *count += 1;
-                        } else {
-                            rejections.push((reason, 1));
-                        }
-                    }
-                    // A loop the region analysis rejects keeps its site, diagnostics or not: its
-                    // function's lane body may run it (`loop_retire_in_lane`), and the
-                    // site retires to the plain jump where none does. A diagnostics run tiers
-                    // as any other.
+                    // A loop the region analysis rejects gets no site (`is_admitted`): its plain jump stays.
                     (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
                 }
             };
@@ -737,40 +695,21 @@ pub(super) fn install_loop_sites<'live>(
                     header,
                     backedge: pc as u32,
                     jump: records[pc].jump(),
-                    header_handler: std::cell::Cell::new(std::ptr::null()),
                     hookable: holds_no_call_link(decoded[header as usize].op()),
-                    taken: std::cell::Cell::new(0),
-                    needed: std::cell::Cell::new(tiers.loops.warmup_taken),
                     entering: std::cell::Cell::new(true),
                     enclosing: std::cell::OnceCell::new(),
-                    declines_in_row: std::cell::Cell::new(0),
-                    declines: Default::default(),
-                    skipped_entries: std::cell::Cell::new(0),
-                    diagnostics,
-                    tiers,
-                    lane_backedge_count: std::cell::Cell::new(0),
-                    native_entry_attempts: std::cell::Cell::new(0),
-                    native_region_runs: std::cell::Cell::new(0),
-                    tier_ups: std::cell::Cell::new(0),
-                    body_runs: std::cell::Cell::new(0),
-                    entry_guard_misses: std::cell::Cell::new(0),
-                    native_exits: std::cell::Cell::new(0),
-                    widenings: std::cell::Cell::new(0),
-                    compile_attempts: std::cell::Cell::new(0),
-                    compile_successes: std::cell::Cell::new(0),
-                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::initial(tiers)), body_seen: std::cell::Cell::new(0), body_wait: std::cell::Cell::new(0), body_offered: std::cell::Cell::new(false),
-                    refused_epoch: std::cell::Cell::new(loop_runs::NO_REFUSAL), refused_view: std::cell::Cell::new(std::ptr::null()), refused_wait: std::cell::Cell::new(0), refused_span: std::cell::Cell::new(0), enclosed: std::cell::Cell::new(true),
+                    tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
+                    enclosed: std::cell::Cell::new(true),
                 },
             )
         })
+        // A loop the region analysis does not admit keeps its plain jump for good, decided here at load.
+        .filter(|(_, site)| site.is_admitted())
         .collect();
     let mut sites = sites;
-    // The tiers run a loop the interpreter's kernel takes slower than the kernel does (`Recurrence::beats_rows`): in
-    // every mode that loop keeps no site, so its kernel runs it (`install_loop_kernels`).
-    sites.retain(|(pc, site)| !loop_kernel::LoopKernel::beats_rows(decoded, constants, function, (site.header as usize, *pc), live().map(|masks| &**masks)));
     let headers: Vec<u32> = sites.iter().map(|(_, site)| site.header).collect();
     for (pc, site) in &mut sites {
-        // The header names its site by the distance to the site's jump (`header_site_in_lane`).
+        // The header names its site by the distance to the site's jump.
         site.hookable &= headers.iter().filter(|header| **header == site.header).count() == 1
             && u16::try_from(*pc - site.header as usize).is_ok_and(|distance| distance < NO_CALL_LINK);
     }
@@ -794,7 +733,7 @@ pub(super) fn install_loop_sites<'live>(
             records[site.header as usize].call_link.set((pc - site.header as usize) as u16);
         }
     }
-    (sites, rejections)
+    sites
 }
 
 /// Gives each `Binary` record that a `Return` consumes its returning form
@@ -810,29 +749,45 @@ pub(super) fn specialize_returning_binaries(decoded: &[WideInstruction], constan
     }
 }
 
-/// Whether `instruction` is a plain `Binary` of an arithmetic operator (`arithmetic_operators!`), which
-/// `specialize_plain_operators` gives its operator's row.
-pub(super) fn arithmetic_binary(instruction: WideInstruction) -> bool {
-    macro_rules! pick { ($op:expr) => { () }; }
-    quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::Binary) && instruction.result_flags() == 0
-        && arithmetic_operators!(instruction.binary_operator(), pick).is_some()
+/// The row of a `Binary` operator that no Number operation denotes (`**`, `in`, `instanceof`): `binary_operator_miss`
+/// of that operator. It decides the operands' pure value (`binary_values`) and takes any other pair to the general
+/// step. The operator is the row's static parameter, so the row reads none from its record.
+fn value_operator_row(code: u32) -> Option<Handler> {
+    use oxc_ast::ast::BinaryOperator as B;
+    use quench_runtime::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
+    if code == B::Exponential as u32 {
+        Some(crate::dispatch_fast::binary_operator_miss::<{ B::Exponential as u8 }> as Handler)
+    } else if code == IN_OPERATOR {
+        Some(crate::dispatch_fast::binary_operator_miss::<{ IN_OPERATOR as u8 }> as Handler)
+    } else if code == INSTANCEOF_OPERATOR {
+        Some(crate::dispatch_fast::binary_operator_miss::<{ INSTANCEOF_OPERATOR as u8 }> as Handler)
+    } else {
+        None
+    }
 }
 
-/// Gives each plain `Binary` record of an arithmetic operator that still runs its generated row, at
-/// any accumulator field, that operator's `operator_row`: the operator becomes a parameter of the
-/// instantiation, so the row neither decodes nor dispatches on it (179 against 64 instructions for an
-/// int32 add). Its operand kinds and any int32 constant operand pick the form (`OPERANDS_*`). Its misses go back to the
-/// generated row, so every operand pair stays decided by the one staged row.
+/// Gives each plain `Binary` record that still runs its generated row, at any accumulator field, the row of its
+/// operator, so the operator is a parameter of the instantiation and the row neither decodes nor dispatches on it at
+/// run time (179 against 64 instructions for an int32 add). A Number operator (`arithmetic_operators!`, and
+/// `relation_operators!` aside from strict equality) takes `operator_row`; `===` and `!==` take `strict_equality_row`,
+/// unless the cells prove both operands int32s; `**`, `in` and `instanceof`, which no Number operation denotes, take
+/// `value_operator_row` (accumulator-free records only: that row reads its operands from the registers).
 ///
-/// Where the registers' int32 kinds (`kinds`) prove every register operand of a record with no
-/// accumulator field an int32, it takes the proven form (`OPERANDS_PROVEN`, `OPERANDS_PROVEN_INT32`),
-/// which reads them with no tag test; one that reads a speculative register is listed in
-/// `speculating` with its checked form (`LaneView::retire_int_speculation`). Where the kinds prove no such
-/// operand, a register pair takes the guarded form (`OPERANDS_GUARDED`): it tests the tags and runs the proven one.
+/// Chosen once at load from the solver, and never rewritten by execution: a record keeps the handler this pass gives
+/// it, and a decline takes the operator's generic step in place (`operator_row`). A record's operand kinds and any
+/// int32 constant operand pick the kind form (`OPERANDS_*`). Where the solve's cells (`types`, by pc and register)
+/// prove the register operands int32s, the proven forms apply: `OPERANDS_PROVEN` over two registers, which runs the
+/// Number operation, so a result leaving int32 is a Number. `OPERANDS_PROVEN_INT32` (the int32 operation) is installed
+/// only where the destination's cell after the record (`types(pc + 1, destination)`) is an int32 too, so it cannot
+/// decline. Where a proven register meets an int32 constant whose result may leave int32, the record takes the
+/// constant form (`OPERANDS_REGISTER_CONSTANT`), which tags the register. The kind forms stay for operands the solve
+/// leaves `Any`. Where the cells type neither operand of a register pair, a Number operator takes the guarded form
+/// (`OPERANDS_GUARDED`): it tests the tags once per execution and runs the proven one. Two objects under `===` take
+/// `object_identity_row`, and a strict equality of other operands keeps `strict_equality_row`.
 pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
-    kinds: Option<&int_kinds::IntKinds>, speculating: &mut Vec<(u32, *const (), *const ())>) {
+    types: &dyn Fn(u32, u16) -> quench_runtime::typed_ir::Type) {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
-    use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
+    use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
         ($acc:expr) => {
             generated_row!(quench_runtime::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
@@ -850,12 +805,30 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
         let int32_constant = |operand: quench_runtime::bytecode::Operand| operand.kind() == Some(Constant)
             && constants.get(usize::from(operand.payload())).is_some_and(|constant| constant.as_int().is_some());
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        let form = match (left.kind(), right.kind()) {
+        let kind_form = match (left.kind(), right.kind()) {
             (Some(Register), Some(Register)) => OPERANDS_REGISTERS,
             (Some(Register), Some(Constant)) if int32_constant(right) => OPERANDS_REGISTER_INT32,
             (Some(Register), Some(Constant)) => OPERANDS_REGISTER_CONSTANT,
-            _ if int32_constant(left) || int32_constant(right) => OPERANDS_INT32,
             _ => OPERANDS_ANY,
+        };
+        // A register operand's cell type before this record; a constant has none (`ANY`).
+        let typed = |operand: quench_runtime::bytecode::Operand| operand.register_index()
+            .map_or(quench_runtime::typed_ir::Type::ANY, |register| types(pc as u32, register));
+        let proven = |operand: quench_runtime::bytecode::Operand| int32_cell(typed(operand));
+        // The destination's cell after this record, which is its cell before the next one. The record falls through
+        // to `pc + 1`, so the next cell holds what this record wrote (joined with any other path into `pc + 1`).
+        let result_in_int32 = instruction.defined_register().is_some_and(|result| int32_result_cell(types(pc as u32 + 1, result)));
+        // The proven forms: two register operands the cells prove int32s (`OPERANDS_PROVEN`, the Number operation over
+        // them). The int32 operation (`OPERANDS_PROVEN_INT32`) needs its result to stay within int32 (or be a Boolean, a
+        // relation's). An int32 form the solver does not prove is no form at all: it would decline on every double and take
+        // the generic step each time, since execution never rewrites the record. So an unproven register with an int32
+        // constant takes the constant form (the checked Number operation over any Number pair); any other unproven pair
+        // takes the generic form.
+        let (form, proven_form) = match kind_form {
+            OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => (OPERANDS_REGISTERS, Some(OPERANDS_PROVEN)),
+            OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) && result_in_int32 => (OPERANDS_REGISTER_INT32, Some(OPERANDS_PROVEN_INT32)),
+            OPERANDS_REGISTER_INT32 => (OPERANDS_REGISTER_CONSTANT, None),
+            _ => (kind_form, None),
         };
         // The int32 form's constant, folded into the record (`operator_row` reads it from `mode`, which
         // no fused record has here: fusion runs after this pass and assigns `mode` with its handler).
@@ -868,7 +841,6 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
                     OPERANDS_REGISTERS => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTERS> as Handler,
                     OPERANDS_REGISTER_INT32 => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_INT32> as Handler,
                     OPERANDS_REGISTER_CONSTANT => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_CONSTANT> as Handler,
-                    OPERANDS_INT32 => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_INT32> as Handler,
                     _ => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_ANY> as Handler,
                 }
             };
@@ -882,46 +854,85 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
                 }
             };
         }
-        if let Some(handler) = arithmetic_operators!(instruction.binary_operator(), pick) {
-            records[pc].handler = handler as *const ();
-            // The proven form, where the kinds prove each register operand an int32.
-            let proven = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| kinds.is_some_and(|kinds| kinds.proven(register)));
-            let speculative = |operand: quench_runtime::bytecode::Operand| operand.register_index().is_some_and(|register| kinds.is_some_and(|kinds| kinds.of(register) == int_kinds::Kind::Speculative));
-            let proven_form = match form {
-                OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => Some(OPERANDS_PROVEN),
-                OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) => Some(OPERANDS_PROVEN_INT32),
-                _ => None,
+        let code = instruction.binary_operator();
+        let strict = code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 || code == oxc_ast::ast::BinaryOperator::StrictInequality as u32;
+        // Each operand a Number: an int32 or a double register, or a Number constant. A record of such operands takes
+        // the Number instance with no operand guard, since its operands' tags are known to be Numbers.
+        let number = |operand: quench_runtime::bytecode::Operand| match operand.kind() {
+            Some(Register) => number_cell(typed(operand)),
+            Some(Constant) => constants.get(usize::from(operand.payload())).is_some_and(|constant| constant.as_number().is_some()),
+            _ => false,
+        };
+        let numbers = number(left) && number(right);
+        // Both operands objects: a strict equality is their identity, as distinct objects are never strictly equal.
+        let objects = object_cell(typed(left)) && object_cell(typed(right));
+        if strict && proven_form.is_none() && objects {
+            records[pc].handler = if code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
+                lane_frame::object_identity_row::<false> as Handler as *const ()
+            } else {
+                lane_frame::object_identity_row::<true> as Handler as *const ()
             };
-            macro_rules! proven_at {
-                ($op:expr) => {
-                    if proven_form == Some(OPERANDS_PROVEN) {
-                        operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN> as Handler
-                    } else {
-                        operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN_INT32> as Handler
-                    }
-                };
-            }
-            if proven_form.is_some() && let Some(proven_handler) = arithmetic_operators!(instruction.binary_operator(), proven_at) {
-                if speculative(left) || speculative(right) {
-                    speculating.push((pc as u32, proven_handler as *const (), handler as *const ()));
-                }
-                records[pc].handler = proven_handler as *const ();
-            }
-            // The guarded form, where the kinds prove neither register of a register pair: the same operator's
-            // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`). Not listed in
-            // `speculating`: its guard is the check, and its general form is the record's requicken target. A
-            // register and an int32 constant keep their int32 form, which tests one tag already.
-            macro_rules! guarded_at {
-                ($op:expr) => { operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_GUARDED> as Handler };
-            }
-            if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && let Some(guarded_handler) = arithmetic_operators!(instruction.binary_operator(), guarded_at) {
-                records[pc].handler = guarded_handler as *const ();
-            }
-        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
-            records[pc].handler = strict_equality_row::<false> as Handler as *const ();
-        } else if instruction.binary_operator() == oxc_ast::ast::BinaryOperator::StrictInequality as u32 {
-            records[pc].handler = strict_equality_row::<true> as Handler as *const ();
+            continue;
         }
+        // A strict equality whose operands the cells do not type Numbers keeps `strict_equality_row`.
+        if strict && proven_form.is_none() && !numbers {
+            records[pc].handler = if code == oxc_ast::ast::BinaryOperator::StrictEquality as u32 {
+                strict_equality_row::<false> as Handler as *const ()
+            } else {
+                strict_equality_row::<true> as Handler as *const ()
+            };
+            continue;
+        }
+        macro_rules! proven_at {
+            ($op:expr) => {
+                if proven_form == Some(OPERANDS_PROVEN) {
+                    operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN> as Handler
+                } else {
+                    operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_PROVEN_INT32> as Handler
+                }
+            };
+        }
+        // The guarded form, where the cells prove neither register of a register pair: the same operator's
+        // instance that tests the tags once and runs the proven one (`OPERANDS_GUARDED`), and runs the general
+        // register instance otherwise. A register and an int32 constant keep their int32 form, which tests one
+        // tag already.
+        macro_rules! guarded_at {
+            ($op:expr) => { operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, ACC_NONE, { $op as u8 }, OPERANDS_GUARDED> as Handler };
+        }
+        if let Some(handler) = arithmetic_operators!(code, pick).or_else(|| relation_operators!(code, pick)) {
+            records[pc].handler = handler as *const ();
+        } else if acc == 0 && let Some(handler) = value_operator_row(code) {
+            records[pc].handler = handler as *const ();
+        }
+        if proven_form.is_some() && let Some(proven_handler) = arithmetic_operators!(code, proven_at).or_else(|| relation_operators!(code, proven_at)) {
+            records[pc].handler = proven_handler as *const ();
+        }
+        if proven_form.is_none() && form == OPERANDS_REGISTERS && acc == 0 && !numbers && let Some(guarded_handler) = arithmetic_operators!(code, guarded_at).or_else(|| relation_operators!(code, guarded_at)) {
+            records[pc].handler = guarded_handler as *const ();
+        }
+    }
+}
+
+/// The comparison jump instance each plain comparison jump record takes at load, chosen once here at derivation, in the order
+/// the constant and the solve decide it: a register tested against a constant `null` or `undefined`, or a constant Boolean, takes
+/// that test's instance (`lane_frame::constant_compare_jump`); a pair of int32 cells takes its proven instance
+/// (`lane_frame::proven_compare_jump`), which reads its register operands untagged; a register the cells type `null`,
+/// `undefined` or Boolean takes that test (`lane_frame::typed_compare_jump`); a register pair no cell decides takes its guarded
+/// instance (`lane_frame::guarded_compare_jump`) where the solve has facts, which tests the tags once per execution; any other register pair or register
+/// and constant takes the formed comparison (`lane_frame::formed_compare_jump`). Runs after fusion, so the fused runs and back
+/// edges keep the plain rows they were built on.
+pub(super) fn specialize_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
+    function: u32) {
+    use quench_runtime::bytecode::Operand;
+    for (pc, record) in records.iter_mut().enumerate() {
+        let pc = pc as u32;
+        let typed = |operand: Operand| operand.register_index().map_or(quench_runtime::typed_ir::Type::ANY, |register| operand_type(facts, function, pc, register));
+        let chosen = lane_frame::constant_compare_jump(record, constants)
+            .or_else(|| lane_frame::proven_compare_jump(record, constants, |operand| int32_cell(typed(operand))))
+            .or_else(|| lane_frame::typed_compare_jump(record, constants, &typed))
+            .or_else(|| facts.and_then(|_| lane_frame::guarded_compare_jump(record)))
+            .or_else(|| lane_frame::formed_compare_jump(record, constants));
+        if let Some(handler) = chosen { record.handler = handler as *const (); }
     }
 }
 
@@ -1032,15 +1043,22 @@ pub(super) fn specialize_proved_arrays(decoded: &[WideInstruction], records: &mu
     }
 }
 
+/// Whether `handler` is the test `TEST`'s row: its plain row, or for a comparison jump any instance a record takes
+/// once `specialize_compare_jumps` forms it (`compare_instances`). Every instance decodes the record's own comparison.
+fn test_row<const TEST: u16>(handler: *const ()) -> bool {
+    lane_frame::plain_row::<TEST>(handler)
+        || (TEST == quench_runtime::staged::COMPARE_JUMP_ROW && compare_instances::is_compare_instance(handler))
+}
+
 /// Whether the target run holds: `PREFIX` (when there is one) at the target, `COPY` (when there is one)
 /// after it, then `TEST`. With no prefix, `TEST` is the target record itself.
 pub(super) fn target_run_holds<const PREFIX: u16, const COPY: u16, const TEST: u16>(target: *const (), after: &dyn Fn(usize) -> *const ()) -> bool {
     if const { PREFIX == quench_runtime::staged::NO_LINK } {
-        lane_frame::plain_row::<TEST>(target)
+        test_row::<TEST>(target)
     } else if const { COPY == quench_runtime::staged::NO_LINK } {
-        lane_frame::plain_row::<PREFIX>(target) && lane_frame::plain_row::<TEST>(after(1))
+        lane_frame::plain_row::<PREFIX>(target) && test_row::<TEST>(after(1))
     } else {
-        lane_frame::plain_row::<PREFIX>(target) && lane_frame::plain_row::<COPY>(after(1)) && lane_frame::plain_row::<TEST>(after(2))
+        lane_frame::plain_row::<PREFIX>(target) && lane_frame::plain_row::<COPY>(after(1)) && test_row::<TEST>(after(2))
     }
 }
 
@@ -1071,29 +1089,6 @@ pub(super) fn proven_step_forms() -> [(Handler, Handler); 6] {
 /// The (checked, proven) pair whose checked form is `handler`.
 pub(super) fn checked_step(handler: *const ()) -> Option<(Handler, Handler)> {
     proven_step_forms().into_iter().find(|(checked, _)| *checked as *const () == handler)
-}
-
-/// The comparison jumps whose operands the int32 kinds prove (`lane_frame::proven_compare_jump`): each takes its proven
-/// instance, which reads its register operands untagged. One that reads a speculative register is listed in
-/// `speculating` with its formed instance (`LaneView::retire_int_speculation`), which it takes back once an update
-/// overflows that register. A register pair the kinds do not prove takes its guarded instance (`guarded_compare_jump`),
-/// which tests the tags once per execution. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
-pub(super) fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], kinds: &int_kinds::IntKinds,
-    speculating: &mut Vec<(u32, *const (), *const ())>) {
-    use quench_runtime::bytecode::Operand;
-    let proven = |operand: Operand| operand.register_index().is_some_and(|register| kinds.proven(register));
-    let speculative = |operand: Operand| operand.register_index().is_some_and(|register| kinds.of(register) == int_kinds::Kind::Speculative);
-    for (pc, record) in records.iter_mut().enumerate() {
-        let (left, right) = (Operand(record.b), Operand(record.c));
-        let Some((proven_handler, formed)) = lane_frame::proven_compare_jump(record, constants, proven) else {
-            if let Some(guarded) = lane_frame::guarded_compare_jump(record) { record.handler = guarded as *const (); }
-            continue
-        };
-        if speculative(left) || speculative(right) {
-            speculating.push((pc as u32, proven_handler as *const (), formed as *const ()));
-        }
-        record.handler = proven_handler as *const ();
-    }
 }
 
 /// `handler`, a back edge's `FUSED_TARGET` record, with its test's comparison fixed where it is the
@@ -1250,11 +1245,81 @@ pub(crate) fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: b
     }
 }
 
+/// Fuses a Math call with the field read of its callee, at load: the field record takes the row of its Math site
+/// (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`), which runs the read and the call past it
+/// (`math_row_resume`). The shape is the bytecode's: the read of a callee register, the copies of one or two
+/// arguments into the call's window, then the `Call` of that register. The callee's identity decides it: the
+/// solve proves the callee register holds the builtin `Math.x` (`Identity::Builtin`, which the solve keeps only where
+/// proven, `identity::proven`), where `x` is a Math function a Math row runs. Without that fact no record changes.
+/// A record the row declines takes the generic step in place.
+fn fuse_math_calls(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, vm: &quench_runtime::vm::Vm,
+    decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
+    use quench_runtime::bytecode::Op;
+    use quench_runtime::typed_ir::Identity;
+    let function = facts.function_facts(function_id);
+    let own = own_bound_handlers();
+    let copy = generated_row!(quench_runtime::staged::MOVE_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    let constant = generated_row!(quench_runtime::staged::LOAD_CONST_ROW, ACC_NONE, FLAG_UNREAD) as Handler as *const ();
+    // The field read of `member` off the register `callee` before the call at `call_pc`, is Math function `member`:
+    // the solve's identity of the callee register, which the closed world proves in every run.
+    let math_callee = |call_pc: usize, callee: u16, member: u32| -> bool {
+        let Some(Identity::Builtin(path)) = function.cell_at(call_pc as u32, callee).map(|cell| cell.identity) else { return false };
+        let is_math = path.member == Some(member) && vm.atom_name(path.global) == "Math";
+        is_math && quench_runtime::vm::native_rows::math_function(vm.atom_name(member))
+            .is_some_and(|native| super::native_calls::math_handler(native).is_some())
+    };
+    // The field record at `pc` reads a register's own field, and writes `callee`.
+    let reads_callee = |records: &[LaneInstruction], pc: usize, callee: u16| {
+        let field = &records[pc];
+        field.a == callee && own[1..].iter().step_by(2).any(|&handler| handler == field.handler)
+            && quench_runtime::staged::reads_named_field(decoded[pc].op())
+    };
+    for call_pc in 2..records.len() {
+        if decoded[call_pc].op() != Op::Call {
+            continue;
+        }
+        let (call_a, call_b, imm) = (records[call_pc].a, records[call_pc].b, decoded[call_pc].imm());
+        if quench_runtime::staged::call_complete::concrete_returns_callee_completion(call_a) {
+            continue;
+        }
+        let window = ImmediateLayout::call_window_base(imm);
+        match ImmediateLayout::argument_count(imm) {
+            1 => {
+                let (copy_pc, field_pc) = (call_pc - 1, call_pc - 2);
+                let argument = &records[copy_pc];
+                if decoded[copy_pc].op() != Op::Move || argument.handler != copy || argument.a != window || argument.a == records[field_pc].a {
+                    continue;
+                }
+                if reads_callee(&*records, field_pc, call_b) && math_callee(call_pc, call_b, decoded[field_pc].imm()) {
+                    records[field_pc].handler = generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE) as Handler as *const ();
+                }
+            }
+            2 if call_pc >= 3 => {
+                let (second_pc, first_pc, field_pc) = (call_pc - 1, call_pc - 2, call_pc - 3);
+                let (first, second) = (&records[first_pc], &records[second_pc]);
+                let constant_second = decoded[second_pc].op() == Op::LoadConst && second.handler == constant;
+                let shaped = decoded[first_pc].op() == Op::Move && first.handler == copy
+                    && (constant_second || (decoded[second_pc].op() == Op::Move && second.handler == copy))
+                    && first.a == window && second.a == window + 1;
+                let reads_apart = call_b != window && call_b != window + 1 && records[field_pc].a != window && records[field_pc].a != window + 1;
+                if shaped && reads_apart && reads_callee(&*records, field_pc, call_b) && math_callee(call_pc, call_b, decoded[field_pc].imm()) {
+                    records[field_pc].handler = if constant_second {
+                        generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE) as Handler as *const ()
+                    } else {
+                        generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as Handler as *const ()
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// The target test code of a back edge's record `mode` (`lane_frame::TARGET_TEST_SHIFT`): the code of the run's first record (`run(k)`) past its prefix and copy rows where that is a plain comparison jump.
 pub(super) fn target_test_word<'a>(run: impl Fn(usize) -> Option<&'a LaneInstruction>) -> u64 {
     use quench_runtime::staged::{COMPARE_JUMP_ROW as TEST, FUSED_TARGET_COPY_ROWS as C, FUSED_TARGET_PREFIX_ROWS as P};
     let passes = |h| plain_row::<{ P[0] }>(h) || plain_row::<{ P[1] }>(h) || plain_row::<{ P[2] }>(h) || plain_row::<{ C[0] }>(h);
-    let test = (0..3).map_while(&run).find(|record| !passes(record.handler)).filter(|record| plain_row::<TEST>(record.handler));
+    let test = (0..3).map_while(&run).find(|record| !passes(record.handler)).filter(|record| test_row::<TEST>(record.handler));
     test.map_or(0, |record| u64::from(lane_frame::target_comparison(record)) << lane_frame::TARGET_TEST_SHIFT)
 }
 
@@ -1367,13 +1432,15 @@ pub(super) fn specialize_environment_window(
 /// record past the function's own scope keeps its row: an outer `LoadCapture` reads through the
 /// lane's remembered walks (`Reads::of_captures`), an outer `StoreCapture` takes the general step.
 /// A depth-0 record is its row read as
-/// the zero depth it is (`row_near`).
-pub(super) fn specialize_captures(records: &mut [LaneInstruction]) {
+/// the zero depth it is (`row_near`), or the root row of a root-owned slot a root store dominates (`root_capture_row`).
+pub(super) fn specialize_captures(function_id: u32, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, records: &mut [LaneInstruction]) {
     for pc in 0..records.len() {
         let record = &records[pc];
         let own = ImmediateLayout::capture_depth(record.imm()) == 0;
         let handler: Handler = if !own {
             continue;
+        } else if let Some(root) = root_capture_row(function_id, facts, record) {
+            root
         } else if let Some(near) = row_near::<CAPTURE_READ>(record.handler).or_else(|| row_near::<CAPTURE_WRITE>(record.handler)) {
             // Its own scope's capture: the row reads its depth as the zero it is.
             near
@@ -1382,6 +1449,462 @@ pub(super) fn specialize_captures(records: &mut [LaneInstruction]) {
         };
         records[pc].handler = handler as *const ();
     }
+}
+
+/// The root row of a depth-0 `LoadCapture` record (`FLAG_ROOT`), where the program's root function owns the slot it reads and
+/// a root store dominates every read of it (`dominated_root_store`): the read is the root binding's from the start, so the
+/// record takes no walk. `None` otherwise, and for a record that is not its installed default row.
+fn root_capture_row(function_id: u32, facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, record: &LaneInstruction) -> Option<Handler> {
+    let facts = facts?;
+    let slot = ImmediateLayout::capture_slot(record.imm());
+    let owner = facts.function_facts(function_id).capture_owner(slot)?;
+    if owner != quench_runtime::vm::ROOT_FUNCTION_ID || facts.dominated_root_store(quench_runtime::typed_ir::FactKey::Slot { owner, slot }).is_none() {
+        return None;
+    }
+    row_near::<CAPTURE_READ>(record.handler)?;
+    Some(generated_row!(quench_runtime::staged::LOAD_CAPTURE_ROW, ACC_NONE, FLAG_ROOT) as Handler)
+}
+
+/// Gives each `IncDec` record its row at the flag its immediate names (`FLAG_SET`, else `FLAG_CLEAR`), which is static
+/// (`lane_frame::flag_row`). Runs last, past the fusion and accumulator passes, which find the plain rows.
+fn specialize_boolean_flags(records: &mut [LaneInstruction]) {
+    for record in records.iter_mut() {
+        if let Some(row) = lane_frame::flag_row::<{ quench_runtime::staged::INC_DEC_ROW }>(record.handler, record.imm() != 0) {
+            record.handler = row as *const ();
+        }
+    }
+}
+
+/// The kind of base a trusted read names: `this`, a register, or a frame local (`FieldBase::local`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TrustedBase {
+    This,
+    Register,
+    Local,
+}
+
+/// The classes a trusted read's base proves at `pc`, with its kind: `this`'s (`this_classes`, where the receiver is trusted),
+/// a register's cell's, or a local slot's cell's (`local_cell`), each a closed set of classes of direct objects. A class alone
+/// names no object, and an unbound or undefined base has none, so the base must hold a direct object in every run. A local
+/// is read only where it is a plain frame local (`plain_frame_local`, `plain_local_slot_is_safe`): an environment holds any
+/// other, and a root's slots stand for outer bindings. `None` for a nested base, and where no fact proves the set.
+fn trusted_base(facts: &quench_runtime::compile::aot_facts::AotFacts, function: &Function, function_id: u32, pc: u32,
+    base: quench_runtime::bytecode::FieldBase) -> Option<(TrustedBase, quench_runtime::typed_ir::Classes)> {
+    if base.0 == quench_runtime::bytecode::FieldBase::NESTED {
+        return None;
+    }
+    let (kind, classes) = if base == quench_runtime::bytecode::FieldBase::THIS {
+        if !receiver_trusted(Some(facts), function_id) {
+            return None;
+        }
+        (TrustedBase::This, facts.this_classes(function_id))
+    } else {
+        let (kind, cell) = match base.local_index() {
+            Some(slot) => {
+                let plain = function.parent.is_some()
+                    && plain_frame_local(function, usize::from(slot))
+                    && function.plain_local_slot_is_safe(usize::from(slot));
+                if !plain {
+                    return None;
+                }
+                (TrustedBase::Local, facts.function_facts(function_id).local_cell(slot)?)
+            }
+            None => (TrustedBase::Register, facts.function_facts(function_id).cell_at(pc, base.register_index()?)?),
+        };
+        if cell.ty == quench_runtime::typed_ir::Type::NEVER || !cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY) {
+            return None;
+        }
+        (kind, cell.classes)
+    };
+    classes.proven().then_some((kind, classes))
+}
+
+/// The one form and operand word every class of `classes` shares for a trusted read of `atom` (`trusted_operand`), so one
+/// row and one word serve the whole set. `None` where a class lacks the field or the classes disagree.
+fn trusted_shared(facts: &quench_runtime::compile::aot_facts::AotFacts, classes: quench_runtime::typed_ir::Classes, atom: u32)
+    -> Option<(quench_runtime::compile::aot_facts::ClassForm, u32)> {
+    let mut shared: Option<(quench_runtime::compile::aot_facts::ClassForm, u32)> = None;
+    for &class in classes.ids() {
+        let operand = trusted_operand(facts, class, atom)?;
+        if shared.is_some_and(|first| first != operand) {
+            return None;
+        }
+        shared = Some(operand);
+    }
+    shared
+}
+
+/// The trusted own-field read of the `GetField` at `pc` (`TRUSTED_*`), where the facts prove its base's classes
+/// (`trusted_base`, `trusted_shared`). Returns the row and the operand word it reads (`FieldOperand::shape`): the field's
+/// slot in the cell, a spilled slot word past the cell's spill slot (`spill_from`), with `TRUSTED_HOLE` where a class may
+/// leave the field absent.
+pub(super) fn trusted_named_read(facts: &quench_runtime::compile::aot_facts::AotFacts, function: &Function, function_id: u32, pc: u32,
+    instruction: WideInstruction) -> Option<(Handler, u32)> {
+    trusted_read_of(facts, function, function_id, pc, instruction.b(), instruction.imm())
+}
+
+/// `trusted_named_read` for the read of `atom` on the base word `base` at `pc`: the same trusted row and slot word, for
+/// any read of the base's field (a getter's inlined field read, `inlined_getter`, names a field other than its read's).
+fn trusted_read_of(facts: &quench_runtime::compile::aot_facts::AotFacts, function: &Function, function_id: u32, pc: u32, base: u16,
+    atom: u32) -> Option<(Handler, u32)> {
+    let (kind, classes) = trusted_base(facts, function, function_id, pc, quench_runtime::bytecode::FieldBase(base))?;
+    let (form, word) = trusted_shared(facts, classes, atom)?;
+    let handler = match (kind, form) {
+        // A local's object is the frame's local slot, whose form the word carries (`TRUSTED_LOCAL`).
+        (TrustedBase::Local, _) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_LOCAL),
+        (TrustedBase::This, quench_runtime::compile::aot_facts::ClassForm::Own) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_THIS),
+        (TrustedBase::Register, quench_runtime::compile::aot_facts::ClassForm::Own) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER),
+        (TrustedBase::This, quench_runtime::compile::aot_facts::ClassForm::Run) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS),
+        (TrustedBase::Register, quench_runtime::compile::aot_facts::ClassForm::Run) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER),
+    };
+    Some((handler, word))
+}
+
+/// The trusted returning read of the `GetField` at `pc` (`RETURNING_TRUSTED_THIS`, `RETURNING_TRUSTED_REGISTER`): the slot
+/// word `trusted_named_read` proves, read with no guard and completed by its return (`returning_field_site`). A local base
+/// takes none: its returning read is the general one.
+pub(super) fn trusted_returning_read(facts: &quench_runtime::compile::aot_facts::AotFacts, function: &Function, function_id: u32, pc: u32,
+    instruction: WideInstruction) -> Option<(Handler, u32)> {
+    let (kind, classes) = trusted_base(facts, function, function_id, pc, quench_runtime::bytecode::FieldBase(instruction.b()))?;
+    let (_, word) = trusted_shared(facts, classes, instruction.imm())?;
+    let handler = match kind {
+        TrustedBase::This => generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_THIS),
+        TrustedBase::Register => generated_row!(FIELD_LEAF_READ, ACC_NONE, RETURNING_TRUSTED_REGISTER),
+        TrustedBase::Local => return None,
+    };
+    Some((handler, word))
+}
+
+/// The nested read `a.b.c` of the record's site `sites[imm]` at `pc`, whose two hops are trusted (`NESTED_TRUSTED`): the base
+/// proves one class `C1` holding `a`'s field `b` at a slot word, and `hop_class` proves `b`'s value is one class `C2` holding
+/// `c` at its word. Returns the row, `b`'s word (the operand's) and `c`'s (the record's mode). A local base takes no chain.
+fn trusted_nested(facts: &quench_runtime::compile::aot_facts::AotFacts, vm: &quench_runtime::vm::Vm, function: &Function,
+    sites: &[quench_runtime::bytecode::FieldSite], function_id: u32, pc: u32, instruction: WideInstruction)
+    -> Option<(Handler, u32, u32)> {
+    let site = sites.get(instruction.imm() as usize)?;
+    let (first, _) = site.first;
+    let (second, _) = site.second?;
+    if vm.is_private_name(first) || vm.is_private_name(second) {
+        return None;
+    }
+    let (kind, classes) = trusted_base(facts, function, function_id, pc, site.base)?;
+    if kind == TrustedBase::Local {
+        return None;
+    }
+    let [class] = classes.ids() else { return None };
+    let (_, first_word) = trusted_operand(facts, *class, first)?;
+    let next = facts.hop_class(*class, first)?;
+    let (_, second_word) = trusted_operand(facts, next, second)?;
+    Some((generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_TRUSTED), first_word, second_word))
+}
+
+/// The trusted row a load-time fact chooses for the field read `instruction` at `pc`, with the operand word it reads and the
+/// record's mode: a returning read's returning row (`trusted_returning_read`), a nested read's chain (`trusted_nested`), else
+/// a getter's inlined field read (`inlined_getter`), else the named row (`trusted_named_read`). A private name's read takes none. The caller keeps the row only where it chose that
+/// row, so the word goes only with the handler it was proven for.
+fn trusted_read(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, vm: &quench_runtime::vm::Vm, sites: &[quench_runtime::bytecode::FieldSite],
+    function: &Function, function_id: u32, pc: u32, instruction: WideInstruction) -> Option<(Handler, u32, u64)> {
+    let facts = facts?;
+    let nested = instruction.b() == quench_runtime::bytecode::FieldBase::NESTED;
+    if !quench_runtime::staged::field_read_family(instruction.op()) || (!nested && vm.is_private_name(instruction.imm())) {
+        return None;
+    }
+    if returning_kind(instruction) == Some(RETURNING_FIELD) {
+        return trusted_returning_read(facts, function, function_id, pc, instruction).map(|(handler, word)| (handler, word, 0));
+    }
+    if nested {
+        return trusted_nested(facts, vm, function, sites, function_id, pc, instruction)
+            .map(|(handler, first, second)| (handler, first, u64::from(second)));
+    }
+    if runs_getter(Some(facts), function_id, pc) {
+        return inlined_getter(Some(facts), function, function_id, pc, instruction).map(|(handler, word)| (handler, word, 0));
+    }
+    trusted_named_read(facts, function, function_id, pc, instruction).map(|(handler, word)| (handler, word, 0))
+}
+
+/// The storage form and operand word a trusted read of `atom` in instances of `class` takes: the form of the class's
+/// cell (`class_form`) and the field's slot word (`field_slot`, a spilled word past `spill_from`), with `TRUSTED_HOLE` where
+/// the class may leave the field absent (`!field_always_stored`). `None` where the class is no fixed cell, lacks the field,
+/// or its word has the hole bit set, which the operand cannot carry.
+fn trusted_operand(facts: &quench_runtime::compile::aot_facts::AotFacts, class: u32, atom: u32)
+    -> Option<(quench_runtime::compile::aot_facts::ClassForm, u32)> {
+    let form = facts.class_form(class)?;
+    let slot = u32::from(facts.field_slot(class, atom)?);
+    let word = match facts.spill_from(class) {
+        Some(spill) if slot >= spill => quench_runtime::staged::field_cache_layout::spilled_slot(spill, slot - spill),
+        _ => slot,
+    };
+    // A word with the hole bit set is one the operand cannot carry; no fact of a realistic class reaches it.
+    if word & TRUSTED_HOLE != 0 {
+        return None;
+    }
+    let hole = if facts.field_always_stored(class, atom) { 0 } else { TRUSTED_HOLE };
+    Some((form, word | hole))
+}
+
+/// Whether the read at `pc` runs a getter the census names (`FunctionFacts::accessor_arms`): an accessor of the read's name
+/// that is not a setter.
+fn runs_getter(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32) -> bool {
+    facts.is_some_and(|facts| facts.function_facts(function_id).accessor_arms(pc).is_some_and(|arms| !arms.setter))
+}
+
+/// The trusted row and operand word of the getter the read at `pc` runs, where the census names exactly one getter body B,
+/// B is `return this.f` (`AotFacts::returning_read`), and the read's base is a proven receiver whose `f` is trusted
+/// (`trusted_read_of`): the getter inlined as its field's trusted read. `None` for any other read, and where any of
+/// those facts fails.
+fn inlined_getter(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: &Function, function_id: u32, pc: u32,
+    instruction: WideInstruction) -> Option<(Handler, u32)> {
+    let facts = facts?;
+    // A local base's getter read is the general read's, which runs the getter (`named_read_row`): no inlined field read.
+    if quench_runtime::bytecode::FieldBase(instruction.b()).local_index().is_some() {
+        return None;
+    }
+    let arms = facts.function_facts(function_id).accessor_arms(pc).filter(|arms| !arms.setter)?;
+    let [arm] = &*arms.arms else { return None };
+    let read = facts.returning_read(arm.function)
+        .filter(|read| read.base == quench_runtime::compile::body_forms::ReadBase::This)?;
+    trusted_read_of(facts, function, function_id, pc, instruction.b(), read.atom)
+}
+
+/// The row of a `GetField` the census names a getter for (`runs_getter`): the getter's inlined trusted row where it is
+/// `return this.f` on a proven receiver (`inlined_getter`), else the getter protocol row, whose call the read makes
+/// (`get_field_getter_miss`). A nested read's getter is the general read's, which runs it.
+fn getter_read_row(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: &Function, function_id: u32, pc: u32,
+    instruction: WideInstruction) -> Handler {
+    if instruction.b() == quench_runtime::bytecode::FieldBase::NESTED {
+        return row_get_field_general as Handler;
+    }
+    match inlined_getter(facts, function, function_id, pc, instruction) {
+        Some((handler, _)) => handler,
+        None => protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>(),
+    }
+}
+
+/// The row that reads a closure from its record's closure cell (`CLOSURE_CELL_SITE`).
+fn closure_cell_handler() -> Handler {
+    generated_row!(FIELD_LEAF_READ, ACC_NONE, CLOSURE_CELL_SITE)
+}
+
+/// Whether the base `base` of the read at `pc` is a direct object in every run, of proven classes whose instances are fixed
+/// cells (`class_form`): so the read runs no getter, proxy trap or throw, and its value is the field the classes give. `this`
+/// takes the receiver's proof (`receiver_trusted`), a register its cell's type and classes.
+fn proven_plain_base(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, pc: u32, base: u16) -> bool {
+    let base = quench_runtime::bytecode::FieldBase(base);
+    let classes = if base == quench_runtime::bytecode::FieldBase::THIS {
+        if !receiver_trusted(Some(facts), function_id) {
+            return false;
+        }
+        facts.this_classes(function_id)
+    } else {
+        let Some(register) = base.register_index() else { return false };
+        let Some(cell) = facts.function_facts(function_id).cell_at(pc, register) else { return false };
+        if cell.ty == quench_runtime::typed_ir::Type::NEVER || !cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY) {
+            return false;
+        }
+        cell.classes
+    };
+    classes.proven() && !classes.ids().is_empty() && classes.ids().iter().all(|&class| facts.class_form(class).is_some())
+}
+
+/// The closure cell a read's value is, where the solve proves the read's result (the register `a` after `pc`, `cell_at(pc + 1)`)
+/// is the one closure object of body B (`Identity::Closure`, proven) and the program holds B's closure cell
+/// (`ProgramStore::closure_cell_slot`). The cell is full at every read (`closure_cell_read`).
+fn closure_cell_of(vm: &quench_runtime::vm::Vm, program: quench_runtime::vm::ProgramId,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32, instruction: WideInstruction)
+    -> Option<*const std::cell::OnceCell<Value>> {
+    // A result with flags (a returning read's return, a numeric local's target) is no register the row writes. A nested
+    // read's hops may run getters the row would skip, so only a direct base's read takes the row.
+    if instruction.a() & !quench_runtime::bytecode::REGISTER_MASK != 0 || instruction.b() == quench_runtime::bytecode::FieldBase::NESTED {
+        return None;
+    }
+    let facts = facts?;
+    if !proven_plain_base(facts, function_id, pc, instruction.b()) {
+        return None;
+    }
+    let register = instruction.a();
+    let quench_runtime::typed_ir::Identity::Closure(body) = facts.function_facts(function_id).cell_at(pc + 1, register)?.identity else {
+        return None;
+    };
+    vm.programs.closure_cell_slot(program, body)
+}
+
+/// The first-run row of a `GetField`, chosen at load from its atom and base. A private
+/// name reads through its private row (`Vm::is_private_name`: the atom's text decides it). A read the census names an
+/// accessor for takes the getter's inlined trusted row (`inlined_getter`), else the getter protocol row, whose call
+/// the read makes (`get_field_getter_miss`). A read whose result is one proven closure takes the closure row
+/// (`closure_cell_of`). A `length` read takes the trusted row where a fact proves its class (`trusted_read`), else the
+/// length row of its register base (`length_row`), else the general read (`Vm::reads_function_info`: the VM's fixed atoms decide it). Any other read
+/// takes the trusted row where a fact proves its class, else the own-field row, whose misses reach the general read.
+/// A local base takes its trusted row where its slot's cell proves one (`trusted_read`); otherwise `None`, which
+/// `row_get_field_first` reads. `None` for any other opcode.
+fn named_read_row(vm: &quench_runtime::vm::Vm, program: quench_runtime::vm::ProgramId, instruction: WideInstruction,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: &Function, sites: &[quench_runtime::bytecode::FieldSite],
+    function_id: u32, pc: u32) -> Option<Handler> {
+    let base = instruction.b();
+    let atom = instruction.imm();
+    if !quench_runtime::staged::field_read_family(instruction.op()) {
+        return None;
+    }
+    // A local base reads its trusted row only: a private name's read, or one the census names a getter for, keeps the general read.
+    let local = quench_runtime::bytecode::FieldBase(base).local_index().is_some();
+    if local && (vm.is_private_name(atom) || runs_getter(facts, function_id, pc)) {
+        return None;
+    }
+    if vm.is_private_name(atom) && base != quench_runtime::bytecode::FieldBase::NESTED {
+        // The private field row of the base.
+        return Some(single_base_handler(base,
+            generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS),
+            generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER),
+            protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>()));
+    }
+    // A getter runs its call, so no value cell answers a read the census names one for.
+    if runs_getter(facts, function_id, pc) {
+        return Some(getter_read_row(facts, function, function_id, pc, instruction));
+    }
+    if closure_cell_of(vm, program, facts, function_id, pc, instruction).is_some() {
+        return Some(closure_cell_handler());
+    }
+    if let Some((handler, _, _)) = trusted_read(facts, vm, sites, function, function_id, pc, instruction) {
+        return Some(handler);
+    }
+    // A local base with no trusted row keeps `row_get_field_first`, the general read.
+    if local {
+        return None;
+    }
+    if vm.reads_function_info(atom) && atom == vm.length_atom {
+        return Some(match quench_runtime::bytecode::FieldBase(base).register_index() {
+            Some(register) if base != quench_runtime::bytecode::FieldBase::NESTED => length_row(facts, function_id, pc, register),
+            _ => general_handler(base),
+        });
+    }
+    // The generated own read of the form of no particular hint, which binds the lane's object records on its first
+    // miss where they are not yet bound. A nested base takes the general read: no load-time row reads its hops.
+    let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
+    Some(single_base_handler(base, this, register, row_get_field_general))
+}
+
+/// The row of a register's `length` read at `pc`, chosen at load from the solve. A base the solve proves a string (its
+/// type is string only) takes the string row; a base holding typed arrays of one native kind (`view_kind`) takes the
+/// typed-length row. Any other base takes the array row, whose misses reach the general length reads
+/// (`row_length_other`). Without facts, the array row.
+fn length_row(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32, register: u16) -> Handler {
+    let Some(facts) = facts else { return generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE) };
+    let function = facts.function_facts(function_id);
+    if function.cell_at(pc, register).is_some_and(|cell| cell.ty.string_fact().is_some()) {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, STRING_LENGTH_SITE)
+    } else if function.view_kind(pc, register).is_some() {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, TYPED_LENGTH_SITE)
+    } else {
+        generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE)
+    }
+}
+
+/// The row of a named store (`SetField` and its strict and `this` forms) whose installed default is `row`, chosen at
+/// load from the class its receiver is proven to be. A store the class's facts do not prove always stored takes the
+/// general write (`GENERAL_SITE`); a store into a field the class keeps as a narrower domain takes the tracked row
+/// (`TRACKED_SITE`), whose decline takes the general step in place. A store the facts cannot type keeps `row`: the
+/// record's hint and the VM's stores decide it, as they always have. `None` keeps `row`.
+fn named_store_row(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32,
+    instruction: WideInstruction, row: Handler) -> Option<Handler> {
+    use quench_runtime::bytecode::StoreReceiver;
+    use quench_runtime::compile::aot_facts::StoreForm;
+    let store = instruction.op().field_store()?;
+    if row as usize != field_store_row(store) as usize {
+        return None;
+    }
+    let facts = facts?;
+    let function = facts.function_facts(function_id);
+    let classes = match store.receiver {
+        StoreReceiver::This => function.this_classes(),
+        StoreReceiver::Register => function.cell_at(pc, instruction.b())?.classes,
+    };
+    let quench_runtime::typed_ir::Classes::Set { ids, len: 1, proven: true } = classes else {
+        return None;
+    };
+    let (class, atom) = (ids[0], instruction.imm());
+    // A fixed cell keeps every field of its union, so a field it does not always store is an add no instance takes:
+    // the general write. A class whose cells may change keeps `row`.
+    if !facts.class_fixed_cell(class) {
+        return None;
+    }
+    if !facts.field_always_stored(class, atom) {
+        return Some(field_store_row_at::<GENERAL_SITE>(store));
+    }
+    match facts.store_form(class, atom)? {
+        StoreForm::Own => None,
+        StoreForm::Tracked => Some(field_store_row_at::<TRACKED_SITE>(store)),
+    }
+}
+
+/// The default row of the by-name load or store `op`, which `named_name_row` replaces at load. `None` for any other opcode.
+fn by_name_default(op: quench_runtime::bytecode::Op) -> Option<Handler> {
+    if let Some(load) = quench_runtime::staged::name_load(op) {
+        return Some(name_row::<FLAG_UNREAD>(load));
+    }
+    (op == quench_runtime::bytecode::Op::StoreName).then(|| generated_row!(quench_runtime::staged::GLOBAL_WRITE_ROW, ACC_NONE, FLAG_UNREAD) as Handler)
+}
+
+/// The row of the by-name load or store `op` of `atom` in function `function_id` of program `id`, chosen at load from the
+/// program's static facts: the name's resolution (`name_resolution`), the function's static name scope (`names_static`),
+/// the closed world's global lexical names (`global_lexical_names`) and the function's window scope
+/// (`CallPlan::holds_window_scope`). A global load of a declared name takes its slot row (`global_slot_word`). A global
+/// store keeps its default row, whose miss takes the general store, except a name the closed world declares lexically,
+/// whose stores leave to the general path. `None` is the generic step, which the record takes where no fact decides it.
+fn named_name_row(vm: &quench_runtime::vm::Vm, residual: &quench_runtime::ResidualProgram, id: quench_runtime::vm::ProgramId,
+    facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, op: quench_runtime::bytecode::Op, atom: u32) -> Option<Handler> {
+    let names_static = facts.function_facts(function_id).names_static();
+    let window = residual.function_get(function_id as usize).is_some_and(|body| body.call_plan(residual).holds_window_scope());
+    let lexical = facts.global_lexical_names().binary_search(&atom).is_ok();
+    let internal = vm.atom_class(atom).contains(AtomClass::INTERNAL);
+    if let Some(load) = quench_runtime::staged::name_load(op) {
+        return match name_resolution(vm, residual, id, names_static, atom) {
+            NameResolution::Native => Some(name_row::<FLAG_NAME_NATIVE>(load)),
+            NameResolution::Undefined => Some(name_row::<FLAG_NAME_UNDEFINED>(load)),
+            NameResolution::Global if lexical => None,
+            NameResolution::Global => global_slot_word(vm, facts, atom).map(|_| name_row::<FLAG_NAME_GLOBAL_SLOT>(load)),
+            NameResolution::Intrinsic => Some(name_row::<FLAG_NAME_INTRINSIC>(load)),
+            NameResolution::General if window => Some(name_row::<FLAG_SCOPE>(load)),
+            NameResolution::General if !internal => Some(name_row::<{ lane_frame::FLAG_PROBE }>(load)),
+            NameResolution::General => None,
+        };
+    }
+    if names_static && !internal && vm.programs.names_are_global(id) {
+        return (!lexical).then(|| by_name_default(op)).flatten();
+    }
+    window.then(lane_frame::scoped_store_row)
+}
+
+/// The slot word of the global object's own data property `atom`, which a by-name load of it reads through its
+/// `FLAG_NAME_GLOBAL_SLOT` row (`name_global_operand`). A closed world fixes the object's layout, so the word holds while
+/// the program runs; `None` where the world is open, the name is not declared, or the realm holds no such slot yet.
+fn global_slot_word(vm: &quench_runtime::vm::Vm, facts: &quench_runtime::compile::aot_facts::AotFacts, atom: u32) -> Option<u32> {
+    // The closed world fixes the global object's shape (`global_shape`): a declared name's slot and a builtin's (read, never
+    // changed) stay where they are.
+    let declared = facts.closed() && facts.global_shape().is_some_and(|shape| shape.declared().contains(&atom) || shape.builtins().contains(&atom));
+    declared.then(|| vm.global_slot(atom, false)).flatten().map(|slot| slot.slot)
+}
+
+/// The operand of a by-name load whose row is `FLAG_NAME_GLOBAL_SLOT` (`named_name_row`): the slot word its row reads
+/// (`NameRead::GlobalSlot`), beside the name's atom, which the record keeps as its immediate.
+fn name_global_operand(vm: &quench_runtime::vm::Vm, facts: &quench_runtime::compile::aot_facts::AotFacts, op: quench_runtime::bytecode::Op,
+    handler: *const (), atom: u32) -> Option<LaneOperand> {
+    let load = quench_runtime::staged::name_load(op)?;
+    if handler != name_row::<FLAG_NAME_GLOBAL_SLOT>(load) as *const () {
+        return None;
+    }
+    Some(LaneOperand { field: FieldOperand { imm: atom, shape: global_slot_word(vm, facts, atom)? } })
+}
+
+/// The operand of a by-name load whose row is `FLAG_NAME_NATIVE` (`named_name_row`): the discriminant of the native its
+/// intrinsic name stands for, which `name_value_in_lane` reads by index with no search. It is the field form with no hint
+/// (`NO_FIELD_RECEIVER`), so `clear_hints` leaves the immediate, the field's first word, in place.
+fn name_native_operand(residual: &quench_runtime::ResidualProgram, op: quench_runtime::bytecode::Op, handler: *const (), atom: u32) -> Option<LaneOperand> {
+    let load = quench_runtime::staged::name_load(op)?;
+    if handler != name_row::<FLAG_NAME_NATIVE>(load) as *const () {
+        return None;
+    }
+    let native = quench_runtime::bytecode::intrinsic_name_native(&residual.atoms[atom as usize])?;
+    Some(LaneOperand { field: FieldOperand { imm: native as u32, shape: quench_runtime::vm::NO_FIELD_RECEIVER } })
 }
 
 /// Gives each plain two-operand arithmetic record whose operands are both registers its row at
@@ -1463,51 +1986,6 @@ pub(super) fn specialize_returning_operator(instruction: WideInstruction, consta
     record.operand = LaneOperand { constant };
 }
 
-/// Whether some loop of `function`, from a backward jump's target through the jump, has no
-/// instruction the lane exits at.
-/// Whether one activation of `function` may run an instruction more than once: it has a
-/// backward jump, or a branch table, whose entries may jump back.
-pub(super) fn may_loop(function: &Function) -> bool {
-    function.code.iter().enumerate().any(|(pc, packed)| {
-        let instruction = function.widened(*packed);
-        quench_runtime::staged::wasm_branch_table(instruction.op())
-            || (instruction.op().immediate_role() == ImmediateRole::JumpTarget
-                && instruction.imm() as usize <= pc)
-    })
-}
-
-/// How many lane records control reaches from each PC before one that exits, counted up
-/// to `cap`: where `follows_jumps`, a `Jump` continues at its target, as a resumed loop body
-/// does, and any other record at the next PC. Each pass extends every count by one step, so
-/// `cap` passes reach the fixed point the capped counts allow; without jumps one pass does.
-/// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
-/// without the general loop (`Vm::stop_awaits_in_lane`), so a short run to it repays its entry.
-pub(super) fn runs_ahead_in_lane(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
-    let next = |pc: usize| match decoded[pc].op() {
-        _ if follows_jumps && quench_runtime::staged::jump_family(decoded[pc].op()) => decoded[pc].imm() as usize,
-        _ => pc + 1,
-    };
-    let mut runs = vec![0usize; exits.len()];
-    for _ in 0..cap {
-        let mut changed = false;
-        for pc in (0..exits.len()).rev() {
-            let run = if quench_runtime::staged::awaits(decoded[pc].op()) {
-                cap
-            } else if exits[pc] {
-                0
-            } else {
-                (1 + runs.get(next(pc)).copied().unwrap_or(0)).min(cap)
-            };
-            changed |= run != runs[pc];
-            runs[pc] = run;
-        }
-        if !changed {
-            break;
-        }
-    }
-    runs
-}
-
 /// Whether the straight-line run from the first instruction, through its unconditional jumps,
 /// reaches a `Return` before any record the lane exits at.
 pub(super) fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
@@ -1523,15 +2001,6 @@ pub(super) fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> 
         }
     }
     false
-}
-
-pub(super) fn closes_loop(decoded: &[WideInstruction], exits: &[bool]) -> bool {
-    decoded.iter().enumerate().any(|(pc, &instruction)| {
-        let target = instruction.imm() as usize;
-        instruction.op().immediate_role() == ImmediateRole::JumpTarget
-            && target <= pc
-            && !exits[target..=pc].contains(&true)
-    })
 }
 
 /// The register field of `instruction` that reads `register`, as an
@@ -1673,7 +2142,7 @@ pub(super) unsafe fn enter_prepared_in_lane(
 ) -> Ip {
     // The callback family's window row (`staged::call_callback::fill_callback`).
     quench_runtime::staged::call_callback::fill_callback(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+        &mut quench_runtime::staged::Concrete::pure(),
         registers.expose_provenance() as u64, args.as_ptr().expose_provenance() as u64, entry.window(),
     );
     unsafe { enter_filled_in_lane(cx, entry, registers) }
@@ -1727,8 +2196,6 @@ pub(super) unsafe fn reenter_prepared_values_in_lane<const N: usize>(
                 && vm(cx).lane_stack.top_frame().is_some_and(|frame| frame.window_ptr() == registers),
             "a returning activation's context is its own"
         );
-        let vm = vm(cx);
-        vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
         // SAFETY: the program store keeps a derived view alive with its program.
         (*entry.view).start()
     }
@@ -1747,7 +2214,7 @@ pub(super) unsafe fn fill_prepared_values_in_lane<const N: usize>(
 ) -> *mut Value {
     // The callback family's window row of held words (`staged::call_callback::fill_callback_words`).
     quench_runtime::staged::call_callback::fill_callback_words(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()),
+        &mut quench_runtime::staged::Concrete::pure(),
         registers.expose_provenance() as u64, values.map(Value::to_bits), entry.window(),
     );
     registers
@@ -1766,7 +2233,6 @@ pub(super) unsafe fn enter_filled_in_lane(
     let vm = unsafe { vm(cx) };
     unsafe { vm.lane_stack.values.set_top(registers.add(entry.size + lane_values::CONTEXT)) };
     install_entry_in_lane(cx, entry, registers);
-    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
     // SAFETY: the program store keeps a derived view alive with its program.
     unsafe { (*entry.view).start() }
 }
@@ -1781,10 +2247,8 @@ pub(super) fn install_entry_in_lane(cx: *mut LaneContext, entry: &PreparedEntry,
     }
     // The callback family's context row (`staged::call_callback::install_callback`).
     let context = entry.context();
-    // SAFETY: the running lane's context; the program store keeps the view alive.
-    note_lane_this(unsafe { vm(cx) }, Value::from_bits(context.this), || unsafe { (*entry.view).this_rows });
     quench_runtime::staged::call_callback::install_callback(
-        &mut quench_runtime::staged::Concrete::new(std::ptr::null()), registers.expose_provenance() as u64, context,
+        &mut quench_runtime::staged::Concrete::pure(), registers.expose_provenance() as u64, context,
     );
 }
 
@@ -1807,10 +2271,3 @@ pub(super) unsafe fn enter_suspended_in_lane(
     unsafe { (*entry.view).records().add(pc) }
 }
 
-/// Counts a leave of a lane body at a place its body had not named before on the field sites of
-/// the instruction there (`Vm::note_field_leave`): a place counts once per body.
-pub(super) fn note_leave_in_lane(cx: *mut LaneContext, function: u32, (inlined, pc): (Option<u32>, usize)) {
-    let function = inlined.unwrap_or(function);
-    // SAFETY: the running lane's VM and program.
-    unsafe { vm(cx).note_field_leave(&*(*cx).code, function, pc) };
-}

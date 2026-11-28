@@ -15,6 +15,13 @@
 #![feature(stmt_expr_attributes)]
 #![cfg_attr(all(test, feature = "bench-primitives"), feature(test))]
 
+// The Wasm operator lists are pure `macro_rules!`, expanded by the Wasm rules and the SIMD lanes.
+// One include here, so every module below sees the macros textually. The stencil builds mount
+// their own copy (`cfg(stencil_build)`) wherever a shared file is compiled as a stencil.
+#[macro_use]
+#[path = "staged/wasm_lists.rs"]
+mod wasm_lists;
+
 #[doc(hidden)]
 pub mod execution_interrupt;
 #[cfg(any(test, feature = "test-support"))]
@@ -63,9 +70,10 @@ pub mod dataflow;
 #[doc(hidden)]
 pub mod webs;
 #[doc(hidden)]
-pub mod dense_map;
-#[doc(hidden)]
 pub mod bytecode;
+/// The operators an instruction's operator immediate names, in the parser's numbering.
+#[doc(hidden)]
+pub mod operator;
 #[doc(hidden)]
 pub mod compile;
 #[doc(hidden)]
@@ -112,8 +120,6 @@ pub mod number_inputs;
 #[doc(hidden)]
 pub mod profile;
 pub mod trace;
-mod fact_stats;
-pub mod fallback;
 pub mod clock;
 #[doc(hidden)]
 pub mod snapshot;
@@ -132,6 +138,8 @@ pub mod value_vec;
 #[doc(hidden)]
 pub mod vm;
 pub use vm::builtin_table::{BuiltinFamilies, BuiltinTable};
+pub use vm::execution_table::ExecutionTable;
+pub use vm::reachable_realm::{reachable_realm, ReachableRealm, RealmRoots};
 #[doc(hidden)]
 pub mod wasm;
 pub use wasm::{
@@ -146,14 +154,13 @@ pub use wasm::{
 pub use vm::AheadImages;
 pub use vm::layer_hooks::install_intl;
 pub use vm::wasm_js::enable_wasm_js;
-pub use vm::tier_events::{Event as TierEvent, TierEvents};
-pub use bytecode::{set_record_built, set_record_read, KeptBytes, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
+pub use bytecode::{set_record_built, set_record_read, ImageRetention, KeptBytes, ProgramRecord, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 /// Lets this binary compile source after load (`compile::source_routes`).
 pub use compile::source_routes::enable as enable_dynamic_source;
 pub use compile::{CheckedParameters, ParameterSite};
-pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_read_run, double_stores_present, double_word, double_write_run, memory_mix_has, word_read_run, word_stores_present};
+pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_word};
 pub use heap::layouts::fixed_table_range as fixed_layout_table_range;
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{
@@ -242,19 +249,4 @@ pub mod native_image;
 pub use native_image::NativeImageSupport;
 
 pub mod native_link;
-
-// Library tests run with the layer crates compiled in as modules: a layer crate names this crate
-// `quench_runtime` and its own root `crate`, so both resolve here (`quench-layers` links the
-// layer crates into every other build).
-#[cfg(test)]
-extern crate self as quench_runtime;
-#[cfg(test)]
-#[path = "../../quench-runtime-intl/src/lib.rs"]
-mod intl_layer;
-#[cfg(test)]
-use intl_layer::*;
-#[cfg(test)]
-#[path = "../../quench-runtime-engine/src/lib.rs"]
-mod engine_layer;
-#[cfg(test)]
-use engine_layer::*;
+pub mod placed_text;

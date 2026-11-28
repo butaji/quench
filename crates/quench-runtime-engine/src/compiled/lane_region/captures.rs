@@ -2,9 +2,11 @@
 //! (`Frame::capture_slot`, `Frame::store_capture`): dense slot loads and the VM's own lookups
 //! where they miss. The lowering decides, per read, what its slow case reaches (`CaptureSite`);
 //! the frame emits the access.
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether a capture read may take the lane's own lookup for a root-held binding, and where it runs.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,7 +63,7 @@ pub(crate) fn read_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, site
     let value = builder.append_block_param(join, types::I64);
     match dense {
         Some((values, len)) => {
-            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None , payload: None};
+            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None , payload: None, facts: Default::default(), fresh: false };
             let read = quench_runtime::staged::environment::dense_capture(&mut stage, values, len, slot, slow)
                 .expect("the emit stage continues past its guards");
             emit(builder).goto(join, &[read]);
@@ -124,7 +126,7 @@ pub(crate) fn store_capture(builder: &mut FunctionBuilder<'_>, reach: Reach, sit
     builder.set_cold_block(slow);
     match site.dense {
         Dense::Held(values, len, stores) if at.0 == 0 => {
-            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None, payload: None };
+            let mut stage = Emit { builder: &mut *builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
             quench_runtime::staged::environment::dense_immediate_capture_store(&mut stage, (values, len, stores), at.1, value, slow)
                 .expect("the emit stage continues past its guards");
             emit(builder).goto(join, &[]);
@@ -223,18 +225,14 @@ impl Lowering<'_, '_> {
         let at = (instruction.capture_depth(), instruction.capture_slot());
         let site = self.capture_site(state, pc, at.0, admitted_callee, rooted);
         let value = read_capture(&mut self.builder, (self.payload, self.helpers), &site, at, exit);
-        self.frozen_capture(pc, value, exit)
+        self.frozen_capture(pc, value)
     }
 
-    /// The read-site guard of a frozen capture read at `pc`: compare the value the read
-    /// loaded with the closed program's value, then use that constant. A binding changed
-    /// elsewhere (or read before its declaration) fails the guard and leaves to the shared
-    /// body, so the fold is sound without an invalidation word.
-    fn frozen_capture(&mut self, pc: usize, value: ir::Value, exit: ir::Block) -> ir::Value {
+    /// The value of a frozen capture read at `pc`: the closed world's value of the slot, which its dominating store fixes
+    /// before any read runs (`AotFacts::dominated_root_store`), so the read is that constant.
+    fn frozen_capture(&mut self, pc: usize, value: ir::Value) -> ir::Value {
         let Some(quench_runtime::vm::global_facts::GlobalRead::Frozen { value: expected, .. }) =
             self.global_reads.get(&pc).copied() else { return value };
-        let same = self.is_identity(value, expected);
-        emit_js_guard(&mut self.builder, same, exit);
         self.identity_constant(expected)
     }
 
@@ -299,7 +297,7 @@ impl Lowering<'_, '_> {
         if !store {
             let destination = instruction.result_register();
             let value = self.tagged(state, destination);
-            let value = self.frozen_capture(pc, value, exit);
+            let value = self.frozen_capture(pc, value);
             self.set_tagged(state, destination, value);
         }
         true

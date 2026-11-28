@@ -1,35 +1,36 @@
-//! The general forms of the call-family records (`staged::invoke::general_call_form`), which the call row
+//! The general forms of the call-family records (`staged::CallRecord::has_general_form`), which the call row
 //! runner runs on the interpreter's frame where the staged row declines (`InterpreterFrame::call_row`): a plain,
 //! forwarding, spread-array or spread-iterable call, a call of a known function, the two method calls, a
 //! construction (plain, applied or `super(...)`) and a first-call stub. Each is the body its opcode's arm had in
 //! `Vm::step`, over the operands the record names; `pc` is the record's resume PC.
 
 use super::*;
-use crate::staged::invoke::CallForm;
+use crate::staged::CallRecord;
 
 impl Vm {
     /// The general form `form` of the call-family record `i`, run by frame `f` at resume PC `pc`. The form's
     /// completion is `Continue` once its result is written, `Return` where the call returns from the frame, or
     /// the activation or tail call it pushed.
-    pub(in crate::vm) fn call_form_step(&mut self, p: &ResidualProgram, f: usize, form: CallForm, i: WideInstruction,
+    pub(in crate::vm) fn call_form_step(&mut self, p: &ResidualProgram, f: usize, form: CallRecord, i: WideInstruction,
         pc: usize, allow_inline_calls: bool) -> Result<StepResult, JsError> {
         match form {
-            CallForm::Plain | CallForm::Forwarding | CallForm::Array | CallForm::Spread =>
+            CallRecord::Plain | CallRecord::Forwarding | CallRecord::Array | CallRecord::Spread =>
                 self.call_window_form(p, f, form, i, pc, allow_inline_calls),
-            CallForm::Known => self.call_known_form(p, f, i, pc, allow_inline_calls),
-            CallForm::Method => self.call_method_form(p, f, i, pc),
-            CallForm::ThisMethod => self.call_this_method_form(p, f, i, pc),
-            CallForm::Construct => self.construct_form(p, f, i, pc, allow_inline_calls),
-            CallForm::FirstChunk => self.call_first_chunk(p, f, i, pc).map(|()| StepResult::Continue),
+            CallRecord::Known => self.call_known_form(p, f, i, pc, allow_inline_calls),
+            CallRecord::Method => self.call_method_form(p, f, i, pc),
+            CallRecord::ThisMethod => self.call_this_method_form(p, f, i, pc),
+            CallRecord::Construct | CallRecord::Super => self.construct_form(p, f, i, pc, allow_inline_calls),
+            CallRecord::FirstChunk => self.call_first_chunk(p, f, i, pc).map(|()| StepResult::Continue),
+            CallRecord::Rest => unreachable!("a rest view's call has no general form (`CallRecord::has_general_form`)"),
         }
     }
 
     /// The calls through registers: a plain call (direct eval included), a forwarding call that passes the
     /// activation's `arguments`, and the calls of a spread array or iterable. The callee and receiver are
     /// registers, and the arguments are the window, the array's elements or the iterable's values.
-    fn call_window_form(&mut self, p: &ResidualProgram, f: usize, form: CallForm, i: WideInstruction, pc: usize,
+    fn call_window_form(&mut self, p: &ResidualProgram, f: usize, form: CallRecord, i: WideInstruction, pc: usize,
         allow_inline_calls: bool) -> Result<StepResult, JsError> {
-        if form == CallForm::Forwarding
+        if form == CallRecord::Forwarding
             && let Some(result) = self.forward_activation_arguments(p, f, i, pc, allow_inline_calls)
         {
             return result;
@@ -39,7 +40,7 @@ impl Vm {
         // A spread argument array is read before any call state changes, since
         // reading it can fail; register windows are copied only on the paths that
         // need an owned argument list.
-        if form == CallForm::Spread {
+        if form == CallRecord::Spread {
             // ArgumentListEvaluation of the one spread: its values, as the argument
             // array a `CallArray` reads, in the window it reads them from.
             let iterable = self.read(f, window.base);
@@ -47,7 +48,7 @@ impl Vm {
             self.write(f, window.base, array);
             self.spread_into_array(p, array, iterable)?;
         }
-        let spread_arguments = if matches!(form, CallForm::Array | CallForm::Spread) {
+        let spread_arguments = if matches!(form, CallRecord::Array | CallRecord::Spread) {
             let array = self.read(f, window.base);
             Some(CallArguments::from_values(self.array_value_list(array)?))
         } else {
@@ -123,13 +124,11 @@ impl Vm {
             return Ok(StepResult::TailCall);
         }
         if p.kind != crate::bytecode::ProgramKind::Wasm
-            && self.js_tail_call_allowed(p, f, i, pc)
             && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
             && let Some(CallTarget::User(program_id, id, env)) =
                 self.call_target(callee).ok()
             && program_id == self.frames[f].program
-            && !p.function(id as usize).is_async
-            && !p.function(id as usize).is_generator
+            && self.tail_call_reuses_frame(p, f, i, pc, p.function(id as usize))
         {
             self.with_call_roots(
                 [callee, this].into_iter().chain(args.iter().copied()),
@@ -260,14 +259,12 @@ impl Vm {
         self.profile.call_target(1, usize::from(window.count));
         self.frames[f].pc = pc;
         self.frames[f].pc_is_resume = true;
-        let tail_call = if p.kind == crate::bytecode::ProgramKind::Wasm {
-            i.returns_from_frame()
+        let callee_function = p.function(function_index as usize);
+        let proper_tail = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            i.returns_from_frame() && callee_function.call_plan(p).tail_callee
         } else {
-            self.js_tail_call_allowed(p, f, i, pc)
+            self.tail_call_reuses_frame(p, f, i, pc, callee_function)
         };
-        let proper_tail = tail_call
-            && !p.function(function_index as usize).is_async
-            && !p.function(function_index as usize).is_generator;
         // A proper tail call recycles the caller's register buffer before it binds the
         // arguments, so only that path copies the window. Every other call borrows it, as the
         // tier's direct call does: the caller's registers are not written during the call.
@@ -374,7 +371,7 @@ impl Vm {
         let v = if i.is_super_construct() {
             self.construct_super_value(p, callee, args)?
         } else {
-            self.construct_value(p, callee, args)?
+            self.construct_value_at(p, f, pc, callee, args)?
         };
         if i.returns_from_frame() {
             return Ok(StepResult::Return(v));

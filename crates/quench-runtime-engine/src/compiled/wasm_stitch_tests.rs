@@ -8,6 +8,7 @@ use crate::compiled::CodeMemory;
 use quench_runtime::vm::Vm;
 use quench_runtime::{Engine, WasmCallableType, WasmFunctionBody, WasmTypes, WasmValue};
 use wasmparser::{BinaryReaderError, FuncType, Operator, ValType};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 fn body(ty: u32, locals: Vec<ValType>, operators: Vec<Operator<'static>>) -> WasmFunctionBody<Vec<Result<Operator<'static>, BinaryReaderError>>> {
     WasmFunctionBody { ty: WasmCallableType::Declared(ty), locals, operators: operators.into_iter().map(Ok).collect() }
@@ -92,7 +93,7 @@ fn stitched(vm: &Vm, module: &quench_runtime::WasmModule, index: usize) -> (Code
         vector_constant: &no_vector,
         vector_move: &no_move,
     };
-    let bytes = stitch(function, params, true, &world).expect("rows for every instruction");
+    let (bytes, _) = stitch_naming(function, params, true, &world, &|_| false).expect("rows for every instruction");
     let memory = CodeMemory::new(&bytes).expect("code memory");
     // SAFETY: the code begins with the entry routine, which takes the `WasmEntry` ABI.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(memory.pointer()) };

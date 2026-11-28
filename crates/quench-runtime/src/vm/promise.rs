@@ -2,6 +2,7 @@ use super::module::{ModuleEvaluationStack, ModuleOutcome, ModulePhase, ModuleRec
 use super::*;
 use crate::HostExecutionContext;
 use std::collections::VecDeque;
+use super::native_table::NativeFn;
 
 const PROMISE_CAPABILITY_RESOLVE: &str = "\0quench:promise-capability-resolve";
 const PROMISE_CAPABILITY_REJECT: &str = "\0quench:promise-capability-reject";
@@ -743,8 +744,8 @@ impl Vm {
         }
         if promise_resolver {
             self.resolver_function_shape = self
-                .object_data(function)
-                .map(crate::heap::Object::shape)
+                .heap.object(function)
+                .map(|object| object.shape())
                 .filter(|&shape| !self.shape_is_dictionary(shape));
         }
         function
@@ -950,120 +951,6 @@ impl Vm {
         self.set_property(state, resolve_atom, resolve)?;
         self.set_property(state, reject_atom, reject)?;
         Ok(Value::UNDEFINED)
-    }
-
-    pub(super) fn call_promise_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::DynamicImport => self.dynamic_import(p, args),
-            Native::AbstractModuleSource => {
-                Err(self.type_error(p, "AbstractModuleSource cannot be called".into()))
-            }
-            Native::Promise => Err(JsError(
-                "Promise constructor must be called with new".into(),
-            )),
-            Native::PromiseWithResolvers => self.promise_with_resolvers(p, this),
-            Native::PromiseCapabilityExecutor => self.promise_capability_executor(p, args),
-            Native::PromiseSpeciesGetter => Ok(this),
-            Native::PromiseResolve => {
-                if let Some(state) = self.active_native_env() {
-                    let Some(promise) = self.take_promise_resolving_promise(p, state)? else {
-                        return Ok(Value::UNDEFINED);
-                    };
-                    self.promise_resolve_value(
-                        p,
-                        promise,
-                        args.first().copied().unwrap_or(Value::UNDEFINED),
-                    )?;
-                    Ok(Value::UNDEFINED)
-                } else {
-                    if !self.is_constructable(this) {
-                        return Err(self.type_error(
-                            p,
-                            "Promise.resolve receiver is not a constructor".into(),
-                        ));
-                    }
-                    self.promise_resolve_for_constructor(
-                        p,
-                        this,
-                        args.first().copied().unwrap_or(Value::UNDEFINED),
-                    )
-                }
-            }
-            Native::PromiseReject => {
-                if let Some(state) = self.active_native_env() {
-                    let Some(promise) = self.take_promise_resolving_promise(p, state)? else {
-                        return Ok(Value::UNDEFINED);
-                    };
-                    self.promise_settle(
-                        p,
-                        promise,
-                        PromiseState::Rejected,
-                        args.first().copied().unwrap_or(Value::UNDEFINED),
-                    )?;
-                    Ok(Value::UNDEFINED)
-                } else {
-                    let (promise, _, reject) = self.new_promise_capability(p, this)?;
-                    self.call_value(
-                        p,
-                        reject,
-                        Value::UNDEFINED,
-                        &[args.first().copied().unwrap_or(Value::UNDEFINED)],
-                    )?;
-                    Ok(promise)
-                }
-            }
-            Native::PromiseTry => self.promise_try(p, this, args),
-            Native::PromiseThen => self.promise_then(
-                p,
-                this,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-                args.get(1).copied().unwrap_or(Value::UNDEFINED),
-            ),
-            Native::PromiseCatch => self.promise_catch(p, this, args),
-            Native::PromiseFinally => self.promise_finally(p, this, args),
-            Native::PromiseFinallyHandler => self.promise_finally_handler(p, args),
-            Native::PromiseFinallyContinuationHandler => {
-                self.promise_finally_continuation_handler(p, args)
-            }
-            Native::PromiseAll => self.promise_aggregate(p, this, args, AggregateMode::All),
-            Native::PromiseAllKeyed => {
-                self.promise_aggregate(p, this, args, AggregateMode::AllKeyed)
-            }
-            Native::PromiseRace => self.promise_aggregate(p, this, args, AggregateMode::Race),
-            Native::PromiseAllSettled => {
-                self.promise_aggregate(p, this, args, AggregateMode::AllSettled)
-            }
-            Native::PromiseAllSettledKeyed => {
-                self.promise_aggregate(p, this, args, AggregateMode::AllSettledKeyed)
-            }
-            Native::PromiseAny => self.promise_aggregate(p, this, args, AggregateMode::Any),
-            Native::PromiseAggregateJob => {
-                self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ArrayFromAsyncFulfilled | Native::ArrayFromAsyncRejected => self
-                .array_from_async_reaction(
-                    p,
-                    native == Native::ArrayFromAsyncFulfilled,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                ),
-            Native::AsyncGeneratorDelegateFulfilled => self.async_generator_delegate_fulfilled(
-                p,
-                this,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-            ),
-            Native::AsyncGeneratorDelegateRejected => self.async_generator_delegate_rejected(
-                p,
-                this,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-            ),
-            _ => unreachable!(),
-        }
     }
 
     /// The name of the running code's Script or Module, the referrer of its
@@ -1425,7 +1312,7 @@ impl Vm {
     pub(super) fn finish_main_module(
         &mut self,
         p: &ResidualProgram,
-        result: &Result<Value, JsError>,
+        result: &Result<Value, super::exit::Exit>,
     ) -> Result<(), JsError> {
         if !p.is_module() {
             return Ok(());
@@ -1434,6 +1321,12 @@ impl Vm {
         if !self.realm.promise.modules.contains_key(&key) {
             return Ok(());
         }
+        // A captured module has not finished: its promise settles in the run that resumes it.
+        let result = match result {
+            Err(super::exit::Exit::Captured(_)) => return Ok(()),
+            Err(super::exit::Exit::Threw(error)) => Err(error),
+            Ok(value) => Ok(value),
+        };
         match result {
             Ok(value)
                 if p.functions
@@ -1816,7 +1709,8 @@ impl Vm {
                 .collect(),
             "Deferred Module",
         )?;
-        let Some(object) = self.object_data_mut(namespace) else {
+        self.heap.ensure_cell_extras(namespace);
+        let Some(mut object) = self.heap.object_mut(namespace) else {
             return Err(self.type_error(p, "module namespace allocation failed".into()));
         };
         object.set_deferred_module(Some(module.clone()));
@@ -1829,7 +1723,7 @@ impl Vm {
         namespace: Value,
     ) -> Result<Value, JsError> {
         let Some(module) = self
-            .object_data(namespace)
+            .heap.object(namespace)
             .and_then(|object| object.deferred_module().cloned())
         else {
             return Ok(namespace);
@@ -1881,7 +1775,8 @@ impl Vm {
             }
             Err(error) => {
                 let settled = self.settle_static_module(p, &cache_key, Err(error));
-                if let Some(object) = self.object_data_mut(namespace) {
+                self.heap.ensure_cell_extras(namespace);
+                if let Some(mut object) = self.heap.object_mut(namespace) {
                     object.set_deferred_module(Some(module));
                 }
                 settled?;
@@ -1898,7 +1793,7 @@ impl Vm {
     ) -> Result<(), JsError> {
         // Only a deferred namespace can evaluate; most objects are rejected before the key.
         if !self
-            .object_data(namespace)
+            .heap.object(namespace)
             .is_some_and(|object| object.deferred_module().is_some())
         {
             return Ok(());
@@ -1968,18 +1863,23 @@ impl Vm {
         target: Value,
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
-        let Some(source) = self.object_data(source).cloned() else {
+        let Some((proto, namespace, bindings)) = self
+            .heap
+            .object(source)
+            .map(|source| (source.proto(), source.is_module_namespace(), source.module_bindings().to_vec()))
+        else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
-        if self.heap.copy_property_storage(&source, target)
-            && let Some(target) = self.object_data_mut(target)
-        {
-            target.set_proto(source.proto());
-            if source.is_module_namespace() {
-                target.set_module_namespace();
+        if self.heap.copy_property_storage(source, target) {
+            self.heap.ensure_cell_extras(target);
+            if let Some(mut object) = self.heap.object_mut(target) {
+                object.set_proto(proto);
+                if namespace {
+                    object.set_module_namespace();
+                }
+                object.set_module_bindings(bindings);
+                object.set_deferred_module(None);
             }
-            target.set_module_bindings(source.module_bindings().to_vec());
-            target.set_deferred_module(None);
         }
         self.invalidate_field_caches();
         self.invalidate_method_caches();
@@ -2420,8 +2320,7 @@ impl Vm {
             let named_binding = match (&import.imported, module_type) {
                 (crate::bytecode::ModuleImportName::Named(name), "javascript") => {
                     let atom = self.intern_atom(name);
-                    self.object_data(namespace)
-                        .and_then(|object| object.module_binding(atom))
+                    self.heap.object(namespace).and_then(|object| object.module_binding(atom))
                 }
                 _ => None,
             };
@@ -2441,8 +2340,8 @@ impl Vm {
                 (_, crate::bytecode::ModuleImportName::Named(name)) => {
                     let atom = self.intern_atom(name);
                     let is_namespace = self
-                        .object_data(namespace)
-                        .is_some_and(Object::is_module_namespace);
+                        .heap.object(namespace)
+                        .is_some_and(|object| object.is_module_namespace());
                     // A named import of a pending builtin export takes the member's value now.
                     let fallback = match self.own_property(namespace, atom) {
                         Some(value) => Some(self.resolve_pending_binding(p, value)?),
@@ -3031,11 +2930,10 @@ impl Vm {
     fn kept_static_module_program(&mut self, module: &ModuleSource) -> Option<ResidualProgram> {
         let bytes = self.host.kept_compiled_program(
             &module.name,
-            &[self.specialization_part(), module.compilation_goal(), &module.source],
+            &[module.compilation_goal(), &module.source],
         )?;
         let text = crate::bytecode::SourceText::Shared(module.source.clone());
-        let specialized = self.specialized;
-        self.decode_cached_program(bytes, text, 0, &module.name, specialized).ok()
+        self.decode_cached_program(bytes, text, 0, &module.name).ok()
     }
 
     /// Offers the host the compiled program of a static module (`kept_static_module_program`),
@@ -3043,7 +2941,7 @@ impl Vm {
     fn keep_static_module_program(&mut self, module: &ModuleSource, residual: &ResidualProgram) {
         if let Some(bytes) = self.encode_cached_program(residual) {
             self.host
-                .keep_compiled_program(&module.name, &[self.specialization_part(), module.compilation_goal(), &module.source], &bytes);
+                .keep_compiled_program(&module.name, &[module.compilation_goal(), &module.source], &bytes);
         }
     }
 
@@ -3467,7 +3365,7 @@ impl Vm {
         namespace: Value,
     ) -> Result<(), JsError> {
         let bindings = self
-            .object_data(namespace)
+            .heap.object(namespace)
             .map(|object| object.module_bindings().to_vec())
             .unwrap_or_default();
         for (atom, program, slot) in bindings {
@@ -3479,7 +3377,7 @@ impl Vm {
                 .environment_slot(environment, usize::from(slot))
                 .ok_or_else(|| self.type_error(p, "module export slot is unavailable".into()))?;
             let property = self
-                .object_data(namespace)
+                .heap.object(namespace)
                 .and_then(|object| self.shape_slot(object.shape(), atom))
                 .ok_or_else(|| {
                     self.type_error(p, "module export property is unavailable".into())
@@ -4610,14 +4508,15 @@ impl Vm {
             values.push((name, value));
         }
         let namespace = self.module_namespace(values)?;
-        if let Some(object) = self.object_data_mut(namespace) {
+        self.heap.ensure_cell_extras(namespace);
+        if let Some(mut object) = self.heap.object_mut(namespace) {
             object.set_module_bindings(bindings);
         }
         Ok(namespace)
     }
 
     fn cached_static_exports(&self, namespace: Value) -> Option<Vec<(String, StaticModuleValue)>> {
-        let object = self.object_data(namespace)?;
+        let object = self.heap.object(namespace)?;
         let bindings = object
             .module_bindings()
             .iter()
@@ -4743,7 +4642,8 @@ impl Vm {
         let namespace = self
             .heap
             .alloc_object(Self::empty_object(Value::NULL));
-        if let Some(object) = self.object_data_mut(namespace) {
+        self.heap.ensure_cell_extras(namespace);
+        if let Some(mut object) = self.heap.object_mut(namespace) {
             object.set_module_namespace();
         }
         self.mark_object_dictionary(namespace, DictionaryTrigger::ModuleNamespace);
@@ -4783,7 +4683,7 @@ impl Vm {
                 },
             );
         }
-        if let Some(object) = self.object_data_mut(namespace) {
+        if let Some(mut object) = self.heap.object_mut(namespace) {
             object.set_extensible(false);
         }
         Ok(namespace)
@@ -4878,7 +4778,7 @@ impl Vm {
     /// observes nothing: `undefined` for a non-object, else its plain-data `then`
     /// (`plain_named_load`). `None` where the read could run guest code.
     pub fn plain_resolution_then(&mut self, value: Value) -> Option<Value> {
-        if self.object_data(value).is_none() {
+        if self.heap.object(value).is_none() {
             return Some(Value::UNDEFINED);
         }
         if let Some(then) = self.memoized_resolution_then(value) {
@@ -4995,7 +4895,7 @@ impl Vm {
         let Some(proof) = proofs.as_ref() else {
             return false;
         };
-        let Some(data) = self.heap.ordinary_object(promise) else {
+        let Some(data) = self.heap.ordinary_view(promise) else {
             return false;
         };
         data.layout_id() == proof.layout
@@ -5011,7 +4911,7 @@ impl Vm {
     /// watched prototypes, whose writes retire the proof.
     fn record_promise_species_proof(&mut self, promise: Value, constructor: Value) {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let Some(data) = self.heap.ordinary_object(promise) else {
+        let Some(data) = self.heap.ordinary_view(promise) else {
             return;
         };
         let (layout, key, prototype) = (data.layout_id(), PropertyKey::string(self.runtime_atoms.constructor), data.proto());
@@ -5194,7 +5094,7 @@ impl Vm {
 
     pub(super) fn promise_finally_continuation_handler(
         &mut self,
-        _p: &ResidualProgram,
+        _p: &ProgramRecord,
         _args: &[Value],
     ) -> Result<Value, JsError> {
         let function = self
@@ -5355,6 +5255,359 @@ impl Vm {
         self.heap.release_root(handler);
         outcome
     }
+}
+
+/// The entry that runs a promise, async-reaction or async-iteration native, or `None` when the
+/// promise family does not claim `native`. Each native has its own standalone function.
+pub(super) fn entry(native: Native) -> Option<NativeFn> {
+    match native {
+        Native::Promise => Some(promise_constructor_native),
+        Native::PromiseSpeciesGetter => Some(promise_species_getter_native),
+        Native::PromiseResolve => Some(promise_resolve_native),
+        Native::PromiseReject => Some(promise_reject_native),
+        Native::PromiseTry => Some(promise_try_native),
+        Native::PromiseWithResolvers => Some(promise_with_resolvers_native),
+        Native::PromiseCapabilityExecutor => Some(promise_capability_executor_native),
+        Native::PromiseThen => Some(promise_then_native),
+        Native::PromiseCatch => Some(promise_catch_native),
+        Native::PromiseFinally => Some(promise_finally_native),
+        Native::PromiseFinallyHandler => Some(promise_finally_handler_native),
+        Native::PromiseFinallyContinuationHandler => Some(promise_finally_continuation_handler_native),
+        Native::PromiseAll => Some(promise_all_native),
+        Native::PromiseAllKeyed => Some(promise_all_keyed_native),
+        Native::PromiseRace => Some(promise_race_native),
+        Native::PromiseAllSettled => Some(promise_all_settled_native),
+        Native::PromiseAllSettledKeyed => Some(promise_all_settled_keyed_native),
+        Native::PromiseAny => Some(promise_any_native),
+        Native::PromiseAggregateJob => Some(promise_aggregate_job_native),
+        Native::ArrayFromAsyncFulfilled => Some(array_from_async_fulfilled_native),
+        Native::ArrayFromAsyncRejected => Some(array_from_async_rejected_native),
+        Native::DynamicImport => Some(dynamic_import_native),
+        Native::AsyncGeneratorDelegateFulfilled => Some(async_generator_delegate_fulfilled_native),
+        Native::AsyncGeneratorDelegateRejected => Some(async_generator_delegate_rejected_native),
+        Native::AsyncFromSyncValue => Some(async_from_sync_value_native),
+        Native::AsyncFromSyncValueRejected => Some(async_from_sync_value_rejected_native),
+        Native::AsyncGeneratorReturnFulfilled => Some(async_generator_return_fulfilled_native),
+        Native::AsyncGeneratorReturnRejected => Some(async_generator_return_rejected_native),
+        Native::AsyncGeneratorDelegateReturnStart => Some(async_generator_delegate_return_start_native),
+        _ => None,
+    }
+}
+
+/// The argument at `index`, or `undefined` when the call has none there.
+fn argument_at(args: &[Value], index: usize) -> Value {
+    args.get(index).copied().unwrap_or(Value::UNDEFINED)
+}
+
+fn promise_constructor_native(
+    _vm: &mut Vm,
+    _p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    _args: &[Value],
+) -> Result<Value, JsError> {
+    Err(JsError("Promise constructor must be called with new".into()))
+}
+
+fn promise_species_getter_native(
+    _vm: &mut Vm,
+    _p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    _args: &[Value],
+) -> Result<Value, JsError> {
+    Ok(this)
+}
+
+fn promise_resolve_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    if let Some(state) = vm.active_native_env() {
+        let Some(promise) = vm.take_promise_resolving_promise(p, state)? else {
+            return Ok(Value::UNDEFINED);
+        };
+        vm.promise_resolve_value(p, promise, argument_at(args, 0))?;
+        Ok(Value::UNDEFINED)
+    } else {
+        if !vm.is_constructable(this) {
+            return Err(vm.type_error(p, "Promise.resolve receiver is not a constructor".into()));
+        }
+        vm.promise_resolve_for_constructor(p, this, argument_at(args, 0))
+    }
+}
+
+fn promise_reject_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    if let Some(state) = vm.active_native_env() {
+        let Some(promise) = vm.take_promise_resolving_promise(p, state)? else {
+            return Ok(Value::UNDEFINED);
+        };
+        vm.promise_settle(p, promise, PromiseState::Rejected, argument_at(args, 0))?;
+        Ok(Value::UNDEFINED)
+    } else {
+        let (promise, _, reject) = vm.new_promise_capability(p, this)?;
+        vm.call_value(p, reject, Value::UNDEFINED, &[argument_at(args, 0)])?;
+        Ok(promise)
+    }
+}
+
+fn promise_try_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_try(p, this, args)
+}
+
+fn promise_with_resolvers_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    _args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_with_resolvers(p, this)
+}
+
+fn promise_capability_executor_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_capability_executor(p, args)
+}
+
+fn promise_then_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_then(p, this, argument_at(args, 0), argument_at(args, 1))
+}
+
+fn promise_catch_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_catch(p, this, args)
+}
+
+fn promise_finally_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_finally(p, this, args)
+}
+
+fn promise_finally_handler_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_finally_handler(p, args)
+}
+
+fn promise_finally_continuation_handler_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_finally_continuation_handler(p, args)
+}
+
+fn promise_all_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_aggregate(p, this, args, AggregateMode::All)
+}
+
+fn promise_all_keyed_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_aggregate(p, this, args, AggregateMode::AllKeyed)
+}
+
+fn promise_race_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_aggregate(p, this, args, AggregateMode::Race)
+}
+
+fn promise_all_settled_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_aggregate(p, this, args, AggregateMode::AllSettled)
+}
+
+fn promise_all_settled_keyed_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_aggregate(p, this, args, AggregateMode::AllSettledKeyed)
+}
+
+fn promise_any_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_aggregate(p, this, args, AggregateMode::Any)
+}
+
+fn promise_aggregate_job_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.promise_aggregate_job(p, argument_at(args, 0))
+}
+
+fn array_from_async_fulfilled_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.array_from_async_reaction(p, true, argument_at(args, 0))
+}
+
+fn array_from_async_rejected_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.array_from_async_reaction(p, false, argument_at(args, 0))
+}
+
+fn dynamic_import_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.dynamic_import(p, args)
+}
+
+fn async_generator_delegate_fulfilled_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.async_generator_delegate_fulfilled(p, this, argument_at(args, 0))
+}
+
+fn async_generator_delegate_rejected_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.async_generator_delegate_rejected(p, this, argument_at(args, 0))
+}
+
+fn async_from_sync_value_native(
+    vm: &mut Vm,
+    _p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.async_from_sync_value(args)
+}
+
+fn async_from_sync_value_rejected_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.async_from_sync_value_rejected(p, args)
+}
+
+fn async_generator_return_fulfilled_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.async_generator_return_fulfilled(p, args)
+}
+
+fn async_generator_return_rejected_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.async_generator_return_rejected(p, args)
+}
+
+fn async_generator_delegate_return_start_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    _this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.async_generator_delegate_return_start(p, args)
 }
 
 impl PromiseRuntime {

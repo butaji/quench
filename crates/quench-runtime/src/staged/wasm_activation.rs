@@ -184,52 +184,31 @@ pub enum Compile {
     Leave,
 }
 
-/// The tiers an interpreter offers a Wasm entry to: the module's whole compile, its root tiers and
-/// their counters. Each method is one lookup, one count or one compile; `offer_entry` orders them.
+/// The tiers an interpreter offers a Wasm entry to: the program's root tiers. Each method is one lookup, one
+/// check or one compile; `offer_entry` orders them.
 pub trait WasmEntryTiers {
     /// What runs a held function (the artifact the tier keeps).
     type Code;
-    /// The module's whole compile, where it holds `function`.
-    fn whole(&mut self, function: u32) -> Option<Self::Code>;
-    /// Counts one entry's work toward the module's whole compile; whether that compile is due.
-    fn note_module_work(&mut self) -> bool;
-    /// Makes the module's whole compile, which `note_module_work` found due.
-    fn compile_whole(&mut self) -> Compile;
     /// A root tier holding `function`.
     fn root(&mut self, function: u32) -> Option<Self::Code>;
-    /// Whether a root tier may take `function` (`ProgramStore::wasm_root_admissible`).
-    fn root_admissible(&mut self, function: u32) -> bool;
-    /// Counts one entry of `function` toward its root compile; whether the compile is due.
-    fn note_root_entry(&mut self, function: u32) -> bool;
-    /// Makes the root compile of `function`, which `note_root_entry` found due.
+    /// Whether the root compile of `function` is due at this entry: it has no attempt yet, its predicted tier compiles
+    /// it, and the tier admits its root. Reads only; the compile claims the attempt.
+    fn root_due(&mut self, function: u32) -> bool;
+    /// Makes the root compile of `function`, which `root_due` found due: the general loop claims the attempt and
+    /// compiles; the lane leaves for it.
     fn compile_root(&mut self, function: u32) -> Compile;
-    /// Notes that the interpreter runs `function` though the module has a whole compile.
-    fn note_fallback(&mut self, function: u32);
 }
 
-/// The tiers' answer to one entry of `function`, the compile trigger of both interpreters: the
-/// whole compile's code; else one entry's work counted toward the whole compile, made where it
-/// comes due; else a root tier's code; else one entry counted toward the function's own root
-/// compile, made where it comes due; else the interpreter. An interpreter that does not compile
-/// (the lane) leaves at a due compile, and the general loop, offered the same call, makes it.
+/// The tiers' answer to one entry of `function`, the compile trigger of both interpreters: a held root tier's
+/// code; else, where the root compile is due, the compile made (or handed to the general loop, `Leave`); else the
+/// interpreter. An interpreter that does not compile (the lane) leaves at a due compile, and the general loop,
+/// offered the same call, makes it.
 #[inline(always)]
 pub fn offer_entry<T: WasmEntryTiers>(tiers: &mut T, function: u32) -> EntryOffer<T::Code> {
-    if let Some(code) = tiers.whole(function) {
-        return EntryOffer::Held(code);
-    }
-    if tiers.note_module_work() {
-        match tiers.compile_whole() {
-            Compile::Leave => return EntryOffer::Leave,
-            Compile::Made => if let Some(code) = tiers.whole(function) {
-                return EntryOffer::Held(code);
-            },
-            Compile::Refused => {}
-        }
-    }
     if let Some(code) = tiers.root(function) {
         return EntryOffer::Held(code);
     }
-    if tiers.root_admissible(function) && tiers.note_root_entry(function) {
+    if tiers.root_due(function) {
         match tiers.compile_root(function) {
             Compile::Leave => return EntryOffer::Leave,
             Compile::Made => if let Some(code) = tiers.root(function) {
@@ -238,10 +217,8 @@ pub fn offer_entry<T: WasmEntryTiers>(tiers: &mut T, function: u32) -> EntryOffe
             Compile::Refused => {}
         }
     }
-    tiers.note_fallback(function);
     EntryOffer::Interpret
 }
-
 /// A call native code runs: the caller resumes with its result, or leaves; `None` where the
 /// native tier declines the call.
 #[cold]
@@ -320,7 +297,7 @@ pub trait WasmReturn {
 #[inline(always)]
 pub fn step_wasm_return_of<S: WasmReturn>(stage: &mut S, value: S::Value) -> Option<S::Resume> {
     let (completes, result) = stage.innermost()?;
-    if completes || super::call_complete::returns_callee_completion(&mut super::Concrete::new(core::ptr::null()), result) {
+    if completes || super::call_complete::returns_callee_completion(&mut super::Concrete::pure(), result) {
         return None;
     }
     let popped = stage.pop();

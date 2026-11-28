@@ -364,7 +364,7 @@ impl Vm {
     }
 
     fn temporal_plain_time_has_brand(&self, value: Value) -> bool {
-        let Some(object) = self.object_data(value) else {
+        let Some(object) = self.heap_reads().object(value) else {
             return false;
         };
         let mut prototype = object.proto();
@@ -372,7 +372,7 @@ impl Vm {
             if prototype == self.temporal_plain_time_proto {
                 return true;
             }
-            let Some(object) = self.object_data(prototype) else {
+            let Some(object) = self.heap_reads().object(prototype) else {
                 return false;
             };
             prototype = object.proto();

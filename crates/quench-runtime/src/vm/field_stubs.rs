@@ -95,7 +95,6 @@ impl Vm {
     #[inline(always)]
     pub fn megamorphic_field_entry_hit(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         site: u16,
@@ -103,8 +102,8 @@ impl Vm {
         if let Some(hit) = self.field_stub_hit(object, atom) {
             return Some(hit);
         }
-        let (value, hit) = self.polymorphic_field_entry_hit(p, object, site)?;
-        if let PolymorphicHit::Own(entry) | PolymorphicHit::Holder(entry) = hit
+        let (value, hit) = self.polymorphic_field_entry_hit(object, site)?;
+        if let PolymorphicHit::Own(entry) = hit
             && !self.is_private_name(atom)
         {
             self.field_stubs.insert(atom, entry);
@@ -114,8 +113,8 @@ impl Vm {
 
     /// `megamorphic_field_entry_hit`'s value alone.
     #[inline(always)]
-    pub fn megamorphic_field_hit(&mut self, p: &ResidualProgram, object: Value, atom: Atom, site: u16) -> Option<Value> {
-        self.megamorphic_field_entry_hit(p, object, atom, site).map(|(value, _)| value)
+    pub fn megamorphic_field_hit(&mut self, object: Value, atom: Atom, site: u16) -> Option<Value> {
+        self.megamorphic_field_entry_hit(object, atom, site).map(|(value, _)| value)
     }
 
     /// The value the stub cache's entry for a read of `atom` from the record object `object`
@@ -131,19 +130,11 @@ impl Vm {
             // SAFETY: the entry is a copy of a site's own entry for this exact shape (`insert`),
             // which matches only outside dictionary storage and names a data slot the shape
             // holds, as for `cached_field_hit`.
-            let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
+            let value = unsafe { self.heap.property_get_flat(receiver, entry.slot as usize) };
             self.profile.field_cache_hit(POLYMORPHIC_HIT_TIER, 0);
             return Some((value, PolymorphicHit::Own(entry)));
         }
-        let holder = self.heap.record_prototype(receiver)?;
-        if holder.exact_shape() != entry.holder {
-            return None;
-        }
-        // SAFETY: as for a site's prototype entry (`polymorphic_field_entries_hit`): the
-        // receiver's exact shape lacks the name and the holder's exact shape holds a data
-        // property at the slot.
-        let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
-        self.profile.field_cache_hit(POLYMORPHIC_HIT_TIER, 1);
-        Some((value, PolymorphicHit::Holder(entry)))
+        // A holder entry names a record prototype, which no object has: the stub misses.
+        None
     }
 }

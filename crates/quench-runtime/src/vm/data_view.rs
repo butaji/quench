@@ -186,7 +186,7 @@ impl Vm {
     /// an element inside the view, and a buffer this heap owns that holds the view (writable
     /// for a set). The endianness argument's ToBoolean reads nothing either. Then it is what C
     /// does: one read of the view, one of its buffer, a bounds check, and the load or store
-    /// with its byte swap. `None` leaves the call to `data_view_native`, which raises what this
+    /// with its byte swap. `None` leaves the call to `data_view_access`, which raises what this
     /// declines.
     pub fn plain_data_view_access(&mut self, native: Native, this: Value, args: &[Value]) -> Option<Value> {
         // One match, one arm per element type, so each inlined copy folds its width,
@@ -246,140 +246,10 @@ impl Vm {
             return None;
         };
         let bytes = bytes.owned().filter(|bytes| view_end <= bytes.len())?;
-        Some(Value::number(crate::staged::typed_view::data_view_get(&bytes[offset..view_end], index, kind, little_endian)?))
+        let number = crate::staged::typed_view::data_view_get(&bytes[offset..view_end], index, kind, little_endian)?;
+        Some(crate::vm::typed_array_access::element_value(kind, number))
     }
 
-    pub(super) fn data_view_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        if native == Native::DataViewBufferGetter {
-            return self
-                .data_view_view(this)
-                .map(|(buffer, _, _)| buffer)
-                .ok_or_else(|| {
-                    self.type_error(
-                        p,
-                        "DataView accessor called on incompatible receiver".into(),
-                    )
-                });
-        }
-        let (buffer, offset, length) = self.data_view_view(this).ok_or_else(|| {
-            self.type_error(p, "DataView method called on incompatible receiver".into())
-        })?;
-        let is_setter = data_view_setter(native);
-        if native == Native::DataViewByteLengthGetter || native == Native::DataViewByteOffsetGetter
-        {
-            if self.array_buffer_out_of_bounds(buffer, offset, length) {
-                return Err(self.type_error(p, "Detached DataView".into()));
-            }
-            return Ok(Value::number(
-                if native == Native::DataViewByteLengthGetter {
-                    length as f64
-                } else {
-                    offset as f64
-                },
-            ));
-        }
-        if is_setter
-            && matches!(
-                self.heap.get(buffer),
-                Some(Cell::ArrayBuffer {
-                    immutable: true,
-                    ..
-                })
-            )
-        {
-            return Err(self.type_error(p, "Cannot write to an immutable ArrayBuffer".into()));
-        }
-        let index = self.data_view_index(p, args.first().copied())?;
-        if !is_setter
-            && self.array_buffer_out_of_bounds(buffer, offset, length) {
-                return Err(self.type_error(p, "Detached DataView".into()));
-            }
-        let width = data_view_width(native);
-        let check_bounds = || index.saturating_add(width) > length;
-        if !is_setter && check_bounds() {
-            return Err(self.range_error(p, "Offset is outside the bounds of the DataView".into()));
-        }
-        let little_endian = width > 1
-            && args
-                .get(if is_setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT })
-                .is_some_and(|value| self.truthy(*value));
-        match native {
-            Native::DataViewBufferGetter => Ok(buffer),
-            Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => unreachable!(),
-            Native::DataViewGetBigInt64 | Native::DataViewGetBigUint64 => {
-                let unsigned = num_bigint::BigInt::from(self.data_view_read(buffer, offset + index, width, little_endian)?);
-                let value = if native == Native::DataViewGetBigInt64 {
-                    let sign = num_bigint::BigInt::from(1_u8) << 63;
-                    if unsigned >= sign {
-                        unsigned - (num_bigint::BigInt::from(1_u8) << 64)
-                    } else {
-                        unsigned
-                    }
-                } else {
-                    unsigned
-                };
-                Ok(self.heap.alloc(Cell::bigint(value)))
-            }
-            native if !data_view_setter(native) => {
-                let number = self.data_view_read_number(buffer, offset + index, data_view_kind(native), little_endian)?;
-                Ok(Value::number(number))
-            }
-            Native::DataViewSetUint8
-            | Native::DataViewSetInt8
-            | Native::DataViewSetUint16
-            | Native::DataViewSetInt16
-            | Native::DataViewSetUint32
-            | Native::DataViewSetInt32
-            | Native::DataViewSetFloat16
-            | Native::DataViewSetFloat32
-            | Native::DataViewSetFloat64
-            | Native::DataViewSetBigInt64
-            | Native::DataViewSetBigUint64 => {
-                if matches!(
-                    native,
-                    Native::DataViewSetBigInt64 | Native::DataViewSetBigUint64
-                ) {
-                    let value = self.to_bigint(
-                        p,
-                        args.get(DATA_VIEW_VALUE_ARGUMENT)
-                            .copied()
-                            .unwrap_or(Value::UNDEFINED),
-                    )?;
-                    let modulus = num_bigint::BigInt::from(1_u8) << (DATA_VIEW_DOUBLE_WIDTH * 8);
-                    let bits = ((value % &modulus) + &modulus) % &modulus;
-                    if check_bounds() || self.array_buffer_out_of_bounds(buffer, offset, length) {
-                        return Err(self.data_view_write_error(p, buffer, offset, length));
-                    }
-                    self.data_view_write(
-                        buffer,
-                        offset + index,
-                        width,
-                        bits.try_into().unwrap_or(0),
-                        little_endian,
-                    )?;
-                    return Ok(Value::UNDEFINED);
-                }
-                let value = self.to_number(
-                    p,
-                    args.get(DATA_VIEW_VALUE_ARGUMENT)
-                        .copied()
-                        .unwrap_or(Value::UNDEFINED),
-                )?;
-                if check_bounds() || self.array_buffer_out_of_bounds(buffer, offset, length) {
-                    return Err(self.data_view_write_error(p, buffer, offset, length));
-                }
-                self.data_view_write_number(buffer, offset + index, data_view_kind(native), value, little_endian)?;
-                Ok(Value::UNDEFINED)
-            }
-            _ => unreachable!(),
-        }
-    }
 
     fn data_view_write_error(
         &mut self,
@@ -572,4 +442,154 @@ fn data_view_plain_width(native: Native) -> Option<usize> {
         Native::DataViewGetBigInt64 | Native::DataViewGetBigUint64 | Native::DataViewSetBigInt64 | Native::DataViewSetBigUint64
     );
     (data_view_element(native) && !bigint).then(|| data_view_width(native))
+}
+
+/// The entry of each DataView native, by its kind.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::DataView => Some(data_view_called),
+        Native::DataViewInitialize => Some(data_view_initialize),
+        Native::DataViewBufferGetter => Some(data_view_buffer_getter),
+        Native::DataViewByteLengthGetter | Native::DataViewByteOffsetGetter => Some(data_view_length_or_offset_getter),
+        Native::DataViewGetUint8 | Native::DataViewSetUint8 => Some(data_view_access),
+        Native::DataViewGetInt8 | Native::DataViewSetInt8 => Some(data_view_access),
+        Native::DataViewGetUint16 | Native::DataViewSetUint16 => Some(data_view_access),
+        Native::DataViewGetInt16 | Native::DataViewSetInt16 => Some(data_view_access),
+        Native::DataViewGetUint32 | Native::DataViewSetUint32 => Some(data_view_access),
+        Native::DataViewGetInt32 | Native::DataViewSetInt32 => Some(data_view_access),
+        Native::DataViewGetFloat16 | Native::DataViewSetFloat16 => Some(data_view_access),
+        Native::DataViewGetFloat32 | Native::DataViewSetFloat32 => Some(data_view_access),
+        Native::DataViewGetFloat64 | Native::DataViewSetFloat64 => Some(data_view_access),
+        Native::DataViewGetBigInt64 | Native::DataViewSetBigInt64 => Some(data_view_access),
+        Native::DataViewGetBigUint64 | Native::DataViewSetBigUint64 => Some(data_view_access),
+        _ => None,
+    }
+}
+
+fn data_view_called(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Err(vm.type_error(p, "DataView constructor requires new".into()))
+}
+
+fn data_view_initialize(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.install_data_view(p).map(|()| Value::UNDEFINED)
+}
+
+fn data_view_buffer_getter(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.data_view_view(this).map(|(buffer, _, _)| buffer).ok_or_else(|| {
+        vm.type_error(p, "DataView accessor called on incompatible receiver".into())
+    })
+}
+
+fn data_view_length_or_offset_getter(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    let (buffer, offset, length) = vm.data_view_view(this).ok_or_else(|| {
+        vm.type_error(p, "DataView method called on incompatible receiver".into())
+    })?;
+    if vm.array_buffer_out_of_bounds(buffer, offset, length) {
+        return Err(vm.type_error(p, "Detached DataView".into()));
+    }
+    Ok(Value::number(
+        if native == Native::DataViewByteLengthGetter { length as f64 } else { offset as f64 },
+    ))
+}
+
+/// A DataView get or set: the field at the index, read or written in the byte order the call names.
+fn data_view_access(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let (buffer, offset, length) = vm.data_view_view(this).ok_or_else(|| {
+        vm.type_error(p, "DataView method called on incompatible receiver".into())
+    })?;
+    let is_setter = data_view_setter(native);
+    if is_setter
+        && matches!(
+            vm.heap.get(buffer),
+            Some(Cell::ArrayBuffer {
+                immutable: true,
+                ..
+            })
+        )
+    {
+        return Err(vm.type_error(p, "Cannot write to an immutable ArrayBuffer".into()));
+    }
+    let index = vm.data_view_index(p, args.first().copied())?;
+    if !is_setter
+        && vm.array_buffer_out_of_bounds(buffer, offset, length) {
+            return Err(vm.type_error(p, "Detached DataView".into()));
+        }
+    let width = data_view_width(native);
+    let check_bounds = || index.saturating_add(width) > length;
+    if !is_setter && check_bounds() {
+        return Err(vm.range_error(p, "Offset is outside the bounds of the DataView".into()));
+    }
+    let little_endian = width > 1
+        && args
+            .get(if is_setter { DATA_VIEW_SET_ENDIAN_ARGUMENT } else { DATA_VIEW_GET_ENDIAN_ARGUMENT })
+            .is_some_and(|value| vm.truthy(*value));
+    match native {
+        Native::DataViewGetBigInt64 | Native::DataViewGetBigUint64 => {
+            let unsigned = num_bigint::BigInt::from(vm.data_view_read(buffer, offset + index, width, little_endian)?);
+            let value = if native == Native::DataViewGetBigInt64 {
+                let sign = num_bigint::BigInt::from(1_u8) << 63;
+                if unsigned >= sign {
+                    unsigned - (num_bigint::BigInt::from(1_u8) << 64)
+                } else {
+                    unsigned
+                }
+            } else {
+                unsigned
+            };
+            Ok(vm.heap.alloc(Cell::bigint(value)))
+        }
+        native if !data_view_setter(native) => {
+            let kind = data_view_kind(native);
+            let number = vm.data_view_read_number(buffer, offset + index, kind, little_endian)?;
+            Ok(crate::vm::typed_array_access::element_value(kind, number))
+        }
+        Native::DataViewSetUint8
+        | Native::DataViewSetInt8
+        | Native::DataViewSetUint16
+        | Native::DataViewSetInt16
+        | Native::DataViewSetUint32
+        | Native::DataViewSetInt32
+        | Native::DataViewSetFloat16
+        | Native::DataViewSetFloat32
+        | Native::DataViewSetFloat64
+        | Native::DataViewSetBigInt64
+        | Native::DataViewSetBigUint64 => {
+            if matches!(
+                native,
+                Native::DataViewSetBigInt64 | Native::DataViewSetBigUint64
+            ) {
+                let value = vm.to_bigint(
+                    p,
+                    args.get(DATA_VIEW_VALUE_ARGUMENT)
+                        .copied()
+                        .unwrap_or(Value::UNDEFINED),
+                )?;
+                let modulus = num_bigint::BigInt::from(1_u8) << (DATA_VIEW_DOUBLE_WIDTH * 8);
+                let bits = ((value % &modulus) + &modulus) % &modulus;
+                if check_bounds() || vm.array_buffer_out_of_bounds(buffer, offset, length) {
+                    return Err(vm.data_view_write_error(p, buffer, offset, length));
+                }
+                vm.data_view_write(
+                    buffer,
+                    offset + index,
+                    width,
+                    bits.try_into().unwrap_or(0),
+                    little_endian,
+                )?;
+                return Ok(Value::UNDEFINED);
+            }
+            let value = vm.to_number(
+                p,
+                args.get(DATA_VIEW_VALUE_ARGUMENT)
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED),
+            )?;
+            if check_bounds() || vm.array_buffer_out_of_bounds(buffer, offset, length) {
+                return Err(vm.data_view_write_error(p, buffer, offset, length));
+            }
+            vm.data_view_write_number(buffer, offset + index, data_view_kind(native), value, little_endian)?;
+            Ok(Value::UNDEFINED)
+        }
+        _ => unreachable!(),
+    }
 }

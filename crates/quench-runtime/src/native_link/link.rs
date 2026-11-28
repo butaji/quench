@@ -1,4 +1,4 @@
-mod audit;
+pub(in crate::native_link) mod audit;
 use audit::audit;
 
 use super::NativeImageInputs;
@@ -38,6 +38,9 @@ pub struct NativeSupport {
     layers: Option<PathBuf>,
     /// The allocator (`quench-alloc`), which a core image names as its global allocator.
     alloc: Option<PathBuf>,
+    /// The standard library a minimal static support built itself (`-Zbuild-std`, `aot/cli.rs`), which the driver
+    /// links in place of the sysroot's; `None` where the support links the sysroot's.
+    built_std: Option<PathBuf>,
     native_paths: BTreeSet<PathBuf>,
     optimization: String,
     rust_lto: bool,
@@ -62,6 +65,7 @@ impl NativeSupport {
         let mut engine = None;
         let mut layers = None;
         let mut alloc = None;
+        let mut built_std = None;
         let mut native_paths = BTreeSet::new();
         let mut optimization = None;
         let mut completed = false;
@@ -84,6 +88,10 @@ impl NativeSupport {
                     // A dynamic-source image links the standard build's artifacts (default features:
                     // `bundled-sources`, `jit`); a static image's support excludes both, and its link's
                     // symbol audit checks that the compiler is dropped.
+                    if name == "std" {
+                        built_std = artifact["filenames"].as_array().into_iter().flatten().filter_map(Value::as_str)
+                            .find(|file| file.ends_with(".rlib")).map(PathBuf::from);
+                    }
                     if let Some(library) = layer_library(&artifact, name)? {
                         match name {
                             "quench_runtime_engine" => engine = Some(library),
@@ -165,9 +173,21 @@ impl NativeSupport {
             engine,
             layers,
             alloc,
+            built_std,
             native_paths,
             optimization: optimization.ok_or("Cargo report has no support optimization level")?, executable_link_args: &[],
         })
+    }
+
+    /// The identity of the support's libraries as built (path, length and modification time of each), for keying what
+    /// a link of them computes (`aot::host_operations`'s closure cache): a rebuild of any library changes it.
+    pub fn build_stamp(&self) -> String {
+        let libraries = [Some(&self.host), Some(&self.runtime), self.engine.as_ref(), self.layers.as_ref(), self.alloc.as_ref(), self.built_std.as_ref()];
+        libraries.into_iter().flatten().map(|path| {
+            let metadata = std::fs::metadata(path).ok();
+            let modified = metadata.as_ref().and_then(|metadata| metadata.modified().ok()).and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+            format!("{}:{}:{}\n", path.display(), metadata.map_or(0, |metadata| metadata.len()), modified.map_or(0, |time| time.as_nanos()))
+        }).collect::<String>() + &format!("{}:{}:{:?}", self.optimization, self.rust_lto, self.executable_link_args)
     }
 
     /// Fails unless the engine library is the build this compiler is (`AHEAD_BUILD_ID_MARK`, which
@@ -239,7 +259,7 @@ impl NativeSupport {
         self.apply_link_options(&mut command, inputs, executable)?;
         self.add_objects(&mut command, inputs, executable);
         let interface = super::exports::configure(&mut command, inputs, executable)?;
-        checked_output(&mut command, "native image link")?;
+        checked_link(&mut command)?;
         let symbols = audit(inputs, executable, self.support)?;
         let footprint = super::footprint::read(executable, &symbols)?;
         let dynamic_interface = interface.verify(executable)?;
@@ -265,6 +285,13 @@ impl NativeSupport {
         let parent = |path: &Path, what: &str| path.parent().ok_or_else(|| format!("{what} has no parent")).map(Path::to_path_buf);
         command.arg("--extern").arg(format!("quench_runtime={}", self.runtime.display()))
             .arg("-L").arg(format!("dependency={}", parent(&self.runtime, "runtime library")?.display()));
+        // A minimal static support built its own standard library (`-Zbuild-std`, `aot/cli.rs`), with the
+        // `immediate-abort` panic strategy: the driver links that `std`, not the sysroot's, under the same strategy.
+        if let Some(std) = &self.built_std {
+            command.env("RUSTC_BOOTSTRAP", "1")
+                .args(["-Z", "unstable-options", "-C", "panic=immediate-abort"])
+                .arg("--extern").arg(format!("noprelude:std={}", std.display()));
+        }
         if node_host {
             command.arg("--extern").arg(format!("{}={}", self.host_crate, self.host.display()))
                 .arg("-L").arg(format!("dependency={}", parent(&self.host, "support library")?.display()));
@@ -290,7 +317,7 @@ impl NativeSupport {
             command.args(["--cfg", "quench_native_bootstrap"]).env("QUENCH_NATIVE_BOOTSTRAP", bootstrap);
         }
         if self.rust_lto {
-            command.args(["-C", "lto=thin"]);
+            command.args(["-C", "lto=fat"]);
         }
         self.apply_platform_flags(command, inputs, executable)?;
         for path in &self.native_paths {
@@ -323,6 +350,7 @@ impl NativeSupport {
             std::fs::write(&script, DISCARD_UNWIND_TABLES).map_err(|error| format!("{}: {error}", script.display()))?;
             command.arg("-C").arg("link-arg=-Wl,--no-eh-frame-hdr")
                 .arg("-C").arg(format!("link-arg=-Wl,-T,{}", script.display()));
+            apply_static_layout_flags(command);
         }
         // Apple Silicon's macOS floor already supports chained fixups. Request them explicitly:
         // rustc's default deployment target otherwise selects classic relocations, dirtying every
@@ -368,6 +396,23 @@ impl NativeSupport {
             }
         }
     }
+}
+
+/// The static image's section and code layout: unreferenced sections are collected, and identical
+/// functions fold. Folding (`--icf`) is an lld feature, so the link uses lld when it is on the
+/// path. `-z norelro` drops the RELRO page: a static non-PIE image has no dynamic relocations
+/// for it to protect.
+#[cfg(target_os = "linux")]
+fn apply_static_layout_flags(command: &mut Command) {
+    command.args(["-C", "link-arg=-Wl,--gc-sections", "-C", "link-arg=-Wl,-z,norelro"]);
+    if lld_on_path() {
+        command.args(["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Wl,--icf=all"]);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn lld_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join("ld.lld").is_file()))
 }
 
 // LLVM's raw and wrapper bitcode signatures (BitCodeFormat.html). Detect
@@ -478,6 +523,17 @@ fn exact_dependency(file: &Path, name: &str, reported_files: &[Value]) -> Result
         ));
     }
     Ok(matches.remove(0))
+}
+
+/// The image link's driver. A successful link's stderr reaches this process's stderr, so the
+/// linker's reports (a `QUENCH_EXTRA_LINK_ARGS` `--why-live` chain) are not discarded.
+fn checked_link(command: &mut Command) -> Result<(), String> {
+    let output = command.output().map_err(|error| format!("native image link: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("native image link failed ({}):\n{}", output.status, String::from_utf8_lossy(&output.stderr)));
+    }
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    Ok(())
 }
 
 pub fn checked_output(command: &mut Command, operation: &str) -> Result<Vec<u8>, String> {
@@ -616,3 +672,4 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+

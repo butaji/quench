@@ -9,7 +9,7 @@
 //! a proof never names a changed chain or a reused record or shape, and a use compares no
 //! epoch. A key the shape holds keeps its symbol alive.
 
-use super::{Value, Vm};
+use super::{ObjectRef, Value, Vm};
 use super::property_key::PropertyKey;
 
 /// Direct-mapped entries: a power of two. Node's streams and Fastify's request and reply
@@ -317,7 +317,7 @@ impl Vm {
     /// The getter a read of `key` on `object` calls, where a proof records it: the accessor
     /// fact decoder (`Vm::fact_accessor`) answers it for the receiver's layout.
     pub(super) fn proved_getter(&self, object: Value, key: PropertyKey) -> Option<Value> {
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.heap.ordinary_view(object)?;
         self.fact_accessor(data, key, false).flatten()
     }
 
@@ -326,7 +326,7 @@ impl Vm {
     /// which may be any object whose shape answers the key (`Vm::prove_load`), an array's
     /// among them.
     #[inline(always)]
-    pub(super) fn proof_holder<'a>(&'a self, data: &'a crate::heap::Object, hops: u8) -> Option<&'a crate::heap::Object> {
+    pub(super) fn proof_holder<'a>(&'a self, data: ObjectRef<'a>, hops: u8) -> Option<ObjectRef<'a>> {
         let mut link = data;
         for _ in 0..hops {
             link = self.heap.object(link.proto())?;

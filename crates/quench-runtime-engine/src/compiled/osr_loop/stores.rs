@@ -1,7 +1,9 @@
 //! A loop region's stores to fields and bindings: which store rows the region lowers, and how their values are admitted.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
 use std::collections::BTreeSet;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether a loop region admits `instruction` as a named field store: every named store the
 /// decoder makes (`SetField`, its `base` the receiver register or `None` for `this`) but a strict

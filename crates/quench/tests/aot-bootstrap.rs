@@ -129,17 +129,17 @@ fn frozen_module_inputs_reject_conflicting_entries_without_changing_the_manifest
 #[test]
 fn source_keys_reject_unknown_or_noncanonical_shapes() {
     for parts in [
-        vec!["specialized", "script", ""],
-        vec!["specialized", "specialized-script:01:0:false", ""],
-        vec!["specialized", "specialized-script:0:0:yes", ""],
-        vec!["specialized", "specialized-script:0:0:false:jsx", ""],
+        vec!["script", ""],
+        vec!["script:01:0:false", ""],
+        vec!["script:0:0:yes", ""],
+        vec!["script:0:0:false:jsx", ""],
         vec!["other-mode", ""],
-        vec!["unspecialized", ""],
+        vec![""],
     ] {
         assert!(NativeSourceKey::new("unit", &parts).is_err(), "{parts:?}");
     }
-    let key = NativeSourceKey::new("unit", &["unspecialized", quench_runtime::GLOBAL_SCRIPT_GOAL, ""]).unwrap();
-    assert!(NativeJsCompiler::new(true).compile_source(&key).is_err());
+    let key = NativeSourceKey::new("unit", &[quench_runtime::GLOBAL_SCRIPT_GOAL, ""]).unwrap();
+    assert!(NativeJsCompiler::new().compile_source(&key).is_err());
 }
 
 #[test]
@@ -163,11 +163,11 @@ fn manifest_retains_full_source_identity_and_compiles_without_guest_execution() 
     let mut manifest = SourceManifest::default();
     let options = HostScriptOptions { typescript: true, ..Default::default() };
     let goal = options.cache_goal();
-    let parts = ["specialized", &goal, "throw ('x' as unknown as number) + 1;"];
+    let parts = [goal.as_str(), "throw ('x' as unknown as number) + 1;"];
     assert!(manifest.insert("unit.cts", &parts).unwrap());
     assert!(!manifest.insert("unit.cts", &parts).unwrap());
     assert!(manifest.insert("other.cts", &parts).unwrap());
-    assert!(manifest.insert("unit.cts", &["specialized", &goal, "throw 42;"]).unwrap());
+    assert!(manifest.insert("unit.cts", &[goal.as_str(), "throw 42;"]).unwrap());
     assert_eq!(manifest.units().len(), 3);
     let compiled = manifest.compile().unwrap();
     assert_eq!(compiled.units.len(), 3);
@@ -296,7 +296,7 @@ fn bootstrap_images_link_and_execute_in_node_host() {
     let count = manifest.units().len();
     let directory = std::env::temp_dir().join(format!("quench-native-node-bootstrap-{}", std::process::id()));
     fs::create_dir(&directory).unwrap();
-    let inputs = manifest.compile().unwrap().emit(&directory.join("images"), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap();
+    let inputs = manifest.compile().unwrap().emit(&directory.join("images"), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap().0;
     let executable = directory.join("native-node-bootstrap");
     link_images(&inputs, &executable);
     let output = Command::new(&executable).env_clear()
@@ -377,7 +377,7 @@ fn bootstrap_images_reject_missing_frozen_sdk_preparation() {
         .expect("bootstrap captures primordials");
     assert!(file.prepared.take().is_some());
     let missing = path.display().to_string();
-    let inputs = compiled.emit(&directory.join("images"), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap();
+    let inputs = compiled.emit(&directory.join("images"), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap().0;
     let executable = directory.join("missing-preparation");
     link_images(&inputs, &executable);
     let output = Command::new(executable).env_clear().current_dir(&directory).output().unwrap();
@@ -696,7 +696,7 @@ fn framework_images_execute_original_js_and_ts_and_match_node() {
         let graph = manifest.add_module_graph(&entry).unwrap();
         manifest.extend(SourceManifest::capture_for_graph(&graph).unwrap()).unwrap();
         eprintln!("native {fixture}: {} files, {} source units, {} requirements", graph.files.len(), manifest.units().len(), graph.requirements.len());
-        let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images")), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap();
+        let inputs = manifest.compile().unwrap().emit(&directory.join(format!("{fixture}-images")), &quench_runtime::NativeTarget::default(), quench::aot::ImageHost::Node).unwrap().0;
         let executable = directory.join(fixture);
         link_images(&inputs, &executable);
         let run = |command: &mut Command| {

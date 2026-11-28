@@ -15,7 +15,7 @@ impl Vm {
             let template =
                 self.realm.intrinsics.arguments_objects.get(&(self.realm.globals, expose_callee))?;
             (self.heap.object(template.anchor)?.shape() == shape)
-                .then(|| self.heap.property_get(object, template.length_slot))
+                .then(|| self.heap.property_get_ref(object, template.length_slot))
                 .flatten()
         })
     }

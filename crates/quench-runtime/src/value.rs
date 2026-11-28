@@ -93,6 +93,7 @@ impl Value {
     }
 }
 
+#[quench_macros::test_visible]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
     LegacySlot(u32),
@@ -113,6 +114,17 @@ pub(crate) enum HeapReference {
     CollectionRecord(u32),
     /// A Wasm GC struct or array (`Heap::alloc_wasm_gc`), whose head holds its payload.
     WasmGcRecord(u32),
+}
+
+/// An ordinary object reference: the low half of a direct object `Value`, which is its class-space
+/// granule (the object's stub). Read the record id only through `Heap::record_id` (Concrete) or
+/// `staged::object::object_record_of` (staged).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ObjectRef32(pub(crate) u32);
+
+impl ObjectRef32 {
+    /// The stub granule this reference names: the identity an object link carries (`ProtoLink`).
+    #[inline(always)] pub(crate) const fn granule(self) -> u32 { self.0 }
 }
 
 #[cfg(feature = "profile-aggregate")]
@@ -287,6 +299,26 @@ impl Value {
         Self(value.to_bits())
     }
 
+    /// A Number stored as its raw binary64 bits (decision 4.1): a Number-typed slot or element holds
+    /// its double word always, integral values included, so no integral check is made. NaN is the
+    /// canonical NaN, which keeps a double word out of the tag space (invariant I).
+    #[inline(always)] pub fn from_f64_raw(value: f64) -> Self {
+        Self::from_float_bits64(value.to_bits())
+    }
+
+    /// The int32 form of this Number, for consumers that need the canonical integer (an array
+    /// index, a property key, a switch case): an int32 as it is, a double-encoded integer in int32
+    /// range as that int32 (-0 as 0). `None` for a non-integral, out-of-range, NaN or infinite value,
+    /// and for a non-Number. Stores never canonicalize (`from_f64_raw`), so consumers normalize here.
+    #[inline(always)] pub fn numeric_key(self) -> Option<i32> {
+        if let Some(integer) = self.as_int() {
+            return Some(integer);
+        }
+        let number = self.as_number()?;
+        let integer = truncate_to_i32(number);
+        (f64::from(integer) == number).then_some(integer)
+    }
+
     /// `number` without branches, for loops over many values: the same encoding, chosen by
     /// selects so that a column of mixed integral and fractional doubles costs the same per value.
     #[inline(always)]
@@ -362,19 +394,17 @@ impl Value {
         self.0
     }
 
-    /// A float arithmetic result held in place. A NaN whose bits fall in the
-    /// tag space becomes the canonical NaN: arithmetic may produce any
-    /// arithmetic NaN, and the canonical one is.
+    /// A float bit entry, held in place (decision 4.1, invariant I): every NaN becomes the canonical
+    /// NaN, any other double is its own bits. Every NaN, not only one whose bits fall in the tag space:
+    /// arithmetic quiets a signalling NaN by setting bit 51, which carries a 0x7ff1..0x7ff6 NaN into the
+    /// tag space, so a NaN of any bits must not be stored as it is. A NaN is rare, so the branch is cold
+    /// and keeps the check off the result's dependency chain.
     #[inline(always)] pub fn from_float_bits64(bits: u64) -> Self {
-        let value = Self(bits);
-        if value.is_tagged() {
-            // Only a NaN whose payload collides with a tag: a predicted
-            // branch keeps the check off the result's dependency chain,
-            // where a conditional move would lengthen every float chain.
+        if f64::from_bits(bits).is_nan() {
             std::hint::cold_path();
             Self(CANONICAL_NAN)
         } else {
-            value
+            Self(bits)
         }
     }
 
@@ -511,6 +541,7 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_HEAP).then_some((self.0 & PAYLOAD_MASK) as u32)
     }
 
+    #[quench_macros::test_visible]
     #[inline(always)] pub(crate) fn heap_reference(self) -> Option<HeapReference> {
         if self.0 & TAG_MASK != TAG_HEAP {
             return None;
@@ -578,13 +609,13 @@ impl Value {
         (self.0 & HEAP_FAMILY_MASK == TAG_HEAP | DIRECT_WASM_GC_HANDLE_BITS).then_some(self.0 as u32)
     }
 
-    #[inline(always)] pub fn direct_object_index(self) -> Option<u32> {
+    #[inline(always)] pub fn direct_object_index(self) -> Option<ObjectRef32> {
         // `heap_reference` as one family test: hot reads ask for this family alone.
-        crate::staged::value::is_direct_object(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
+        crate::staged::value::is_direct_object(&mut crate::staged::Concrete::pure(), self.0).then_some(ObjectRef32(self.0 as u32))
     }
 
     #[inline(always)] pub(crate) fn direct_array_index(self) -> Option<u32> {
-        crate::staged::value::is_direct_array(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
+        crate::staged::value::is_direct_array(&mut crate::staged::Concrete::pure(), self.0).then_some(self.0 as u32)
     }
 
     #[inline(always)] pub(crate) fn direct_iterator_index(self) -> Option<u32> {
@@ -608,7 +639,7 @@ impl Value {
     }
 
     #[inline(always)] pub(crate) fn direct_function_index(self) -> Option<u32> {
-        crate::staged::value::is_direct_function(&mut crate::staged::Concrete::new(std::ptr::null()), self.0).then_some(self.0 as u32)
+        crate::staged::value::is_direct_function(&mut crate::staged::Concrete::pure(), self.0).then_some(self.0 as u32)
     }
 
     /// Whether the value names a direct record of an object family: an ordinary object,
@@ -657,7 +688,7 @@ impl Value {
         if self.0 == Self::FALSE.0 { return Some(false); }
         if (self.0 & TAG_MASK) == TAG_INT { return Some(self.0 as u32 != 0); }
         let (undecided, truthy) = crate::staged::value::tagged_truthiness(
-            &mut crate::staged::Concrete::new(std::ptr::null()),
+            &mut crate::staged::Concrete::pure(),
             self.0,
         );
         (!undecided).then_some(truthy)
@@ -821,7 +852,7 @@ mod tests {
         );
         let direct_object = Value::direct_object(42);
         assert_eq!(direct_object.heap_index(), Some(42));
-        assert_eq!(direct_object.direct_object_index(), Some(42));
+        assert_eq!(direct_object.direct_object_index(), Some(super::ObjectRef32(42)));
         assert_eq!(
             direct_object.heap_reference(),
             Some(super::HeapReference::ObjectRecord(42))

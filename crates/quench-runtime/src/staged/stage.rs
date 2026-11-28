@@ -30,7 +30,7 @@ pub enum Passed<'a, W> {
 
 impl<W> Passed<'_, W> {
     /// How many arguments are passed.
-    pub(crate) fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         match self {
             Self::Window { count, .. } => usize::from(*count),
             Self::List { registers, .. } => registers.len(),
@@ -62,14 +62,15 @@ pub fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undefined: S
     }
 }
 
-/// The record space whose barrier a store consults (`Stage::store_gate`): an ordinary object's, or
-/// a function record's, whose own properties are an `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`.
-/// The two spaces share one block layout, so the gate's reading is one implementation that differs
-/// only in the mark block list it starts from.
+/// The record space whose barrier a store consults (`Stage::store_gate`): a function record, whose own
+/// properties are an `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, or a class cell, named by its
+/// granule (the class space's granule, whose region and local cell `heap::class_space` derives). An
+/// ordinary object is a class cell, so no other space is named.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(u8)]
 pub enum StagedRecordSpace {
-    Object,
     Function,
+    Class,
 }
 
 /// A binding-time domain: the 64-bit words an operation computes on, its conditions, and where
@@ -187,6 +188,19 @@ pub trait Stage: crate::projection::Sealed {
     /// int32 range is an int32, NaN is the canonical NaN, any other double its own bits.
     /// The binary64 is a proof (`staged::Float64`), so only a proved Number is boxed.
     fn box_number(&mut self, number: super::Float64<Self::Word>) -> Self::Word;
+    /// The `Value` bits of an `f64` word as a Number-typed slot or element holds it (decision 4.1): the
+    /// double's own bits, a plain move. Every stored double is already canonical (each float bit entry made
+    /// its NaN the canonical one, `canonical_float`), so a read does not canonicalize. The binary64 is a
+    /// proof (`staged::Float64`).
+    fn box_raw_number(&mut self, number: super::Float64<Self::Word>) -> Self::Word;
+    /// The word a float bit entry holds (decision 4.1, invariant I): a binary64 word read from memory
+    /// that may carry any bits (a typed array or DataView element, a Float32 widened, a binary16 decoded),
+    /// with every NaN made the canonical NaN (a signalling one too: arithmetic would quiet it into the tag
+    /// space); any other word is its own. Every such entry calls it, so no stored double is a tag.
+    fn canonical_float(&mut self, bits: Self::Word) -> Self::Word;
+    /// The raw double word of the Number word `bits` (decision 4.1, R4-M1): an int32 converts to its
+    /// binary64, any other Number is its own bits. Only a generic writer into a Number-class slot runs it.
+    fn raw_number(&mut self, bits: Self::Word) -> Self::Word;
     /// Stores the low 8 (`store_u8`) or 16 (`store_u16`) bits of `value`.
     fn store_u8(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
     fn store_u16(&mut self, at: Access, base: Self::Word, offset: i32, value: Self::Word);
@@ -222,10 +236,9 @@ pub trait Stage: crate::projection::Sealed {
         self.store_gate(space, record_id, value)
     }
     /// Whether a store of a value the frame proved immediate needs no barrier log: such a store
-    /// skips `store_gate`, which is right unless old records keep reference counts, where
-    /// overwriting a reference with any value deletes an edge (`RecordSpace::store_logs`). The
-    /// interpreter reads the heap (`Heap::immediate_store_unlogged`), native code the counts bit
-    /// of the gate word (`STORE_WATCH_COUNTS`).
+    /// skips `store_gate`, which is right, since no heap keeps reference counts, so an immediate
+    /// overwrite deletes no edge. Always open; the query stays for the stencils and native code
+    /// that read it.
     fn immediate_store_open(&mut self) -> Self::Cond;
     /// Whether the dependency named by `watch` (a per-site operand) still holds: the interpreter
     /// tests it, a specializer proves it once at publication and its code pays no check (the
@@ -299,6 +312,22 @@ pub trait Stage: crate::projection::Sealed {
     /// `cond`'s value where this stage knows it: the interpreter always does, a specializer
     /// never does for a value read from the heap.
     fn known(&self, cond: Self::Cond) -> Option<bool>;
+    /// The fact the stage holds of `word`: the type every value it may take at this point is of
+    /// (R2, facts on values). A stage that keeps none answers `Type::ANY`, so a row's test of a
+    /// value's class (`value::decided`) is built as before; the specializer's stage answers from its
+    /// facts, and a test the fact decides is a constant condition, with no code.
+    #[inline(always)]
+    fn fact(&self, word: Self::Word) -> crate::typed_ir::Type { let _ = word; crate::typed_ir::Type::ANY }
+    /// The condition that is `value` at every run: a test a fact decided (`value::decided`).
+    #[inline(always)]
+    fn cond_of(&mut self, value: bool) -> Self::Cond {
+        let zero = self.constant(0);
+        if value { self.eq_imm(zero, 0u64) } else { self.ne_imm(zero, 0u64) }
+    }
+    /// Whether the stage reads the arena's slot owner tables (`Table::SlotChains`, `Table::ChainOwners`,
+    /// `Table::OwnerTypes`), so a tracked store runs in place; a stage without them stores
+    /// through the frame's VM call, which is the same store.
+    const SLOT_TABLES: bool = true;
     /// The base of `table`.
     fn table(&mut self, table: Table) -> Self::Word;
 
@@ -309,6 +338,31 @@ pub trait Stage: crate::projection::Sealed {
     fn fill_window(&mut self, top: Self::Word, undefined: Self::Word, prefix: &[u64], passed: Passed<'_, Self::Word>,
         registers: u16) {
         fill_by_rows(self, top, undefined, prefix, passed, registers);
+    }
+
+    /// `fill_window` where the window's register count is a word of the stage (an indirect callee's record names it at
+    /// run time): register `k` below `registers` holds argument `k` of the `count` arguments at `arguments` where
+    /// `k < count`, else `undefined`. One loop over the register count (`loop_words`), so a stage with a loop runs one
+    /// body; `Concrete` inherits it.
+    #[inline(always)]
+    fn fill_window_dynamic(&mut self, top: Self::Word, undefined: Self::Word, arguments: Self::Word, count: u16,
+        registers: Self::Word) {
+        let zero = self.constant(0);
+        let some = self.ult(zero, registers);
+        self.effect_if(some, |stage| {
+            let count = stage.constant(u64::from(count));
+            let _ = stage.loop_words([zero], |stage, [index]| {
+                let at = stage.mul_imm(index, 8_u64);
+                let slot = stage.add(top, at);
+                let source = stage.add(arguments, at);
+                let within = stage.ult(index, count);
+                let value = stage.choose(within, |stage| stage.load_u64(Region::Frame.mutable(), source, 0), |_| undefined);
+                stage.store_u64(Region::Frame.mutable(), slot, 0, value);
+                let next = stage.add_imm(index, 1_u64);
+                let more = stage.ult(next, registers);
+                (more, [next])
+            });
+        }, |_| {});
     }
 
     /// The first index at or after `from` (at most the text's length) where `needle` occurs in
@@ -362,18 +416,6 @@ pub trait Stage: crate::projection::Sealed {
     fn case_changes_span(&mut self, source: Self::Word, length: Self::Word, upper: bool) -> Self::Cond where Self: Sized {
         super::spans::case_changes_by_rows(self, source, length, upper)
     }
-
-    /// Whether `target`, an encoded prototype link (`ProtoLink::bits`), lies on the prototype chain
-    /// of the object record `object`, as `(decided, holds)`: at most `max_depth` links past the
-    /// first are followed, in the object record table at `records`, and a link naming no object
-    /// record (a proxy, an array, a function) or a longer chain leaves it undecided, for the
-    /// caller's residual. The default unrolls the walk, one nested conditional per link, as a
-    /// specializer emits it; a stage that knows its words loops.
-    #[inline(always)]
-    fn walk_prototypes(&mut self, records: Self::Word, object: Self::Word, target: Self::Word, max_depth: u32)
-        -> (Self::Cond, Self::Cond) where Self: Sized {
-        super::object::walk_prototypes(self, records, object, target, max_depth)
-    }
 }
 
 /// The process tables an operation addresses from a base.
@@ -384,6 +426,21 @@ pub enum Table {
     /// The object layout table (`heap::layouts`): a record's header words at its layout id
     /// times eight. Entries never change once written.
     Layouts,
+    /// The arena's chain start per shape (`ValueArena::shape_chains`), a `u32` each. Changes
+    /// as shapes are made, so a read of it is never hoisted.
+    SlotChains,
+    /// The owner of each chain slot (`ValueArena::chain_owners`), a `u32` each.
+    ChainOwners,
+    /// The representation each owner holds (`ValueArena::owner_types`), one `SlotType` byte each.
+    OwnerTypes,
+    /// The class space's base (`Heap::class_space_base`): a direct object's granule `g` names the cell at
+    /// `base + g * CLASS_HEADER_BYTES`, whose header's high half is the object's record id (R4-B2b). Per heap:
+    /// a stage reads it from its heap or its dispatch head, never from a constant.
+    ClassSpace,
+    /// The spill arena's base (`Heap::native_spill_base`): a spilled class field's word is the run's offset
+    /// (`spill_offset_of`) into it, so field `i` of the run at `spill_from` is at `SpillBase + (offset + i) * 8`.
+    /// Per heap, read live at each use: the arena moves only when it reallocates (`native_layout_epoch` counts it).
+    SpillBase,
 }
 
 
@@ -396,8 +453,14 @@ pub enum ImageWord {
     HolderLink,
     /// The value the holder's slot holds at link.
     HolderValue,
-    /// The layout id (`ProtoLink::arena_layout`) of the objects a construction makes, by a field
-    /// guard key: one compare of a record's own word with it proves the exact shape, the plain
-    /// arena run and the prototype link (`ic::IcOp::GuardFormed` of an `ic::SYMBOLIC_SHAPE` id).
+    /// The class id (`ProtoLink::class`) a construction's class cell carries, by a field guard key: one compare
+    /// of a live cell's class with it proves the class, the shape and the prototype link (`ic::IcOp::GuardImageClass`,
+    /// `StoreArm::of_image`). A key no class has resolves to an id no cell carries.
     Layout,
+    /// The layout id of the instances a shape recipe builds, by the recipe's key in the image's shape table, resolved
+    /// where the image links: the header word a construction of the recipe's fields allocates with, inline or arena
+    /// form (`InlineObjectHeader::for_fields`, `symbols::class_layout_id`), or an id no record has where the
+    /// recipe's prototype does not resolve.
+    /// A lowering names it by the recipe key, `stage.image_word(ImageWord::ClassLayout, key)`.
+    ClassLayout,
 }

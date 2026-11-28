@@ -1,9 +1,11 @@
 //! The numeric instructions' rows: a Number operation or a numeric jump decoded over the frame's Number registers,
 //! and the staged operators the decode of a numeric instruction names.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The row of a numeric instruction: `None` when the instruction is not one, `Some(None)` when it
 /// is one a row cannot take.
@@ -36,11 +38,10 @@ pub(crate) fn numeric_row(numbers: Numbers, instruction: WideInstruction) -> Opt
         Some(Operation::Number(NumberOperation::IncDec { destination, source, decrement, .. })) => return Some(plain.then(|| Decoded::number(
             if decrement { Kind::Sub } else { Kind::Add }, Some(destination), Some(Source::Register(source)),
             Some(Source::Constant(Value::integer(1).to_bits())), None))),
+        // `+x` and `-x` of a Number register (`NumberUnary`), as the staged decode names them.
+        Some(Operation::Number(NumberOperation::Unary { destination, source, operation, .. })) =>
+            return Some(source.register_index().filter(|_| plain).map(|source| unary_row(destination, source, operation))),
         _ => {}
-    }
-    // `-x` and `+x`: the Number unary the interpreter's operations name (`NumberUnary`).
-    if let Some(operation) = quench_runtime::vm::operations::NumberUnary::from_js_instruction(instruction.op(), instruction.imm()) {
-        return Some(unary_row(instruction, operation).filter(|_| plain));
     }
     if let Some((destination, index)) = Operation::<(), ()>::decode_constant_load(instruction) {
         return Some(load_const(numbers, destination, index).ok().filter(|_| plain));
@@ -62,14 +63,14 @@ fn truthiness_jump(instruction: WideInstruction, register: quench_runtime::bytec
 
 /// The row of a Number unary over a register: `-` the negation of a Number, `+` a Number as it
 /// is (proved, as `ToNumeric` is).
-fn unary_row(instruction: WideInstruction, operation: quench_runtime::vm::operations::NumberUnary) -> Option<Decoded> {
+fn unary_row(destination: quench_runtime::bytecode::Register, source: quench_runtime::bytecode::Register, operation: quench_runtime::vm::operations::NumberUnary) -> Decoded {
     use quench_runtime::vm::operations::NumberUnary;
-    let (result, operand) = (instruction.result_register(), Some(Source::Register(instruction.register_b())));
+    let (result, operand) = (destination, Some(Source::Register(source)));
     let row = |kind| Decoded::number(kind, Some(result), operand, None, None);
-    Some(match operation {
+    match operation {
         NumberUnary::Negate => row(Kind::Neg),
         NumberUnary::Plus => Decoded { checked: true, ..row(Kind::Move) },
-    })
+    }
 }
 
 /// The staged row (`staged_rows.rs`) of a `Binary` that no numeric row takes: `%`, and a relation or an equality as its

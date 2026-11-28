@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Kinds of the RETURN family's parameter codes: a returning record's kind (`RETURNING_*`, 0..=12),
 /// then a `Return` (`RETURN_KIND`) and a `LoadConst` fused into its `Return` (`CONSTANT_KIND`).
@@ -50,13 +51,7 @@ pub(crate) const fn return_miss_of(parameters: u8) -> Handler {
         RETURN_KIND => return_general_in_lane as Handler,
         CONSTANT_KIND => leaf_arms!(leaf, |L| return_constant_miss::<L> as Handler),
         RETURNING_FIELD => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD, L> as Handler),
-        RETURNING_FIELD_OWN => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_OWN, L> as Handler),
-        RETURNING_FIELD_POLYMORPHIC => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_POLYMORPHIC, L> as Handler),
-        RETURNING_FIELD_HOLDER => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_HOLDER, L> as Handler),
-        RETURNING_FIELD_INHERITED => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_INHERITED, L> as Handler),
-        RETURNING_FIELD_NESTED => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_NESTED, L> as Handler),
         RETURNING_FIELD_PRIVATE => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_PRIVATE, L> as Handler),
-        RETURNING_FIELD_GETTER => leaf_arms!(leaf, |L| returning_miss::<RETURNING_FIELD_GETTER, L> as Handler),
         RETURNING_UNARY => leaf_arms!(leaf, |L| returning_miss::<RETURNING_UNARY, L> as Handler),
         RETURNING_BINARY => leaf_arms!(leaf, |L| returning_miss::<RETURNING_BINARY, L> as Handler),
         RETURNING_OBJECT => leaf_arms!(leaf, |L| returning_miss::<RETURNING_OBJECT, L> as Handler),

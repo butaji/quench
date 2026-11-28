@@ -14,14 +14,14 @@ fn compiled_lane_body(source: &str, name: &str) -> (Vm, ResidualProgram, LaneMet
     let function = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
     let method = vm.compile_lane_method(&program, function as u32,
-        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+        &|_| (0, 0), Vec::new()).unwrap();
     (vm, program, method)
 }
 
 /// Installs a method cache entry for `owner.atom`, as a call site's first call does.
 fn name_in_a_method_cache(vm: &mut Vm, owner: Value, atom: Atom) {
     let callee = vm.own_property(owner, atom).unwrap();
-    let shape = vm.heap_reads().object_record(owner).unwrap().shape();
+    let shape = vm.heap_reads().object(owner).unwrap().shape();
     let target = vm.call_target(callee).unwrap();
     let slot = vm.shape_slot(shape, atom).unwrap() as u16;
     let site = vm.method_caches.len();
@@ -151,7 +151,7 @@ fn a_folded_global_value_retires_its_readers_when_written_and_folds_no_more_once
     let function = program.functions.iter().position(|body|
         body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap() as u32;
     let recompile = |vm: &mut Vm| vm.compile_lane_method(&program, function,
-        &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+        &|_| (0, 0), Vec::new()).unwrap();
     assert_eq!(recompile(&mut vm).stable.globals.len(), 1, "written once, the global still folds");
     vm.store_property_slot(globals, slot, value);
     assert!(recompile(&mut vm).stable.globals.is_empty(), "written twice, the global is read at run time");

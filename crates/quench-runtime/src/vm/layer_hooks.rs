@@ -68,11 +68,20 @@ layer_hooks! {
     /// Installs the JIT's compile routes (the engine's `jit_routes`) and every lane handler, as
     /// `Vm::new` makes a runtime: a VM only restored at rest (`Vm::new_at_rest`) names neither.
     fn enable_jit => quench_layer_enable_jit() -> ();
+    /// The creation edge of body `body`'s one closure in `program`, once its closure cell is written (`Vm::note_closure_created`):
+    /// the layer binds the proven calls of the image that fold that body's closure.
+    fn closure_created => quench_layer_closure_created(vm: &mut Vm, program: ProgramId, body: u32) -> ();
+    /// Resolves the planned arms of `class` (a class id: a constructor's function id or a synthetic class) in `program` once its header is recorded:
+    /// `prototype` is the prototype its instances hold, which holds the arms' methods. Called after the header is set,
+    /// so a planned row that reads the header reads a target already resolved. The class-header edge makes the call
+    /// for a construction and for a restored snapshot alike (`Vm::record_class_edge`).
+    fn planned_class_recorded => quench_layer_planned_class_recorded(vm: &mut Vm, program: ProgramId, class: u32, prototype: Value) -> ();
+    /// The entry of an Intl or Temporal native (`None` for any other native), which the core's
+    /// `native_table` holds. A build without the layer claims none.
+    fn intl_entry => quench_layer_intl_entry(native: Native) -> Option<native_table::NativeFn>;
 }
 
 intl_hooks! {
-    /// The Intl and Temporal natives of `call_native_table`.
-    fn intl_temporal_call => quench_layer_intl_temporal_call(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Value, args: &[Value]) -> Result<Value, JsError>;
     /// The Intl and Temporal constructors of `construct_native_with_new_target`.
     fn intl_temporal_construct => quench_layer_intl_temporal_construct(vm: &mut Vm, p: &ResidualProgram, native: Native, args: &[Value], new_target: Value) -> Result<Value, JsError>;
     /// `Number.prototype.toLocaleString` and `BigInt.prototype.toLocaleString` with Intl.

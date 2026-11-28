@@ -1,5 +1,7 @@
 //! Float width projections share declarations while preserving IEEE bits.
 
+// The runtime's list macros come from the crate root (`lib.rs`); a stencil build mounts its own.
+#[cfg(stencil_build)]
 #[macro_use]
 #[path = "../staged/wasm_lists.rs"]
 mod wasm_lists;
@@ -26,7 +28,7 @@ macro_rules! binary_family {
             /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.
             #[cfg(test)]
             #[inline(always)]
-            pub(crate) fn apply(self, $left: $float, $right: $float) -> WasmValue {
+            pub fn apply(self, $left: $float, $right: $float) -> WasmValue {
                 type $float_alias = $float;
                 type $bits_alias = $bits;
                 const $sign: $bits_alias = super::numeric::sign_mask($bits_alias::BITS) as $bits_alias;
@@ -45,7 +47,7 @@ macro_rules! float_binary_operators {
         binary_family!(F64BinaryOperator, f64, u64, F64, $aliases, $arguments; $($name, $f64 => $body;)+);
         impl F32BinaryOperator {
             /// The f64 operator of the same name: the f64 selectors extend the f32 ones.
-            pub(crate) const fn widen(self) -> F64BinaryOperator {
+            pub const fn widen(self) -> F64BinaryOperator {
                 match self { $(Self::$name => F64BinaryOperator::$name,)+ }
             }
         }
@@ -62,7 +64,7 @@ macro_rules! unary_family {
             /// against (`staged::wasm_float_tests`); execution goes through `evaluate`.
             #[cfg(test)]
             #[inline(always)]
-            pub(crate) fn apply(self, $value: $float) -> WasmValue {
+            pub fn apply(self, $value: $float) -> WasmValue {
                 type $float_alias = $float;
                 type $bits_alias = $bits;
                 const $sign: $bits_alias = super::numeric::sign_mask($bits_alias::BITS) as $bits_alias;
@@ -103,7 +105,7 @@ macro_rules! float_unary_operators {
         unary_family!(F64UnaryOperator, f64, u64, F64, $aliases, $argument; $($name, $f64 => $body;)+);
         impl F32UnaryOperator {
             /// The f64 operator of the same name: the f64 selectors extend the f32 ones.
-            pub(crate) const fn widen(self) -> F64UnaryOperator {
+            pub const fn widen(self) -> F64UnaryOperator {
                 match self { $(Self::$name => F64UnaryOperator::$name,)+ }
             }
         }
@@ -115,13 +117,13 @@ float_binary_list!(float_binary_operators);
 float_unary_list!(float_unary_operators);
 
 impl F64BinaryOperator {
-    pub(crate) const fn widen(self) -> Self {
+    pub const fn widen(self) -> Self {
         self
     }
 
     /// Whether a NaN operand matters to the result only as a NaN (Wasm leaves the payload
     /// of such a result open): any word of an f64 register reads as its operand.
-    pub(crate) const fn nan_agnostic(self) -> bool {
+    pub const fn nan_agnostic(self) -> bool {
         matches!(
             self,
             Self::Add | Self::Subtract | Self::Multiply | Self::Divide | Self::Equal | Self::NotEqual
@@ -131,12 +133,12 @@ impl F64BinaryOperator {
 }
 
 impl F64UnaryOperator {
-    pub(crate) const fn widen(self) -> Self {
+    pub const fn widen(self) -> Self {
         self
     }
 
     /// `F64BinaryOperator::nan_agnostic` of a unary operator.
-    pub(crate) const fn nan_agnostic(self) -> bool {
+    pub const fn nan_agnostic(self) -> bool {
         matches!(self, Self::SquareRoot | Self::Ceiling | Self::Floor | Self::Truncate | Self::Nearest)
     }
 }
@@ -148,7 +150,7 @@ macro_rules! float_evaluation {
     ($binary:ident, $unary:ident, $float:ty, $bits:ty, $variant:ident, $width:ident) => {
         impl $binary {
             #[inline(always)]
-            pub(crate) fn evaluate(self, left: $float, right: $float) -> WasmValue {
+            pub fn evaluate(self, left: $float, right: $float) -> WasmValue {
                 let operator = self.widen();
                 let word = float_binary(
                     &mut ConcreteWasm,
@@ -167,7 +169,7 @@ macro_rules! float_evaluation {
 
         impl $unary {
             #[inline(always)]
-            pub(crate) fn evaluate(self, value: $float) -> WasmValue {
+            pub fn evaluate(self, value: $float) -> WasmValue {
                 let word = ConcreteWasm.operate_float_unary(
                     self.widen(),
                     Float::$width,

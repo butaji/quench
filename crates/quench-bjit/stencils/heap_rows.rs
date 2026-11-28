@@ -34,12 +34,11 @@
 use crate::bytecode::Operand;
 // A store's strictness decides only the VM's refused store, which a row leaves to at its miss: the
 // rows build their writes `strict: false`.
-use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_OBJECT_RECORD_BASE, JS_STEP_STORES_SPECIALIZED, JS_STEP_STRING_RECORD_BASE};
+use crate::layout::{CONTEXT_BODY, JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, JS_STEP_CLASS_BASE, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_CLASS, JS_STEP_EMPTY_OBJECT_CURSOR, JS_STEP_STRING_RECORD_BASE, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
+use crate::layout::words::DIRECT_ARRAY_TAG;
+use crate::staged::bump::{ClassCell, claim_empty_object};
 use crate::layout::shared_words::{capture_len, capture_values};
 use crate::ic_rows;
-use crate::layout::{JS_STEP_ARRAY_CURSOR, JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD, JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD,
-    JS_STEP_OBJECT_CURSOR, NATIVE_ARRAY_LAYOUT, NATIVE_OBJECT_LAYOUT, NATIVE_RECORD_CURSOR_LAYOUT};
-use crate::layout::words::{DIRECT_ARRAY_TAG, DIRECT_OBJECT_TAG};
 use crate::numeric::{HOLE_A, HOLE_B, Out, S, deliver, index_of};
 use crate::words::{canonical, hole, hole64, hop, int_word};
 use crate::places::{DEST, LEFT, RIGHT, Places, finish, finish_fast};
@@ -47,8 +46,7 @@ pub(crate) use crate::stage::stage_site;
 pub(crate) use crate::words::{context_word, payload, set_context_word, word_at};
 use crate::stage::StencilStage;
 use crate::staged::{Frame, Operation, Stage, Step, op_kind, step_local_of, step_of, step_value_of, string_length};
-use crate::codes::{EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, ADD_ARENA_ROW, ADD_EITHER_ROW, ADD_PACKED_ROW, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, HELD_LINK_AT, PROTOTYPE_ROW, SHAPE_ROW, SHAPE_FLAT_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, INSTANCEOF_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, NAME_ARENA_ROW, NAME_EITHER_ROW, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ADD_ARENA_ROW, THIS_ADD_EITHER_ROW, THIS_ADD_PACKED_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
-use crate::staged::object::Form;
+use crate::codes::{ADD_CLASS_ROW, IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, CLASS_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
 use crate::staged::{code_units, environment, parse_int};
 use crate::places_view::{ELEMENT_SITES, PlacesView, entry_dense, entry_typed, typed_kind};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
@@ -58,7 +56,7 @@ use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
 fn this_row<const D: u8>(s: S) -> Out {
     let mut frame = Places::new::<D, MEM, MEM>(s);
     let load = Operation::LoadThis { destination: DEST };
-    let done = matches!(step_value_of::<{ op_kind::LOAD_THIS }, _, _>(&mut StencilStage::from_hole(0), &mut frame, load), Step::Value(_));
+    let done = matches!(step_value_of::<{ op_kind::LOAD_THIS }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, load), Step::Value(_));
     finish(frame, done)
 }
 
@@ -67,7 +65,7 @@ fn this_row<const D: u8>(s: S) -> Out {
 fn load_local_row<const D: u8>(s: S) -> Out {
     let mut frame = Places::new::<D, MEM, MEM>(s);
     let load = Operation::LoadLocalPlain { destination: DEST, slot: hole::<HOLE_A>() as u16 };
-    let done = matches!(step_local_of::<{ op_kind::LOAD_LOCAL_PLAIN }, _, _>(&mut StencilStage::from_hole(0), &mut frame, load), Step::Value(_));
+    let done = matches!(step_local_of::<{ op_kind::LOAD_LOCAL_PLAIN }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, load), Step::Value(_));
     finish(frame, done)
 }
 
@@ -77,7 +75,7 @@ fn load_local_row<const D: u8>(s: S) -> Out {
 fn store_local_row<const A: u8>(s: S) -> Out {
     let mut frame = Places::new::<MEM, A, MEM>(s);
     let store = Operation::StoreLocalPlain { source: LEFT, slot: hole::<HOLE_B>() as u16, result: None };
-    let done = matches!(step_local_of::<{ op_kind::STORE_LOCAL_PLAIN }, _, _>(&mut StencilStage::from_hole(0), &mut frame, store), Step::Value(_));
+    let done = matches!(step_local_of::<{ op_kind::STORE_LOCAL_PLAIN }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, store), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -87,7 +85,7 @@ fn store_local_row<const A: u8>(s: S) -> Out {
 fn load_checked_row<const D: u8>(s: S) -> Out {
     let mut frame = Places::new::<D, MEM, MEM>(s);
     let load = Operation::LoadLocalChecked { destination: DEST, slot: hole::<HOLE_A>() as u16, numeric: false };
-    let done = matches!(step_local_of::<{ op_kind::LOAD_LOCAL_CHECKED }, _, _>(&mut StencilStage::from_hole(0), &mut frame, load), Step::Value(_));
+    let done = matches!(step_local_of::<{ op_kind::LOAD_LOCAL_CHECKED }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, load), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -97,7 +95,7 @@ fn load_checked_row<const D: u8>(s: S) -> Out {
 fn store_checked_row<const A: u8>(s: S) -> Out {
     let mut frame = Places::new::<MEM, A, MEM>(s);
     let store = Operation::StoreLocalChecked { source: LEFT, slot: hole::<HOLE_B>() as u16, result: None, initializing: false };
-    let done = matches!(step_local_of::<{ op_kind::STORE_LOCAL_CHECKED }, _, _>(&mut StencilStage::from_hole(0), &mut frame, store), Step::Value(_));
+    let done = matches!(step_local_of::<{ op_kind::STORE_LOCAL_CHECKED }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, store), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -106,7 +104,7 @@ fn store_checked_row<const A: u8>(s: S) -> Out {
 #[inline(always)]
 fn guard_row<const KIND: u16>(s: S, guard: Operation<u64, ()>) -> Out {
     let mut frame = Places::new::<MEM, MEM, MEM>(s);
-    let held = matches!(step_of::<KIND, _, _>(&mut StencilStage::from_hole(0), &mut frame, guard), Step::Value(_));
+    let held = matches!(step_of::<KIND, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, guard), Step::Value(_));
     if held { Out::Next(frame.s) } else { Out::Exit(frame.s) }
 }
 
@@ -124,7 +122,7 @@ fn identity_row(s: S) -> Out {
 #[inline(always)]
 fn capture_identity_row(s: S) -> Out {
     let captures = context_word(s.frame, CONTEXT_BODY);
-    let mut stage = StencilStage::from_hole(0);
+    let mut stage = StencilStage::from_hole(0, payload(&s));
     let held = environment::dense_capture(&mut stage, capture_values(captures), capture_len(captures), hole::<0>() as u16, ())
         .is_some_and(|word| word == hole64::<HOLE_B>());
     if held { Out::Next(s) } else { Out::Exit(s) }
@@ -138,40 +136,13 @@ fn declared_row(s: S) -> Out {
     guard_row::<{ op_kind::GUARD_DECLARED }>(s, guard)
 }
 
-/// `GuardPrototype`: continues where the object at the frame offset in hole 0 is a direct object of the exact shape in
-/// hole 1's low half whose prototype link is its high half (`HELD_LINK_AT`), its record read from the object record table
-/// (`guard::prototype`); any other object leaves with nothing written.
+/// `GuardClass`: continues where the object at the frame offset in hole 0 is a direct object whose live class cell's class
+/// is hole 1 (`guard::class`); any other object leaves with nothing written. The prototype and shape guards test the same
+/// class word: a direct object's cell holds its class, which names its shape and prototype link (`class_row` for each).
 #[inline(always)]
-fn prototype_row(s: S) -> Out {
-    let receiver = hole64::<HOLE_A>();
-    let guard = Operation::GuardPrototype {
-        source: word_at(s.frame, hole::<0>()),
-        records: word_at(payload(&s), JS_STEP_OBJECT_RECORD_BASE),
-        shape: receiver & u64::from(u32::MAX),
-        link: receiver >> HELD_LINK_AT,
-    };
-    guard_row::<{ op_kind::GUARD_PROTOTYPE }>(s, guard)
-}
-
-/// `GuardShape`: continues where the object at the frame offset in hole 0 is a direct object of the exact shape in hole 1
-/// (its record read from the object record table) in storage `form`; any other object leaves with nothing written.
-#[inline(always)]
-fn shape_row(s: S, form: Form) -> Out {
-    let guard = Operation::GuardShape {
-        source: word_at(s.frame, hole::<0>()),
-        records: word_at(payload(&s), JS_STEP_OBJECT_RECORD_BASE),
-        shape: hole64::<HOLE_A>(),
-        form,
-    };
-    guard_row::<{ op_kind::GUARD_SHAPE }>(s, guard)
-}
-
-/// `GuardStores`: continues where the run's dispatch says its stores specialized (`JS_STEP_STORES_SPECIALIZED`), else leaves
-/// with nothing written (`slot_store::store_admitted`).
-#[inline(always)]
-fn stores_row(s: S) -> Out {
-    let guard = Operation::GuardStores { specialized: word_at(payload(&s), JS_STEP_STORES_SPECIALIZED) };
-    guard_row::<{ op_kind::GUARD_STORES }>(s, guard)
+fn class_row(s: S) -> Out {
+    let guard = Operation::GuardClass { source: word_at(s.frame, hole::<0>()), class: hole64::<HOLE_A>() as u32 };
+    guard_row::<{ op_kind::GUARD_CLASS }>(s, guard)
 }
 
 /// `DirectArray`: continues where the register at hole 1 holds a direct array.
@@ -179,7 +150,7 @@ fn stores_row(s: S) -> Out {
 fn array_row(s: S) -> Out {
     let mut frame = Places::new::<MEM, MEM, MEM>(s);
     let proof = Operation::DirectArray { source: LEFT };
-    let done = matches!(step_of::<{ op_kind::DIRECT_ARRAY }, _, _>(&mut StencilStage::from_hole(0), &mut frame, proof), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::DIRECT_ARRAY }, _, _>(&mut StencilStage::from_hole(0, payload(&s)), &mut frame, proof), Step::Value(_));
     finish(frame, done)
 }
 
@@ -187,7 +158,7 @@ fn array_row(s: S) -> Out {
 /// left at its miss edge.
 #[inline(always)]
 fn staged_element<const KIND: u16>(frame: &mut Places, operation: Operation<u64, ()>) -> Option<u64> {
-    match step_of::<KIND, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), frame, operation) {
+    match step_of::<KIND, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES, payload(&frame.s)), frame, operation) {
         Step::Value(word) => Some(word),
         _ => None,
     }
@@ -203,7 +174,7 @@ fn index_row<const ENTRY: bool, const D: u8, const B: u8>(s: S, payload: usize) 
         let mut places = Places::new::<D, MEM, B>(s);
         let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
         let mut frame = PlacesView::new(&mut places, LEFT, view);
-        match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
+        match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES, payload), &mut frame, read) {
             Step::Value(word) => deliver::<D>(places.s, word),
             _ => Out::Exit(places.s),
         }
@@ -225,7 +196,7 @@ fn store_row<const ENTRY: bool, const A: u8, const B: u8>(s: S, payload: usize) 
         let mut places = Places::new::<MEM, A, B>(s);
         let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
         let mut frame = PlacesView::new(&mut places, DEST, view);
-        match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
+        match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES, payload), &mut frame, write) {
             Step::Value(_) => Out::Next(places.s),
             _ => Out::Exit(places.s),
         }
@@ -248,7 +219,7 @@ fn typed_index_row<const KIND: u8, const ENTRY: bool, const D: u8, const B: u8>(
     let Some(view) = view else { return if ENTRY { Out::Exit(s) } else { index_row::<false, D, B>(s, payload) } };
     let read = Operation::ElementRead { base: LEFT, key: Operand::register(RIGHT), destination: DEST };
     let mut frame = PlacesView::new(&mut places, LEFT, view);
-    let word = match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, read) {
+    let word = match step_of::<{ op_kind::ELEMENT_READ }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES, payload), &mut frame, read) {
         Step::Value(word) => Some(word),
         _ if !ENTRY => return index_row::<false, D, B>(s, payload),
         _ => None,
@@ -272,7 +243,7 @@ fn typed_store_row<const KIND: u8, const ENTRY: bool, const A: u8, const B: u8>(
     let Some(view) = view else { return if ENTRY { Out::Exit(s) } else { store_row::<false, A, B>(s, payload) } };
     let write = Operation::ElementWrite { value: LEFT, base: DEST, key: RIGHT, strict: false };
     let mut frame = PlacesView::new(&mut places, DEST, view);
-    match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, write) {
+    match step_of::<{ op_kind::ELEMENT_WRITE }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES, payload), &mut frame, write) {
         Step::Value(_) => Out::Next(places.s),
         _ if !ENTRY => store_row::<false, A, B>(s, payload),
         _ => Out::Exit(places.s),
@@ -285,7 +256,7 @@ fn typed_store_row<const KIND: u8, const ENTRY: bool, const A: u8, const B: u8>(
 fn typed_length_row<const D: u8>(s: S) -> Out {
     let mut frame = Places::new::<D, MEM, MEM>(s);
     let length = Operation::TypedLength { destination: DEST, source: LEFT };
-    let done = matches!(step_of::<{ op_kind::TYPED_LENGTH }, _, _>(&mut StencilStage::from_hole(HOLE_A), &mut frame, length), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::TYPED_LENGTH }, _, _>(&mut StencilStage::from_hole(HOLE_A, payload(&s)), &mut frame, length), Step::Value(_));
     finish(frame, done)
 }
 
@@ -303,48 +274,64 @@ fn put_word32(base: usize, offset: usize, value: u32) {
     unsafe { ((base.wrapping_add(offset)) as *mut u32).write_unaligned(value) }
 }
 
-/// Writes a `u64` word of a fresh record the run owns, before any safepoint.
+/// Writes a `u64` word of a fresh record or stub the run owns, before any safepoint.
 #[inline(always)]
 fn put_word64(base: usize, offset: usize, value: u64) {
     // SAFETY: as `put_word32`.
     unsafe { ((base.wrapping_add(offset)) as *mut u64).write_unaligned(value) }
 }
 
-/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`): while the kind's cursor has a
-/// run left (`next < limit`) and its template is captured, the cursor's `next` is bumped, the record of the
-/// bumped id gets the template's two words, and the destination (hole 0) takes the direct reference of that id.
-/// No occupancy is written: the run was occupied when it was claimed. Every other case exits 0 with nothing
-/// written, so the lane's helper or the interpreter makes the object. Nothing here can panic.
+/// An empty allocation of kind `KIND` (`EMPTY_OBJECT_ROW` or `EMPTY_ARRAY_ROW`), with nothing written where it leaves.
 #[inline(always)]
 fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
-    let (cursor_at, records_at, record_size, tag, layout_at, words_at) = if KIND == EMPTY_OBJECT_ROW {
-        (JS_STEP_OBJECT_CURSOR, JS_STEP_OBJECT_RECORD_BASE, NATIVE_OBJECT_LAYOUT.record_size, DIRECT_OBJECT_TAG,
-            JS_STEP_EMPTY_OBJECT_LAYOUT, JS_STEP_EMPTY_OBJECT_PAYLOAD)
-    } else {
-        (JS_STEP_ARRAY_CURSOR, JS_STEP_ARRAY_RECORD_BASE, NATIVE_ARRAY_LAYOUT.record_size, DIRECT_ARRAY_TAG,
-            JS_STEP_EMPTY_ARRAY_LAYOUT, JS_STEP_EMPTY_ARRAY_PAYLOAD)
-    };
+    if const { KIND == EMPTY_OBJECT_ROW } { empty_object_row::<D>(s, payload) } else { empty_array_row::<D>(s, payload) }
+}
+
+/// An empty ordinary object (`EMPTY_OBJECT_ROW`): the staged claim (`bump::claim_empty_object`) over the dispatch head's
+/// region 1 cell cursor, class cell base and captured class, run on `StencilStage`. Its answer is the direct object word
+/// of the claimed class cell's granule, delivered into the destination (hole 0); where the cursor is spent or no class is
+/// captured it leaves with nothing written, so the helper makes the object. Nothing here can panic.
+#[inline(always)]
+fn empty_object_row<const D: u8>(s: S, payload: usize) -> Out {
     // A tagged reference cannot land in an int or double place: such a destination leaves before anything is written.
     if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
         return Out::Exit(s);
     }
-    let cursor = word_at(payload, cursor_at) as usize;
-    let records = word_at(payload, records_at) as usize;
-    let layout = word_at(payload, layout_at);
+    let cell = ClassCell {
+        cursor: word_at(payload, JS_STEP_EMPTY_OBJECT_CURSOR),
+        cells: word_at(payload, JS_STEP_CLASS_BASE),
+        class: word_at(payload, JS_STEP_EMPTY_OBJECT_CLASS),
+    };
+    match claim_empty_object(&mut StencilStage::from_hole(0, payload), cell, ()) {
+        Some(word) => deliver::<D>(s, word),
+        None => Out::Exit(s),
+    }
+}
+
+/// An empty array (`EMPTY_ARRAY_ROW`): while the array cursor has a record left and its template is captured, the record of
+/// the bumped id gets the template's two words, and the destination takes the direct reference of that id. Arrays have no
+/// stub. Any other case leaves with nothing written.
+#[inline(always)]
+fn empty_array_row<const D: u8>(s: S, payload: usize) -> Out {
+    if D == MEMINT || (PIN..=LAST_INT_PIN).contains(&D) || D >= PINF {
+        return Out::Exit(s);
+    }
+    let cursor = word_at(payload, JS_STEP_ARRAY_CURSOR) as usize;
+    let records = word_at(payload, JS_STEP_ARRAY_RECORD_BASE) as usize;
+    let layout = word_at(payload, JS_STEP_EMPTY_ARRAY_LAYOUT);
     if cursor == 0 || records == 0 || layout == 0 {
         return Out::Exit(s);
     }
     let next = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset);
-    let limit = word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset);
-    if next >= limit {
+    if next >= word32_at(cursor, NATIVE_RECORD_CURSOR_LAYOUT.limit_offset) {
         return Out::Exit(s);
     }
-    let words = word_at(payload, words_at);
+    let words = word_at(payload, JS_STEP_EMPTY_ARRAY_PAYLOAD);
     put_word32(cursor, NATIVE_RECORD_CURSOR_LAYOUT.next_offset, next.wrapping_add(1));
-    let record = records.wrapping_add((next as usize).wrapping_mul(record_size));
+    let record = records.wrapping_add((next as usize).wrapping_mul(NATIVE_ARRAY_LAYOUT.record_size));
     put_word64(record, NATIVE_OBJECT_LAYOUT.payload_offset, words);
     put_word32(record, NATIVE_OBJECT_LAYOUT.layout_offset, layout as u32);
-    deliver::<D>(s, tag | u64::from(next))
+    deliver::<D>(s, DIRECT_ARRAY_TAG | u64::from(next))
 }
 
 /// `ArrayLength`: the `length` of the direct array at hole 1, defined into the destination. A string's
@@ -353,10 +340,10 @@ fn empty_row<const KIND: u8, const D: u8>(s: S, payload: usize) -> Out {
 fn length_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut frame = Places::new::<D, MEM, MEM>(s);
     let length = Operation::ArrayLength { destination: DEST, source: LEFT };
-    if matches!(step_of::<{ op_kind::ARRAY_LENGTH }, _, _>(&mut StencilStage::from_hole(0), &mut frame, length), Step::Value(_)) {
+    if matches!(step_of::<{ op_kind::ARRAY_LENGTH }, _, _>(&mut StencilStage::from_hole(0, payload), &mut frame, length), Step::Value(_)) {
         return finish(frame, true);
     }
-    let mut stage = StencilStage::from_hole(0);
+    let mut stage = StencilStage::from_hole(0, payload);
     let base = frame.read(&mut stage, LEFT);
     let records = (word_at(payload, JS_STEP_ARRAY_RECORD_BASE), word_at(payload, JS_STEP_STRING_RECORD_BASE));
     deliver::<D>(frame.s, need!(frame.s, string_length::length_of(&mut stage, records, base, ())))
@@ -368,7 +355,7 @@ fn length_row<const D: u8>(s: S, payload: usize) -> Out {
 fn append_row<const A: u8>(s: S) -> Out {
     let mut frame = Places::new::<MEM, A, MEM>(s);
     let append = Operation::ArrayAppend { array: DEST, value: LEFT };
-    let done = matches!(step_of::<{ op_kind::ARRAY_APPEND }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES), &mut frame, append), Step::Value(_));
+    let done = matches!(step_of::<{ op_kind::ARRAY_APPEND }, _, _>(&mut StencilStage::from_hole(ELEMENT_SITES, payload(&s)), &mut frame, append), Step::Value(_));
     finish_fast(frame, done)
 }
 
@@ -378,7 +365,7 @@ fn append_row<const A: u8>(s: S) -> Out {
 fn char_code_at_row<const D: u8, const B: u8>(s: S, payload: usize) -> Out {
     let index = need!(s, index_of::<B, HOLE_B>(&s));
     let mut frame = Places::new::<D, MEM, B>(s);
-    let mut stage = StencilStage::from_hole(0);
+    let mut stage = StencilStage::from_hole(0, payload);
     let base = frame.read(&mut stage, LEFT);
     let string = need!(frame.s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
     if index < 0 || index as u64 >= string.length {
@@ -393,7 +380,7 @@ fn char_code_at_row<const D: u8, const B: u8>(s: S, payload: usize) -> Out {
 #[inline(always)]
 fn parse_int_row<const D: u8>(s: S, payload: usize) -> Out {
     let mut frame = Places::new::<D, MEM, MEM>(s);
-    let mut stage = StencilStage::from_hole(0);
+    let mut stage = StencilStage::from_hole(0, payload);
     let base = frame.read(&mut stage, LEFT);
     let string = need!(frame.s, string_length::flat_string(&mut stage, word_at(payload, JS_STEP_STRING_RECORD_BASE), base, ()));
     let (units, wide) = (string.units, string.wide != 0);
@@ -446,26 +433,20 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         environment_rows::run::<KIND, ENTRY, D, A>(s, payload)
     } else if const { KIND == FIELD_ROW || KIND == SITE_ROW || KIND == SITE_STORE_ROW || KIND == THIS_SITE_ROW || KIND == THIS_STORE_ROW || KIND == HELD_ROW || KIND == LIVE_ROW || KIND == REALM_ROW || KIND == CONSTANT_ROW } {
         site_rows::run::<KIND, ENTRY, D, A>(s, payload)
-    } else if const { KIND == OBJECT_ROW || KIND == KEY_ROW || KIND == TYPEOF_INDEX_ROW || KIND == TYPEOF_STRING_ROW || KIND == TYPEOF_IS_ROW || KIND == TYPEOF_ISNOT_ROW || KIND == INSTANCEOF_ROW || KIND == FOR_IN_ROW } {
+    } else if const { KIND == OBJECT_ROW || KIND == KEY_ROW || KIND == TYPEOF_INDEX_ROW || KIND == TYPEOF_STRING_ROW || KIND == TYPEOF_IS_ROW || KIND == TYPEOF_ISNOT_ROW || KIND == FOR_IN_ROW } {
         key_rows::run::<KIND>(s, payload)
-    } else if const { KIND == ADD_PACKED_ROW || KIND == ADD_ARENA_ROW || KIND == ADD_EITHER_ROW || KIND == THIS_ADD_PACKED_ROW || KIND == THIS_ADD_ARENA_ROW || KIND == THIS_ADD_EITHER_ROW || KIND == NAME_EITHER_ROW || KIND == NAME_ARENA_ROW } {
-        name_rows::run::<KIND, ENTRY, A>(s, payload)
+    } else if const { KIND == ADD_CLASS_ROW } {
+        name_rows::run::<A>(s, payload)
     } else if const { KIND == IDENTITY_ROW || KIND == THIS_ROW || KIND == LOAD_LOCAL_ROW || KIND == STORE_LOCAL_ROW || KIND == LOAD_CHECKED_ROW || KIND == STORE_CHECKED_ROW } {
         register_row::<KIND, D, A>(s)
-    } else if const { KIND == IC_GET_ROW || KIND == IC_GET_HOLDER_ROW || KIND == IC_SET_ROW || KIND == IC_SET_INT_ROW || KIND == IC_PROOF_ROW || KIND == IC_KNOWN_GET_ROW || KIND == IC_KNOWN_SET_ROW || KIND == IC_KNOWN_SET_INT_ROW || KIND == IC_KNOWN_SET_ADMITTED_ROW || KIND == IC_KNOWN_SET_INT_ADMITTED_ROW || KIND == IC_KNOWN_GET_FLAT_ROW || KIND == IC_KNOWN_SET_FLAT_ROW || KIND == IC_KNOWN_SET_INT_FLAT_ROW || KIND == IC_KNOWN_SET_FLAT_ADMITTED_ROW || KIND == IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW } {
+    } else if const { KIND == IC_GET_ROW || KIND == IC_GET_CLASS_ROW || KIND == IC_GET_HELD_CLASS_ROW || KIND == IC_SET_CLASS_ROW || KIND == IC_SET_ROW || KIND == IC_SET_INT_ROW || KIND == IC_PROOF_ROW } {
         ic_rows::run::<KIND, ENTRY, D, A>(s)
     } else if const { KIND == DECLARED_ROW } {
         declared_row(s)
     } else if const { KIND == CAPTURE_IDENTITY_ROW } {
         capture_identity_row(s)
-    } else if const { KIND == PROTOTYPE_ROW } {
-        prototype_row(s)
-    } else if const { KIND == SHAPE_ROW } {
-        shape_row(s, Form::Either)
-    } else if const { KIND == SHAPE_FLAT_ROW } {
-        shape_row(s, Form::Arena)
-    } else if const { KIND == STORES_ROW } {
-        stores_row(s)
+    } else if const { KIND == CLASS_ROW } {
+        class_row(s)
     } else if const { KIND == CHAR_CODE_AT_ROW } {
         char_code_at_row::<D, B>(s, payload)
     } else if const { KIND == PARSE_INT_ROW } {

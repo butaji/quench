@@ -11,6 +11,7 @@
 
 pub mod dispatch_fast;
 pub(crate) mod ahead_runner;
+pub(crate) mod operand_class;
 pub mod compiled;
 pub mod js_compiled;
 pub mod aot_image;
@@ -32,9 +33,32 @@ extern crate quench_stencils;
 /// The core's staged forms, at the path the stencil layout files the tests mount name them by.
 #[cfg(test)]
 pub(crate) use quench_runtime::staged;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 /// The differential oracle the engine's tier tests run a program through.
 #[cfg(test)]
 pub(crate) mod test_oracle;
+// Tier tests that run programs through the engine against the interpreter (moved from the core's
+// library tests, which do not link the engine).
+#[cfg(test)]
+mod catch_tests;
+#[cfg(test)]
+mod owner_step_tests;
+#[cfg(test)]
+mod forced_deopt_tests;
+#[cfg(test)]
+mod forced_deopt_corpus_tests;
+#[cfg(test)]
+mod lane_entry_tests;
+#[cfg(test)]
+mod lane_loop_tests;
+#[cfg(test)]
+mod shape_stability_tests;
+#[cfg(test)]
+mod native_frame_tests;
+#[cfg(test)]
+mod osr_retirement_tests;
+#[cfg(test)]
+pub(crate) mod tier_tests;
 
 /// What every layer module sees: the VM core, the layer's modules and its extension traits.
 #[allow(unused_imports)]
@@ -53,7 +77,7 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::vm::wasm_exception::{js_tag_cell, js_tag_type};
     pub use quench_runtime::Value;
     pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING, NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
-    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
+    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_set_function_name};
     #[cfg(feature = "profile-memory")]
     pub use quench_runtime::tier_surface::CellKind;
     pub use quench_runtime::tier_surface::{ CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle, };
@@ -70,7 +94,7 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::bytecode::MAX_ARRAY_LENGTH;
     pub use quench_runtime::vm::pending_job::PendingJob;
     pub use quench_runtime::vm::atom_set::{AtomSet, IndexAtoms};
-    pub use quench_runtime::vm::call_printer::{freeze_call_sites, freeze_source_call_sites};
+    pub use quench_runtime::vm::call_printer::freeze_call_sites;
     pub use quench_runtime::vm::engine_types::{copy_arguments, fill_window as fill_registers};
     pub use quench_runtime::vm::group_by::GroupByKind;
     pub use quench_runtime::vm::property_definition::PropertyDefinitionKind;
@@ -122,7 +146,6 @@ pub(crate) mod engine_prelude {
     pub use crate::dispatch_fast::native_frames::DispatchFastNativeFramesVm;
     pub use crate::dispatch_fast::in_place_natives::DispatchFastInPlaceNativesVm;
     pub use crate::dispatch_fast::with_scopes::DispatchFastWithScopesVm;
-    pub use crate::dispatch_fast::on_demand_metadata::DispatchFastOnDemandMetadataVm;
     pub use crate::dispatch_fast::scoped_names::DispatchFastScopedNamesVm;
     pub use crate::dispatch_fast::lane_roots::DispatchFastLaneRootsVm;
     pub use crate::dispatch_fast::setters::DispatchFastSettersVm;
@@ -182,16 +205,13 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::code_heap::views::ViewsOps1 as _;
     #[cfg(target_os = "linux")] pub use crate::compiled::code_heap::views::ViewsOps2 as _;
     #[cfg(target_vendor = "apple")] pub use crate::compiled::code_heap::views::ViewsOps3 as _;
-    pub use crate::compiled::direct_callee::DirectCalleeOps1 as _;
+    pub use crate::compiled::direct_callee::DirectArmOps1 as _;
     pub use crate::compiled::entry_cell::EntryCellOps1 as _;
     pub use crate::compiled::exit_protocol::ExitKindOps1 as _;
     pub use crate::compiled::exit_protocol::LaneExitOps2 as _;
-    pub use crate::compiled::exit_protocol::LoopRegionOps3 as _;
     pub use crate::compiled::exit_protocol::ExitTableOps1 as _;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1 as _;
     pub use crate::compiled::frameless::CalleeAdmissionsOps1 as _;
-    pub use crate::compiled::indirect_profile::SiteHitsOps1 as _;
-    pub use crate::compiled::indirect_profile::CompiledProgramOps2 as _;
     pub use crate::compiled::instance_context::CallContextOps2 as _;
     pub use crate::compiled::instance_context::InstanceContextOps1 as _;
     pub use crate::compiled::instance_context::InstanceRecordOps1 as _;
@@ -202,19 +222,16 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::lane_compile::CompiledLaneCompileVm as _;
     pub use crate::compiled::lane_compile::CompiledLaneCompileVm2 as _;
     pub use crate::compiled::lane_compile::PendingLaneMethodOps1 as _;
-    pub use crate::compiled::lane_compile::LaneMethodOps4 as _;
     pub use crate::compiled::lane_compile::dependencies::LaneDependenciesOps1 as _;
     pub use crate::compiled::lane_region::ElementViewsOps1 as _;
     pub use crate::compiled::lane_region::kept_shapes::StateOps2 as _;
     pub use crate::compiled::lane_region::scalar::CompletionOps3 as _;
     pub use crate::compiled::lane_sites::CompiledLaneSitesVm as _;
     pub use crate::compiled::lane_storage::JsStepDispatchOps2 as _;
-    pub use crate::compiled::lane_unit::CallTargetOps1 as _;
     pub use crate::compiled::lane_unit::InlinedCallOps1 as _;
     pub use crate::compiled::numeric_image::NumericImageOps1 as _;
     pub use crate::compiled::object_slots::InheritedConstantOps1 as _;
     pub use crate::compiled::object_slots::NativeFieldLoadOps1 as _;
-    pub use crate::compiled::osr_compile::OsrFactsOps2 as _;
     pub use crate::compiled::osr_compile::PendingOsrRegionOps1 as _;
     pub use crate::compiled::osr_compile::calls::CompiledOsrCompileCallsVm as _;
     pub use crate::compiled::osr_compile::calls::CallCodeOps1 as _;
@@ -228,7 +245,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::osr_loop::receivers::FieldReceiverOps1 as _;
     pub use crate::compiled::wasm_table_ops_stage::CompiledWasmTableOpsStageVm as _;
     pub use crate::dispatch_fast::LaneInstructionOps1 as _;
-    pub use crate::dispatch_fast::LoopSiteOps1 as _;
     pub use crate::dispatch_fast::LoopSiteOps2 as _;
     pub use crate::dispatch_fast::IndirectSlotOps1 as _;
     pub use crate::dispatch_fast::LaneViewOps1 as _;
@@ -242,9 +258,10 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::ActivationOps2 as _;
     pub use crate::dispatch_fast::ActivationOps3 as _;
     pub use crate::dispatch_fast::CompletionOps1 as _;
-    pub use crate::dispatch_fast::ScriptCallTargetOps1 as _;
+    pub use crate::dispatch_fast::closure_targets::ClosureOperandsOps1 as _;
+    pub use crate::dispatch_fast::FunctionTargetOps1 as _;
     pub use crate::dispatch_fast::AdmissionOps1 as _;
-    pub use crate::dispatch_fast::ScriptCallTargetOps2 as _;
+    pub use crate::dispatch_fast::FunctionTargetOps2 as _;
     pub use crate::dispatch_fast::ScriptTargetsOps1 as _;
     pub use crate::dispatch_fast::LaneStackOps1 as _;
     pub use crate::dispatch_fast::LaneStackOps2 as _;
@@ -253,8 +270,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::DispatchFastVm3 as _;
     pub use crate::dispatch_fast::DispatchFastVm4 as _;
     pub use crate::dispatch_fast::DispatchFastVm5 as _;
-    pub use crate::dispatch_fast::MemoLeafOps1 as _;
-    pub use crate::dispatch_fast::MemoReadOps1 as _;
     pub use crate::dispatch_fast::ForOfTestOps1 as _;
     pub use crate::dispatch_fast::DispatchFastVm6 as _;
     pub use crate::dispatch_fast::PreparedShapeOps1 as _;
@@ -278,13 +293,11 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::generator_windows::WindowPlanOps1 as _;
     pub use crate::dispatch_fast::generator_yields::DispatchFastGeneratorYieldsVm as _;
     pub use crate::dispatch_fast::in_place_natives::DispatchFastInPlaceNativesVm as _;
-    pub use crate::dispatch_fast::lane_body_stats::LaneBodyStatsOps1 as _;
     pub use crate::dispatch_fast::lane_eval::LaneStackOps10 as _;
     pub use crate::dispatch_fast::lane_frames::ActivationViewOps1 as _;
     pub use crate::dispatch_fast::lane_frames::SidePayloadOps1 as _;
     pub use crate::dispatch_fast::lane_frames::SideOps1 as _;
     pub use crate::dispatch_fast::lane_frames::LaneStackOps3 as _;
-    pub use crate::dispatch_fast::lane_leaves::LaneLeavesOps1 as _;
     pub use crate::dispatch_fast::lane_roots::LaneRootOps1 as _;
     pub use crate::dispatch_fast::lane_roots::LaneContextOps1 as _;
     pub use crate::dispatch_fast::lane_roots::DispatchFastLaneRootsVm as _;
@@ -292,27 +305,12 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::lane_stack_trace::DispatchFastLaneStackTraceVm as _;
     pub use crate::dispatch_fast::lane_trace::LaneStackOps12 as _;
     pub use crate::dispatch_fast::loop_body::LoopBodyOps1 as _;
-    pub use crate::dispatch_fast::loop_body::LoopSiteOps3 as _;
     pub use crate::dispatch_fast::loop_body::LoopBodyOps2 as _;
-    pub use crate::dispatch_fast::loop_kernel::LoopKernelOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::machine::MachineOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::CodeOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::RecurrenceOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::FoldOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::ChainOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::FusionOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::recur::WordsOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::run::StateOps1 as _;
-    pub use crate::dispatch_fast::loop_kernel::run::LoopKernelOps2 as _;
     pub use crate::dispatch_fast::loop_runs::LoopSiteRunsOps as _;
     pub use crate::dispatch_fast::loop_tier::LoopTierOps1 as _;
     pub use crate::dispatch_fast::mapped_windows::DispatchFastMappedWindowsVm as _;
     pub use crate::dispatch_fast::native_frames::DispatchFastNativeFramesVm as _;
     pub use crate::dispatch_fast::native_frames::LaneStackOps6 as _;
-    pub use crate::dispatch_fast::on_demand_metadata::DispatchFastOnDemandMetadataVm as _;
-    pub use crate::dispatch_fast::operand_feedback::OperandKindsOps1 as _;
-    pub use crate::dispatch_fast::operand_feedback::RecordsOps1 as _;
-    pub use crate::dispatch_fast::operand_feedback::LaneViewOpsX2 as _;
     pub use crate::dispatch_fast::proven_callees::DispatchFastProvenCalleesVm as _;
     pub use crate::dispatch_fast::proxy_traps::DispatchFastProxyTrapsVm as _;
     pub use crate::dispatch_fast::scoped_names::DispatchFastScopedNamesVm as _;
@@ -320,7 +318,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::string_case_filter::StringCaseFilterOps1 as _;
     pub use crate::dispatch_fast::string_case_filter::derivation::StringCaseFilterOpsX3 as _;
     pub use crate::dispatch_fast::this_binding::ThisBindingOps1 as _;
-    pub use crate::dispatch_fast::vector_region::VectorRegionOps1 as _;
     pub use crate::dispatch_fast::window_owner::DispatchFastWindowOwnerVm as _;
     pub use crate::dispatch_fast::with_scopes::LaneStackOps7 as _;
     pub use crate::dispatch_fast::with_scopes::DispatchFastWithScopesVm as _;
@@ -328,7 +325,6 @@ pub(crate) mod ext_traits {
     pub use crate::lifted::LaneViewLifted648 as _;
     pub use crate::native_program::NativeJsProgramOps1 as _;
     pub use crate::native_program::NativeProgramVm as _;
-    pub use crate::dispatch_fast::operand_feedback::OperandFeedbackVm as _;
 }
 
 /// What the executable and tools call: native object emission for AOT images, the image bundle,
@@ -339,6 +335,8 @@ pub mod api {
         NativeJsModule, NativeReloc, emit_native_module, emit_native_module_for, emit_native_object, lower_native_js_module,
         lower_native_js_module_for,
     };
+    pub use crate::aot_image::demand::{Demand, ExecutionTableSpec};
+    pub use crate::compiled::lane_body_abi::link_lane_stubs;
     pub use crate::compiled::ahead_images::AheadImagesOps1;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1;
     pub use crate::native_program::NativeJsProgramOps1;

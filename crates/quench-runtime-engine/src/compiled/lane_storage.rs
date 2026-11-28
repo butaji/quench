@@ -11,7 +11,6 @@ impl JsStepDispatch {
     pub(crate) fn bind_run_storage(&mut self, vm: &Vm) {
         self.call_targets = if vm.direct_eval || vm.parameter_eval { NO_CALL_TARGETS.as_ptr() }
             else { vm.call_targets.as_ptr() } as usize;
-        self.proper_tail_calls = u64::from(vm.host.proper_tail_calls());
     }
 
     /// The storage a lane run reads: the thread's lane frame binds a VM's constants when it

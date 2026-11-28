@@ -8,10 +8,10 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::super::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
-use quench_runtime::staged::{Region, ShapeFact, Shaped, Stage};
+use quench_runtime::staged::{ShapeFact, Shaped, Stage};
 use super::field_plans::LanePlans;
+use super::fixed_cells::entry_fixed_record;
 use super::frame::calls;
 use quench_runtime::staged::ic::Reached;
 use quench_runtime::staged::property::Owner;
@@ -30,6 +30,9 @@ pub(crate) struct FieldFacts<'a> {
     pub(crate) held: HeldRead,
     /// Where a folded prototype value takes its code dependency.
     pub(crate) stable: StableHold<'a>,
+    /// The alias region of the access's (class, atom) key, where the solver proves its receiver's class and
+    /// the function declared one (`regions::declare_field_regions`); `None` keeps its values in `Region::ObjectSlots`.
+    pub(crate) property: Option<cranelift_codegen::ir::AliasRegion>,
 }
 
 /// What an instruction's field access already holds: the reads its value may come from, and for
@@ -38,8 +41,6 @@ pub(crate) struct FieldFacts<'a> {
 pub(crate) struct HeldRead {
     /// A read the loop made once on its entry edge.
     pub(crate) hoisted: Option<LoopRead>,
-    /// The word of the OSR region's entry record that holds the field's value.
-    pub(crate) entry_word: Option<u32>,
     /// The value an earlier read of the first field proved (`LocalProofs::fields`).
     pub(crate) known: Option<ir::Value>,
     /// The slot a loop's entry projected for the store at this access (`StorePlan::Entry`).
@@ -97,6 +98,15 @@ impl<'a> EmitFrame<'a> {
         }
     }
 
+    /// The resolved word `owner`'s proofs in `State` are keyed by (`headers`): a receiver's is `this`'s, as its
+    /// proofs are shared; a temporary has none.
+    fn proof_word(&mut self, builder: &mut FunctionBuilder<'_>, owner: Owner) -> Option<ir::Value> {
+        match self.proof_key(owner)? {
+            Some(register) => Some(headers::register_word(builder, self.registers, self.state, register)),
+            None => Some(headers::this_word(builder, self.this?)),
+        }
+    }
+
     /// The other registers that hold `register`'s tagged value, which is one SSA value: copies a
     /// `Move` made (`register_copy`), not yet redefined. Receivers keep their own proofs.
     fn copies(&self, register: Register) -> Vec<Register> {
@@ -111,9 +121,8 @@ impl<'a> EmitFrame<'a> {
     /// held before the read does.
     fn retire_fast_proofs(&mut self, owner: Owner, before: &State) {
         self.state.proofs.headers.clone_from(&before.proofs.headers);
-        self.state.proofs.readable.clone_from(&before.proofs.readable);
+        self.state.proofs.records.clone_from(&before.proofs.records);
         self.state.proofs.layouts.retain(|key, _| before.proofs.layouts.contains_key(key));
-        if self.state.proofs.global != before.proofs.global { self.state.proofs.global = None; }
         if let Some(Some(register)) = self.proof_key(owner) {
             self.state.values[usize::from(register)] = before.values[usize::from(register)];
         }
@@ -128,30 +137,35 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The semantic type the lowering's state holds of the register: a static fact.
     fn value_fact(&self, register: Register) -> Type { self.state.values[usize::from(register)].value.ty }
 
-    /// The register's float64 view (`operand_number`): a Number by its fact, so no test runs.
-    fn stored_number(&mut self, stage: &mut Emit<'b, 'c>, register: Register, miss: ir::Block) -> Option<ir::Value> {
-        if !self.state.values[usize::from(register)].value.ty.is_subtype(Type::NUMBER) { return None; }
-        super::frame::operand_number(stage.builder, self.registers, self.state, self.constants, quench_runtime::bytecode::Operand::register(register), miss).map(quench_runtime::staged::Float64::word)
-    }
-
-    fn object_records(&mut self, stage: &mut Emit<'b, 'c>) -> Option<ir::Value> {
-        let entry = self.entry().or(self.table_entry)?;
-        Some(headers::object_table_base(stage.builder, entry, self.payload))
-    }
-
     /// The entry's `this`, which a body that reads fields has proved bound.
     fn field_this(&mut self, stage: &mut Emit<'b, 'c>, _miss: ir::Block) -> Option<ir::Value> {
-        Some(stage.builder.use_var(self.this?))
+        Some(headers::this_word(stage.builder, self.this?))
     }
 
     fn receiver_record(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, readable: bool,
         miss: ir::Block) -> Option<Reached<ir::Value, ir::Value>> {
         let entry = self.entry()?;
+        // A receiver the entry proved a fixed class's cell is no record: it has no shape to guard, so a shape-keyed read leaves
+        // here. A class-keyed read takes the cell instead (`plan_receiver`, `receiver_cell`); a named read of it is `fixed_cells`.
+        let fixed = if self.is_receiver(owner) { entry_fixed_record(entry, None) } else {
+            match owner {
+                Owner::This => entry_fixed_record(entry, None),
+                Owner::Register(register) => entry_fixed_record(entry, Some(register)),
+                Owner::Temporary => None,
+            }
+        };
+        if fixed.is_some() {
+            let never = stage.ult(object, object);
+            stage.guard(never, miss)?;
+            return None;
+        }
         if self.is_receiver(owner) {
             // The entry proved a direct object's record, or none: a function `this` (a method of a
             // constructor) reads its own record here, a store of it leaves.
             let receiver = &entry.receiver;
             let (object, shape, inline) = (stage.builder.use_var(receiver.object), stage.builder.use_var(receiver.shape), stage.builder.use_var(receiver.inline));
+            // A live receiver (a class-id cell) has no record here (`emit_lane_receiver`), so presence is a run-time
+            // representation test that no class or family type decides.
             let present = stage.raw_compare_imm(Relation::NotEqual, object, 0);
             if !readable {
                 emit_js_guard(stage.builder, present, miss);
@@ -163,35 +177,36 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             stage.branch_if(present, (join, &[object, shape, inline]), (other, &[]));
             stage.builder.switch_to_block(other);
             let this = stage.builder.use_var(self.this?);
-            let records = headers::object_table_base(stage.builder, entry, self.payload);
             let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
-            let header = ObjectHeader::prove_readable(stage.builder, this, records, functions, miss);
-            stage.goto(join, &[header.address, header.shape, header.inline]);
+            let header = ObjectHeader::prove_readable(stage.builder, this, None, functions, miss);
+            // A readable proof names a record or a function's object, whose shape and storage form it reads.
+            let (shape, inline) = (header.shape.expect("a readable header names a record"), header.inline.expect("a readable header names a record"));
+            stage.goto(join, &[header.address, shape, inline]);
             stage.builder.switch_to_block(join);
             return Some(Reached { shape: Some(shape_at), inline: Some(inline_at), ..Reached::bare(record) });
         }
+        // An owner with no record to prove (`object_header`) leaves this native read: its shape is not held here.
         let header = match owner {
             Owner::Temporary => {
-                let records = headers::object_table_base(stage.builder, entry, self.payload);
                 let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
-                ObjectHeader::prove_readable(stage.builder, object, records, functions, miss)
+                ObjectHeader::prove_readable(stage.builder, object, None, functions, miss)
             }
-            Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
-            Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
+            Owner::This => self.object_header(stage.builder, entry, None, readable, miss)?,
+            Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss)?,
         };
-        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
+        Some(Reached { shape: header.shape, inline: header.inline, word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
     }
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
     fn proven_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner) -> Option<(u32, ShapeFact)> {
-        let key = self.proof_key(owner)?;
-        headers::header_shape(stage.builder, self.state, key).or_else(||
-            self.state.proofs.layouts.range((key, 0)..=(key, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
+        let word = self.proof_word(stage.builder, owner)?;
+        headers::header_shape(stage.builder, self.state, word).or_else(||
+            self.state.proofs.layouts.range((word, 0)..=(word, u32::MAX)).next().map(|((_, shape), kept)| (*shape, kept.fact())))
     }
 
     fn prove_shape(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, (shape, proof): (u32, Shaped<ir::Value>), direct: bool) {
-        let Some(key) = self.proof_key(owner) else { return };
-        headers::note_header_shape(stage.builder, self.state, key, (shape, proof.fact()));
+        let Some(word) = self.proof_word(stage.builder, owner) else { return };
+        headers::note_header_shape(stage.builder, self.state, word, (shape, proof.fact()));
         // A read that proves the receiver a direct object of its shape proves it for the block,
         // for each copy of its value too (`copies`).
         if let (true, Owner::Register(register)) = (direct, owner) {
@@ -199,21 +214,19 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
                 let fact = &mut self.state.values[usize::from(proved)];
                 *fact = RegisterFact { tagged: fact.tagged, ..RegisterFact::definition(Type::direct_object(shape), Representation::Tagged) };
             }
+            self.state.proofs.kept_shapes.insert(word, shape);
         }
     }
 
 
-    fn kept_layout(&self, owner: Owner, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
-        let key = self.proof_key(owner)?;
-        self.state.proofs.layouts.get(&(key, shape)).map(|layout| layout.layout())
+    fn kept_layout(&self, owner: Owner, object: ir::Value, shape: u32) -> Option<Layout<ir::Value, ir::Value>> {
+        if matches!(owner, Owner::Temporary) { return None; }
+        self.state.proofs.layouts.get(&(object, shape)).map(|layout| layout.layout())
     }
 
-    fn keep_layout(&mut self, owner: Owner, (shape, fact): (u32, ShapeFact), layout: Layout<ir::Value, ir::Value>) {
-        let Some(key) = self.proof_key(owner) else { return };
-        let copies = match owner { Owner::Register(register) if key.is_some() => self.copies(register), _ => Vec::new() };
-        for kept in std::iter::once(key).chain(copies.into_iter().map(Some)) {
-            self.state.proofs.layouts.insert((kept, shape), CheckedObject::of(layout, fact));
-        }
+    fn keep_layout(&mut self, owner: Owner, object: ir::Value, (shape, fact): (u32, ShapeFact), layout: Layout<ir::Value, ir::Value>) {
+        if matches!(owner, Owner::Temporary) { return; }
+        self.state.proofs.layouts.insert((object, shape), CheckedObject::of(layout, fact));
     }
 
     fn hold_prototype(&mut self, stage: &mut Emit<'b, 'c>, shape: u32, miss: ir::Block) -> Option<()> {
@@ -228,11 +241,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         let read = self.fields.as_ref()?.held.hoisted?;
         let raw = stage.builder.use_var(read.value);
         Some(if read.representation == Representation::Int32 { int_tagged(stage.builder, raw) } else { raw })
-    }
-
-    fn entry_field(&mut self, stage: &mut Emit<'b, 'c>, _lookup: FieldLookup) -> Option<ir::Value> {
-        let word = self.fields.as_ref()?.held.entry_word?;
-        Some(entry_record_word(stage.builder, self.payload, word))
     }
 
     fn field_get_host(&mut self, stage: &mut Emit<'b, 'c>, object: ir::Value, atom: u32, site: u16,
@@ -273,17 +281,8 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(Some(free))
     }
 
-    fn field_store_bound(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, site: (u32, u16),
-        value: (ir::Value, Type), miss: ir::Block) -> Option<()> {
-        self.bound_store(stage, owner, object, site, value, miss)
-    }
-
     fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
         self.loop_slot_store(stage, site, value, miss)
-    }
-
-    fn entry_slot_raw(&self) -> bool {
-        self.fields.as_ref().and_then(|fields| fields.held.slot).is_some_and(|slot| slot.domain == Type::NUMBER)
     }
 
     /// The direct store, and where it declines (a shape, the barrier or the storage does not
@@ -310,39 +309,11 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(())
     }
 
-    /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included,
-    /// through the site's bound slot first where the entry bound one; a miss leaves at `miss`.
-    fn field_probe(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, atom: u32, site: u16,
+    /// The VM's own field read of the receiver through its site: the general call-out, which a site with no class arm
+    /// takes at compile time. A class-keyed receiver's reads are its plan's class arms, which decide before the probe.
+    fn field_probe(&mut self, stage: &mut Emit<'b, 'c>, _owner: Owner, object: ir::Value, atom: u32, site: u16,
         miss: ir::Block) -> Option<ir::Value> {
-        let entry = self.entry();
-        let bound = entry.and_then(|entry| entry.fields.iter().find_map(|(known, binding)| (*known == site).then_some(*binding)));
-        let (Some(entry), Some(binding)) = (entry, bound) else {
-            return self.field_get_host(stage, object, atom, site, miss);
-        };
-        let header = self.proof_key(owner).map(|key| self.object_header(stage.builder, entry, key, true, miss));
-        let builder = &mut *stage.builder;
-        let (slow, done, packed) = (builder.create_block(), builder.create_block(), builder.create_block());
-        builder.set_cold_block(slow);
-        let packed_address = builder.append_block_param(packed, types::I64);
-        let result = builder.append_block_param(done, types::I64);
-        let (address, _) = emit_js_cached_field_slot(builder, self.payload, object,
-            site, true, slow, Some(binding), header, Some(packed));
-        let value = emit(builder).load_u64(Region::ObjectSlots.mutable(), address, 0);
-        emit(builder).jump(done, &[value]);
-        builder.switch_to_block(packed);
-        let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);
-        let table = match self.helpers {
-            LaneHelpers::Bound(_, symbol) => super::super::linked_narrow_table(builder, symbol),
-            // A linking lowering names the loader's table by symbol, never this process's address.
-            LaneHelpers::Ahead => crate::symbol_words::symbol_address(builder, crate::aot_image::symbols::NARROW_WORDS_NAMESPACE, 0),
-            _ => super::super::process_narrow_table(builder),
-        };
-        emit_narrow_read(builder, narrow, table, done);
-        builder.switch_to_block(slow);
-        let value = self.field_get_host(stage, object, atom, site, miss)?;
-        stage.jump(done, &[value]);
-        stage.builder.switch_to_block(done);
-        Some(result)
+        self.field_get_host(stage, object, atom, site, miss)
     }
 
     /// The VM's element read past a hole or an index past the backing (`frame_elements::index_get`).
@@ -373,12 +344,4 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         self.retire_fast_proofs(owner, &before);
         Some(value)
     }
-}
-
-/// Word `word` of the loop's entry record (`JsStepDispatch::loop_entry`).
-pub(crate) fn entry_record_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, word: u32) -> ir::Value {
-    let entry = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.loop_entry));
-    let offset = i32::try_from(usize::try_from(word).expect("entry word fits usize")
-        * std::mem::size_of::<u64>()).expect("entry word offset fits i32");
-    emit(builder).load_u64(Region::LoopEntry.readonly(), entry, offset)
 }

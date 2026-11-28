@@ -8,8 +8,9 @@ use crate::compiled::regions;
 #[path = "frame_call_out.rs"] pub(crate) mod call_out;
 #[path = "frame_truthiness.rs"] pub(crate) mod truthiness;
 #[path = "frame_operands.rs"] pub(crate) mod operands;
-pub(crate) use operands::{held_long, number_word, operand_int, operand_long, operand_number, operand_to_int32, register_int_value, register_number_value};
+pub(crate) use operands::{held_long, number_word, operand_int, operand_long, operand_number, operand_to_int32, integral_index_value, register_int_value, register_long_value, register_number_value};
 use truthiness::register_truthiness;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The lane's register file.
 pub(crate) const FRAME: quench_runtime::staged::Access = quench_runtime::staged::Region::Frame.mutable();
@@ -34,8 +35,6 @@ pub(crate) enum Edges {
 pub(crate) struct Sites<'a> {
     pub(crate) call_out: Option<&'a call_out::CallOutSite>,
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,
-    /// The Stable `prototype` link of an `instanceof`'s constructor (`Lowering::hold_instanceof`).
-    pub(crate) prototype: Option<u32>,
 }
 
 /// The lane specializer's register frame (`quench_runtime::staged::Frame`): the SSA homes and the facts
@@ -79,22 +78,10 @@ pub(crate) struct EmitFrame<'a> {
     /// Whether the call `call_entry` last planned passes arguments proved to have its callee's proven entry's
     /// parameter types (`call_frames::EmitFrame::arguments_proven`), which `call_enter` reads.
     pub(crate) proven_arguments: std::cell::Cell<bool>,
-    /// Whether that call reads its closure and captures from the callee's bound words (`DirectCallee::bound`).
-    pub(crate) rebinds: std::cell::Cell<bool>,
-    /// Where the code holds the lane's `this` trust (`VmFacts::this_trusted`): set once a call's bound
-    /// `this` is guarded a direct object (`CallFrame::call_this_bound`, `StableFacts::this_trust`).
-    pub(crate) this_trust: Option<&'a mut bool>,
     /// What a capture access reaches, where the lowering made it (`captures`).
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
     pub(crate) html_dda: bool,
-    /// The compiling VM's thresholds (`VmFacts::tiers`).
-    pub(crate) tiers: &'static super::super::tier_policy::Tiers,
-    /// The Stable `prototype` link of the step's `instanceof` constructor.
-    pub(crate) prototype: Option<u32>,
-    /// The region's entry proofs, whose object record table a prototype walk addresses where the
-    /// step carries no field facts.
-    pub(crate) table_entry: Option<&'a Entry>,
 }
 
 /// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
@@ -132,7 +119,12 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
 
     #[inline(always)]
     fn tagged(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> ir::Value {
-        register_tagged(stage.builder, self.registers, self.state, register)
+        let word = register_tagged(stage.builder, self.registers, self.state, register);
+        // The register's type at this point is a fact of the word for this step (R2): a row's class
+        // test of it the fact decides is a constant (`Stage::fact`).
+        let word = stage.builder.func.dfg.resolve_aliases(word);
+        stage.note_fact(word, self.state.values[usize::from(register)].value.ty);
+        word
     }
 
     #[inline(always)]
@@ -155,10 +147,6 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn define_this(&mut self, stage: &mut Emit<'_, '_>, destination: Register, this: ir::Value) {
         register_define(stage.builder, self.registers, self.written, self.state, destination, this,
             RegisterFact::definition(Type::ANY, Representation::Tagged));
-        let (index, entry) = (usize::from(destination), self.state.values.len());
-        self.state.proofs.headers[index] = self.state.proofs.headers[entry];
-        let readable = self.state.proofs.readable.contains(entry);
-        self.state.proofs.set_readable(index, readable);
         self.state.proofs.receivers.insert(destination);
     }
 
@@ -236,25 +224,10 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: quench_runtime::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
 
-    /// The heap's array and object record tables and collection epoch, read from the dispatch
-    /// payload as the lane frame reads them (`LaneFrame::heap_records`). A table the dispatch holds
-    /// as zero is absent, which leaves at the miss edge; a row without one takes its call-out.
+    /// The heap's array record table, where the frame reads live array records. The engine's frame offers
+    /// none, so a row that needs the table takes its call-out (as `places.rs` `heap_records` does in bjit).
     #[inline(always)]
-    fn heap_records(&mut self, stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> {
-        let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
-        let at = if self.arrays_fixed { quench_runtime::staged::Region::RecordBases.readonly() } else { quench_runtime::staged::Region::RecordBases.mutable() };
-        let arrays = quench_runtime::staged::Stage::load_u64(stage, at, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, head.array_record_base) as i32);
-        let objects = super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, head.object_record_base));
-        let epoch = super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, head.epoch));
-        for table in [arrays, objects] {
-            let present = stage.raw_compare_imm(quench_runtime::staged::machine::Relation::NotEqual, table, 0);
-            super::super::emit_js_guard(stage.builder, present, miss);
-        }
-        Some((arrays, objects, epoch))
-    }
+    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<ir::Value> { None }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
@@ -398,6 +371,8 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     mut fact: RegisterFact) {
     let index = usize::from(register);
     written.insert(index);
+    // The definition names another value: a kept receiver aliasing the register lets go of it.
+    super::virtual_objects::aliases::release_alias(&mut state.virtuals, register);
     let variable = match fact.value.representation {
         Representation::Tagged => registers.tagged[index],
         Representation::Int32 => register_int(builder, registers, index),
@@ -426,13 +401,12 @@ pub(crate) fn register_define(builder: &mut FunctionBuilder<'_>, registers: &mut
     };
     builder.def_var(variable, value);
     if fact.value.representation == Representation::Tagged { fact.tagged = TaggedView::Value(value); }
+    // The definition's word takes the shape its type names: a fact of that object (`kept_shapes`).
+    let kept = fact.value.ty.object_shape().filter(|_| fact.value.representation == Representation::Tagged);
     state.values[index] = fact;
     state.proofs.homed.remove(index);
-    state.proofs.headers[index] = None;
-    state.proofs.layouts.retain(|(owner, _), _| *owner != Some(register));
     state.proofs.receivers.remove(&register);
-    state.proofs.kept_shapes.remove(&register);
-    state.proofs.fields.retain(|field| field.owner != Some(register));
+    if let Some(shape) = kept { state.proofs.kept_shapes.insert(builder.func.dfg.resolve_aliases(value), shape); }
     state.proofs.typed.retain(|view| view.register != register);
 }
 
@@ -445,14 +419,7 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
     let value = register_read(builder, registers, state, source);
     let tagged = (fact.tagged.current() && fact.value.representation != Representation::Tagged)
         .then(|| register_tagged(builder, registers, state, source));
-    let header = state.proofs.headers[source_index];
     let receiver = state.proofs.receivers.contains(&source);
-    let kept = state.proofs.kept_shapes.get(&source).copied();
-    let layouts: Vec<_> = state.proofs.layouts.iter().filter_map(|((owner, shape), projection)|
-        (*owner == Some(source)).then_some((*shape, *projection))).collect();
-    let fields: smallvec::SmallVec<[_; INLINE_FIELD_BINDINGS]> = state.proofs.fields.iter()
-        .filter(|field| field.owner == Some(source))
-        .map(|field| FieldValue { owner: Some(destination), ..*field }).collect();
     let typed: smallvec::SmallVec<[_; 2]> = state.proofs.typed.iter().filter(|view| view.register == source)
         .map(|view| super::TypedProof { register: destination, ..*view }).collect();
     register_define(builder, registers, written, state, destination, value, fact);
@@ -460,12 +427,7 @@ pub(crate) fn register_copy(builder: &mut FunctionBuilder<'_>, registers: &mut R
         builder.def_var(registers.tagged[usize::from(destination)], bits);
         state.values[usize::from(destination)].tagged = TaggedView::Value(bits);
     }
-    state.proofs.headers[usize::from(destination)] = header;
-    state.proofs.set_readable(usize::from(destination), state.proofs.readable.contains(source_index));
-    for (shape, projection) in layouts { state.proofs.layouts.insert((Some(destination), shape), projection); }
     if receiver { state.proofs.receivers.insert(destination); }
-    if let Some(shape) = kept { state.proofs.kept_shapes.insert(destination, shape); }
-    state.proofs.fields.extend(fields);
     state.proofs.typed.extend(typed);
     value
 }
@@ -537,10 +499,6 @@ impl quench_runtime::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn html_dda_possible(&self) -> bool {
         self.html_dda
-    }
-
-    fn stable_prototype(&mut self, stage: &mut Emit<'_, '_>, _constructor: Register) -> Option<ir::Value> {
-        self.prototype.map(|link| stage.raw_const(Lane::I64, i64::from(link)))
     }
 
     fn int_fact(&self) -> RegisterFact {

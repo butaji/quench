@@ -1,8 +1,10 @@
 use quench_runtime::native_link::{NativeImageInputs, CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use super::{DependencyGraph, ModuleAssets, ModuleAssetState, PreparedModuleSource};
 use crate::NodeHost;
-use quench_runtime::{Engine, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ResidualProgram, Runtime};
-use quench_layers::engine::{emit_native_module_for, lower_native_js_module_for};
+use quench_runtime::{Engine, ImageRetention, NativeJsCompiler, NativeSourceKey, NativeSourceCompilation, NativeTarget, ReachableRealm, RealmRoots, ResidualProgram, Runtime};
+use quench_layers::engine::{Demand, emit_native_module_for, link_lane_stubs, lower_native_js_module_for};
+use super::core_rest::{write_closed_world, ClosedTables};
+use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeSet, fs, io::Write, path::{Path, PathBuf}, rc::Rc};
 
 mod source_pool;
@@ -75,22 +77,66 @@ pub struct CompiledSources {
     pub assets: ModuleAssets,
 }
 
+/// The source text an image of `retention` keeps of `program`.
+fn retained_text(program: &ResidualProgram, retention: ImageRetention) -> Option<&str> {
+    program.source_text().filter(|_| retention.source_text)
+}
+
 /// Link inputs written to a fresh compiler-owned directory. Rust macros derive
 /// the loader from the same source keys that selected the native compilation.
 impl CompiledSources {
-    /// The intrinsic families the programs reach (a core image's realm table).
-    pub fn builtin_families(&self) -> quench_runtime::BuiltinFamilies {
-        super::builtin_families::of(std::iter::once(&self.entry).chain(self.units.iter().map(|unit| &unit.program)))
-    }
-
-    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<NativeImageInputs, String> {
-        let families = if host == ImageHost::Core { self.builtin_families() } else { quench_runtime::BuiltinFamilies::ALL };
+    /// The link inputs of every program, the demand their images reach in aggregate, and (for a
+    /// core image) the closed world of the realm they reach (`ReachableRealm`).
+    pub fn emit(self, directory: &Path, target: &NativeTarget, host: ImageHost) -> Result<(NativeImageInputs, Demand, Option<ReachableRealm>, Option<ClosedTables>), String> {
         fs::create_dir(directory).map_err(|error| error.to_string())?;
         let directory = directory.canonicalize().map_err(|error| error.to_string())?;
+        let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
+        let mut required_exports = BTreeSet::new();
+        let mut objects = Vec::new();
+        let mut demand = Demand::default();
+        // Every program is lowered before any metadata is written: its lowering proves the demand
+        // the realm, and so what each image keeps, derive from.
+        let programs: Vec<(String, &ResidualProgram)> = std::iter::once((NATIVE_ENTRY_UNIT.to_owned(), &self.entry))
+            .chain(self.units.iter().enumerate().map(|(index, unit)| (format!("unit_{index}"), &unit.program)))
+            .collect();
+        let mut lowered = Vec::with_capacity(programs.len());
+        for (name, program) in &programs {
+            program.freeze_native_diagnostics();
+            let mut module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
+            if name == NATIVE_ENTRY_UNIT { link_lane_stubs(&mut module.functions, target)?; } // the image's one pair, its binder's
+            lowered.push(module.entry_table_symbol().to_owned());
+            demand.absorb(&module.demand);
+            for function in &module.functions {
+                if let quench_layers::engine::NativeFunction::Import { name, .. } = function {
+                    required_exports.insert(name.clone());
+                }
+            }
+            let object = emit_native_module_for(name, module.functions, module.data, target)?;
+            let object_path = directory.join(format!("{name}.o"));
+            fs::write(&object_path, object).map_err(|error| error.to_string())?;
+            objects.push(object_path);
+        }
+        // The closed world: what the programs reach of the realm, from the demand their lowering proved.
+        let realm = match host {
+            ImageHost::Core => {
+                let residual: Vec<&ResidualProgram> = programs.iter().map(|(_, program)| *program).collect();
+                let realm = quench_runtime::reachable_realm(&residual, RealmRoots { globals: &demand.globals, natives: &demand.natives }).map_err(|error| error.to_string())?;
+                demand.needs_source_text = realm.needs_source_text;
+                demand.needs_stack_positions = realm.needs_stack_positions;
+                Some(realm)
+            }
+            ImageHost::Node => None,
+        };
+        // What the images keep of each program. The Node host keeps all of it.
+        let retention = realm.as_ref().map_or(ImageRetention::ALL, |realm| ImageRetention {
+            // A position is a line and column only through the text it indexes.
+            source_text: realm.needs_source_text || realm.needs_stack_positions,
+            stack_positions: realm.needs_stack_positions,
+        });
         let mut texts = Vec::new();
         for unit in &self.units {
             texts.extend(unit.key.parts());
-            texts.extend(unit.program.source_text());
+            texts.extend(retained_text(&unit.program, retention));
         }
         for error in &self.syntax_errors {
             texts.extend(error.key.parts());
@@ -105,49 +151,46 @@ impl CompiledSources {
         let pool = SourcePool::new(texts);
         let pool_path = directory.join("source_pool.utf8");
         fs::write(&pool_path, pool.text()).map_err(|error| error.to_string())?;
-        let mut required_exports = BTreeSet::new();
-        let mut objects = Vec::new();
-        let namespace = quench_runtime::NativeProgramNamespace::from_entry(&self.entry)?;
-        let mut write = |program: &ResidualProgram, name: &str, namespace: Option<&quench_runtime::NativeProgramNamespace>| -> Result<(PathBuf, String), String> {
-            program.freeze_native_diagnostics();
-            let module = lower_native_js_module_for(program, &format!("quench_{name}"), target)?;
-            let symbol = module.entry_table_symbol().to_owned();
-            for function in &module.functions {
-                if let quench_layers::engine::NativeFunction::Import { name, .. } = function {
-                    required_exports.insert(name.clone());
-                }
-            }
-            let object = emit_native_module_for(name, module.functions, module.data, target)?;
-            let object_path = directory.join(format!("{name}.o"));
-            fs::write(&object_path, object).map_err(|error| error.to_string())?;
-            objects.push(object_path);
-            let metadata = directory.join(format!("{name}.bin"));
-            match namespace {
-                Some(namespace) => fs::write(&metadata, namespace.encode_with_external_source(program)?).map_err(|error| error.to_string())?,
-                None => program.write_binary(&metadata)?,
-            }
-            Ok((metadata, symbol))
-        };
-        let (entry, entry_symbol) = write(&self.entry, NATIVE_ENTRY_UNIT, None)?;
+        let entry = directory.join(format!("{NATIVE_ENTRY_UNIT}.bin"));
+        self.entry.write_binary_retaining(&entry, retention)?;
+        let mut units = Vec::with_capacity(self.units.len());
+        for (index, unit) in self.units.iter().enumerate() {
+            let metadata = directory.join(format!("unit_{index}.bin"));
+            fs::write(&metadata, namespace.encode_with_external_source(&unit.program, retention)?).map_err(|error| error.to_string())?;
+            units.push(metadata);
+        }
+        let Some((entry_symbol, unit_symbols)) = lowered.split_first() else { unreachable!("the entry is always lowered") };
+        let units: Vec<(PathBuf, String)> = units.into_iter().zip(unit_symbols.iter().cloned()).collect();
         let mut catalog = fs::File::create(directory.join(CATALOG_FILENAME)).map_err(|error| error.to_string())?;
         writeln!(catalog, "{}::linked_source_pool!(quench_native_source_text, {:?});", host.crate_path(), pool_path.to_str().ok_or("source pool path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
         writeln!(catalog, "const _: () = assert!(quench_runtime::ResidualProgram::RUNTIME_ABI_FINGERPRINT == {:#x}, \"native metadata ABI mismatch\");", ResidualProgram::RUNTIME_ABI_FINGERPRINT)
             .map_err(|error| error.to_string())?;
-        if host == ImageHost::Core { write_builtin_table(&mut catalog, families)?; }
+        // The core closed world's statics, and the values the probe and the dump run on (one construction).
+        let closed = match &realm {
+            Some(realm) => Some(write_closed_world(&mut catalog, realm, &demand.execution_table())?),
+            None => None,
+        };
+        // The global names the program reads by name: the closed world's global roots, which the dump
+        // run rebuilds its closure from (`Vm::collect_for_image`).
+        if realm.is_some() {
+            let names = demand.globals.iter().map(|name| format!("{:?}", &**name)).collect::<Vec<_>>().join(", ");
+            writeln!(catalog, "static CLOSED_GLOBALS: &[&str] = &[{names}];").map_err(|error| error.to_string())?;
+        }
         let sources_macro = match host {
             ImageHost::Node => "quench::linked_native_sources! {".to_owned(),
             ImageHost::Core => "quench_runtime::linked_native_sources! {\nhost quench_runtime::SystemHost;".to_owned(),
         };
         writeln!(catalog, "{sources_macro}\nentry bind_entry: entry_table => ({entry_symbol:?}, {:?});\nresolver resolve {{", entry.to_str().ok_or("native image path is not UTF-8")?)
             .map_err(|error| error.to_string())?;
-        for (index, unit) in self.units.iter().enumerate() {
-            let (metadata, symbol) = write(&unit.program, &format!("unit_{index}"), Some(&namespace))?;
+        for (index, (unit, (metadata, symbol))) in self.units.iter().zip(&units).enumerate() {
             let parts = unit.key.parts().map(|part| pool.reference(part)).collect::<Vec<_>>().join(", ");
-            let source = unit.program.source_text().map_or_else(|| "None".to_owned(), |text| format!("Some({})", pool.reference(text)));
+            let source = retained_text(&unit.program, retention).map_or_else(|| "None".to_owned(), |text| format!("Some({})", pool.reference(text)));
             writeln!(catalog, "source_{index}_table => ({symbol:?}, {:?}, {:?}, [{parts}], source {source}),", metadata.to_str().ok_or("native image path is not UTF-8")?, unit.key.name())
                 .map_err(|error| error.to_string())?;
         }
+        // A comment, so the closed world's demand is auditable in the catalog and costs the image no bytes.
+        writeln!(catalog, "// closed-world demand: {}", demand.to_string().replace('\n', " ")).map_err(|error| error.to_string())?;
         writeln!(catalog, "}} errors {{").map_err(|error| error.to_string())?;
         for error in &self.syntax_errors {
             let parts = error.key.parts().map(|part| pool.reference(part)).collect::<Vec<_>>().join(", ");
@@ -159,11 +202,12 @@ impl CompiledSources {
         fs::write(directory.join(REQUIRED_EXPORTS_FILENAME), required_exports.iter().map(String::as_str).collect::<Vec<_>>().join("\n") + "\n")
             .map_err(|error| error.to_string())?;
         // The image's lane helper imports are defined by this library (`aot::lane_helper_symbols`), and the
-        // attention byte its polls read and the narrow decode's table by the runtime (exported by name).
+        // attention byte its polls read, the narrow decode's table and the entry stub's callee by the runtime (exported by name).
         let mut exports = required_exports.iter()
             .filter(|name| !name.starts_with("quench_lane_helper_")
                 && *name != quench_runtime::execution_interrupt::ATTENTION_SYMBOL
-                && *name != quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS_SYMBOL)
+                && *name != quench_runtime::staged::value_encoding::NARROW_UPPER_WORDS_SYMBOL
+                && *name != quench_runtime::vm::engine_types::ENTRY_STUB_IN_LANE_SYMBOL)
             .map(|name| format!("{name:?}")).collect::<Vec<_>>();
         // The Node host defines the lane helper trampolines from its own library
         // (`aot::lane_helper_symbols`); a core image has no host library, so its catalog does.
@@ -175,23 +219,46 @@ impl CompiledSources {
                 .chain(std::iter::once(crate::host::resident_pages::COMPILED_ENTRY_SYMBOL.to_owned())).collect(),
             ImageHost::Core => std::collections::BTreeSet::new(),
         };
-        Ok(NativeImageInputs::new(directory, objects, host_exports))
+        Ok((NativeImageInputs::new(directory, objects, host_exports), demand, realm, closed))
     }
 }
 
-/// The realm's intrinsic table: a family the program reaches names its installer, and one
-/// it does not keeps its realm objects and its installer out of the image.
-fn write_builtin_table(catalog: &mut fs::File, families: quench_runtime::BuiltinFamilies) -> Result<(), String> {
-    use quench_runtime::BuiltinFamilies as F;
-    let installer = |family: F, name: &str| {
-        if families.contains(family) { format!("Some(quench_runtime::vm::builtin_table::installers::{name})") } else { "None".to_owned() }
-    };
-    writeln!(catalog, "static BUILTINS: quench_runtime::BuiltinTable = quench_runtime::BuiltinTable {{ families: quench_runtime::BuiltinFamilies::from_bits({}), regexp: {}, typed_memory: {}, collections: {}, date: {}, json: {}, promise: {}, shadow_realm: {} }};",
-        families.bits(),
-        installer(F::REGEXP, "REGEXP"), installer(F::TYPED_MEMORY, "TYPED_MEMORY"), installer(F::COLLECTIONS, "COLLECTIONS"),
-        installer(F::DATE, "DATE"), installer(F::JSON, "JSON"),
-        installer(F::PROMISE_ASYNC, "PROMISE_ASYNC"), installer(F::SHADOW_REALM, "SHADOW_REALM"))
-        .map_err(|error| error.to_string())
+/// The compile report's view of a core image's closed world of the realm (`ReachableRealm`).
+pub fn realm_report(realm: &ReachableRealm) -> Value {
+    json!({
+        "natives": realm.natives.len(),
+        "families": realm.families.bits(),
+        "objects": realm.objects,
+        "makes_code": realm.makes_code,
+        "needs_source_text": realm.needs_source_text,
+        "needs_stack_positions": realm.needs_stack_positions,
+        "needs_regexp_compiler": realm.needs_regexp_compiler,
+        "needs_intl": realm.needs_intl,
+        "needs_tz": realm.needs_tz,
+    })
+}
+
+/// The compile report's view of an image's demand (`Demand`): what the closed world reaches, and the
+/// execution table entries it needs.
+pub fn demand_report(demand: &Demand) -> Value {
+    let table = demand.execution_table();
+    json!({
+        "helpers": demand.helpers.iter().collect::<Vec<_>>(),
+        "natives": demand.natives.iter().map(|native| format!("{native:?}")).collect::<Vec<_>>(),
+        "globals": demand.globals.iter().map(|name| &**name).collect::<Vec<_>>(),
+        "regexps": demand.regexps.len(),
+        "generic_records": demand.generic_records,
+        "wasm": demand.wasm,
+        "needs_interpreter": demand.needs_interpreter(),
+        "needs_live_link": demand.needs_live_link,
+        "needs_exits": demand.needs_exits,
+        "needs_source_text": demand.needs_source_text,
+        "needs_stack_positions": demand.needs_stack_positions,
+        "execution_table": {
+            "run_lane": table.run_lane, "interpret": table.interpret, "tier_up": table.tier_up, "compile_source": table.compile_source,
+            "link_live": table.link_live, "wasm": table.wasm,
+        },
+    })
 }
 
 /// Write the Node loader's module assets into the catalog: the entry, files, resolutions,
@@ -305,7 +372,7 @@ impl SourceManifest {
     /// Compile a closed program whose whole source is the entry (`Variant::Core`): the entry
     /// program is the application itself, not the Node loader's empty bootstrap hook.
     pub fn compile_closed(self, source: &str, kind: quench_runtime::SourceKind) -> Result<CompiledSources, String> {
-        let mut compiler = NativeJsCompiler::new(true);
+        let mut compiler = NativeJsCompiler::new();
         let entry = match kind {
             quench_runtime::SourceKind::Module => compiler.compile_module(source, NATIVE_ENTRY_NAME),
             quench_runtime::SourceKind::Script | quench_runtime::SourceKind::Eval => compiler.compile_script(source, NATIVE_ENTRY_NAME, quench_runtime::HostScriptOptions { keep_records: true, ..Default::default() }),
@@ -316,7 +383,7 @@ impl SourceManifest {
     /// Compile every recorded body before execution; no application is trained
     /// or executed to create these native compilation records.
     pub fn compile(self) -> Result<CompiledSources, String> {
-        let mut compiler = NativeJsCompiler::new(true);
+        let mut compiler = NativeJsCompiler::new();
         let entry = match self.assets.entry.as_ref().and_then(|path| self.assets.files.get(path).map(|file| (path, file.kind))) {
             Some((path, quench_runtime::SourceKind::Module)) => {
                 let url = url::Url::from_file_path(path).map_err(|_| "invalid ES module entry path")?;

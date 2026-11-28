@@ -414,7 +414,7 @@ impl MemoryProfile {
             let Some(index) = self.identity_slots.get(&identity).copied() else {
                 return;
             };
-            let Some(object) = heap.object(identity) else {
+            let Some(object) = heap.object(identity).and_then(|object| object.record_only()) else {
                 return;
             };
             let kind = if identity.direct_object_index().is_some() {
@@ -494,7 +494,8 @@ impl Heap {
 
     pub(crate) fn cell_counts(&self) -> [usize; CellKind::COUNT] {
         let mut counts = [0; CellKind::COUNT];
-        counts[CellKind::Object as usize] = self.object_records.live_count();
+        // An ordinary object is a class cell; the object census counts records, of which there are none.
+        counts[CellKind::Object as usize] = 0;
         counts[CellKind::Array as usize] = self.array_records.live_count();
         counts[CellKind::Function as usize] = self.function_records.live_count();
         counts[CellKind::Object as usize] += self.promise_records.live_count();
@@ -523,9 +524,7 @@ impl Heap {
     pub(crate) fn live_payload_bytes(&self) -> [usize; CellKind::COUNT] {
         let mut bytes = [0; CellKind::COUNT];
         self.for_each_live_value(|identity| {
-            if let Some(object) = self.object_record(identity) {
-                bytes[CellKind::Object as usize] += object.allocated_extra_bytes();
-            } else if let Some(array_id) = identity.direct_array_index() {
+            if let Some(array_id) = identity.direct_array_index() {
                 // SAFETY: profile walks only live values.
                 let array = unsafe { self.array_records.get_live(array_id) };
                 bytes[CellKind::Array as usize] += array.allocated_extra_bytes()
@@ -549,7 +548,6 @@ impl Heap {
 
     pub fn memory_stats(&self) -> (usize, usize, usize, usize, usize, usize, usize) {
         let dynamic = self.properties.memory_bytes()
-            + self.object_records.allocated_bytes()
             + self.array_records.allocated_bytes()
             + self.function_records.allocated_bytes()
             + self.promise_records.allocated_bytes()
@@ -573,7 +571,6 @@ impl Heap {
         let property = self.properties.stats();
         (
             self.slots.len()
-                + self.object_records.high_water()
                 + self.array_records.high_water()
                 + self.function_records.high_water()
                 + self.promise_records.high_water()
@@ -595,7 +592,7 @@ impl Heap {
     pub(crate) fn live_property_stats(&self) -> (usize, usize) {
         let mut stats = (0, 0);
         self.for_each_live_value(|identity| {
-            let Some(object) = self.object(identity) else {
+            let Some(object) = self.object(identity).and_then(|object| object.record_only()) else {
                 return;
             };
             let vector = self.properties.vector_stats(object.properties());
@@ -611,7 +608,7 @@ impl Heap {
     pub(crate) fn live_property_narrow_stats(&self) -> (usize, usize, usize, usize) {
         let mut stats = (0, 0, 0, 0);
         self.for_each_live_value(|identity| {
-            let Some(object) = self.object(identity) else {
+            let Some(object) = self.object(identity).and_then(|object| object.record_only()) else {
                 return;
             };
             let properties = object.properties();
@@ -637,27 +634,22 @@ impl Heap {
     fn live_value_payload_bytes(&self) -> usize {
         let mut bytes = 0;
         self.for_each_live_value(|identity| {
-            bytes += self.object_record(identity).map_or_else(
-                || {
-                    if let Some(array_id) = identity.direct_array_index() {
-                        // SAFETY: profile walks only live values.
-                        let array = unsafe { self.array_records.get_live(array_id) };
-                        array.allocated_extra_bytes()
-                            + array.elements().capacity() * size_of::<Value>()
-                    } else if let Some(function) = self.function(identity) {
-                        function.object.allocated_extra_bytes()
-                    } else if identity.direct_promise_index().is_some()
-                        && let Some(promise) = self.promise(identity)
-                    {
-                        promise.object.allocated_extra_bytes()
-                    } else if let Some(symbol) = self.symbol_data(identity) {
-                        symbol.description.as_ref().map_or(0, |description| description.len())
-                    } else {
-                        self.get(identity).map_or(0, cell_bytes)
-                    }
-                },
-                Object::allocated_extra_bytes,
-            );
+            bytes += if let Some(array_id) = identity.direct_array_index() {
+                // SAFETY: profile walks only live values.
+                let array = unsafe { self.array_records.get_live(array_id) };
+                array.allocated_extra_bytes()
+                    + array.elements().capacity() * size_of::<Value>()
+            } else if let Some(function) = self.function(identity) {
+                function.object.allocated_extra_bytes()
+            } else if identity.direct_promise_index().is_some()
+                && let Some(promise) = self.promise(identity)
+            {
+                promise.object.allocated_extra_bytes()
+            } else if let Some(symbol) = self.symbol_data(identity) {
+                symbol.description.as_ref().map_or(0, |description| description.len())
+            } else {
+                self.get(identity).map_or(0, cell_bytes)
+            };
         });
         bytes
     }

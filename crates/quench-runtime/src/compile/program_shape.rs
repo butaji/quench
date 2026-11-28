@@ -83,7 +83,7 @@ impl ParsedProgramShape<'_> {
             return Stubbing { functions: true, arrows: true, skim: true };
         }
         let eval = matches!(self, Self::Eval(..));
-        let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES || crate::trace::Dev::DirectEvalStubs.on());
+        let direct = eval && !replayable && (source_bytes >= DIRECT_EVAL_STUB_BYTES);
         let script = matches!(self, Self::FirstCallScript) && !module && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
         let dynamic = matches!(self, Self::DynamicFunction { eager: false, .. }) && source_bytes >= FIRST_CALL_SCRIPT_BYTES;
         Stubbing { functions: (eval || script) && replayable || direct || dynamic, arrows: direct, skim: direct || script }

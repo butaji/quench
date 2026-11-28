@@ -13,7 +13,7 @@ use quench_runtime::staged::machine::{Lane, MachineScalar};
 pub(crate) enum RelocKind {
     /// The entry cell of function `key`.
     EntryCell,
-    /// The `DirectCallee` descriptor of the call to function `key`.
+    /// The `DirectArm` descriptor of the call to function `key`.
     Descriptor,
     /// The dense capture words of function `key`.
     CaptureWords,
@@ -38,9 +38,17 @@ pub(crate) enum RelocKind {
     HolderLink,
     /// The value that holder's slot holds when the code links (`staged::ImageWord::HolderValue`).
     HolderValue,
-    /// The layout id of the objects a construction makes, by a field guard key
-    /// (`staged::ImageWord::Layout`): an id no record has where the guard does not resolve.
+    /// The class id of the cell a construction makes, by a field guard key
+    /// (`staged::ImageWord::Layout`): an id no class has where the guard does not resolve.
     GuardLayout,
+    /// The layout id of the instances the shape recipe `key` builds (`staged::ImageWord::ClassLayout`): an id no
+    /// record has where the recipe's prototype does not resolve.
+    ClassLayout,
+    /// The base of the class method table (`layouts::class_methods_base`), which a closed-set indirect call reads each
+    /// class's method vector from. Keyed 0.
+    ClassMethods,
+    /// The entry stub (`lane_body_abi::entry_stub`), which a sibling tail call compares a callee's entry with. Keyed 0.
+    EntryStub,
 }
 
 impl RelocKind {
@@ -50,6 +58,7 @@ impl RelocKind {
             quench_runtime::staged::ImageWord::HolderLink => Self::HolderLink,
             quench_runtime::staged::ImageWord::HolderValue => Self::HolderValue,
             quench_runtime::staged::ImageWord::Layout => Self::GuardLayout,
+            quench_runtime::staged::ImageWord::ClassLayout => Self::ClassLayout,
         }
     }
 }

@@ -49,8 +49,8 @@ impl GlobalFrame<Concrete> for ScopeFrame {}
 impl crate::staged::CallFrame<Concrete> for ScopeFrame {}
 
 impl NumericFrame<Concrete> for ScopeFrame {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<u64> { unreachable!() }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<u64> { unreachable!() }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!() }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { unreachable!() }
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
     }
@@ -65,7 +65,7 @@ pub fn frame(registers: Vec<u64>) -> ScopeFrame {
 
 #[test]
 fn a_staged_return_leaves_with_a_number_and_leaves_unresolved_for_any_other_value() {
-    let mut stage = Concrete::new(std::ptr::null());
+    let mut stage = Concrete::pure();
     let mut numeric = frame(vec![Value::number(2.5).to_bits()]);
     assert!(matches!(step(&mut stage, &mut numeric, Operation::Return { source: 0 }), Step::Control(_)));
     assert_eq!(numeric.returned, Some(Value::number(2.5).to_bits()));

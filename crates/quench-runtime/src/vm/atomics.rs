@@ -5,6 +5,7 @@ use crate::staged::typed_elements::{
     element_number, element_word, field_bits, store_field_bits, NATIVE_LITTLE_ENDIAN,
 };
 use std::time::Instant;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 pub struct Test262AgentState {
     /// Whether `$262.agent` is installed. Its agents run cooperatively on this runtime's
@@ -104,86 +105,6 @@ impl Vm {
         self.global(program, "Atomics", atomics)
     }
 
-    pub(super) fn atomics_native(
-        &mut self,
-        p: &ResidualProgram,
-        native: Native,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        if native == Native::AtomicsPause {
-            return Ok(Value::UNDEFINED);
-        }
-        if native == Native::AtomicsIsLockFree {
-            let size = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            return Ok(if matches!(size, 1.0 | 2.0 | 4.0 | 8.0) {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            });
-        }
-        if !self.test262_agent_owns_atomic(native)
-            && self
-                .atomic_shared_backing(args.first().copied().unwrap_or(Value::UNDEFINED))
-                .is_some()
-        {
-            return self.atomic_shared_native(p, native, args);
-        }
-        if waits(native) {
-            return self.atomic_wait(p, native, args);
-        }
-        if native == Native::AtomicsNotify {
-            return self.atomics_notify(p, args);
-        }
-        let view = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let kind = self.atomic_array_kind(p, view)?;
-        if native != Native::AtomicsLoad {
-            self.atomic_require_writable(p, view)?;
-        }
-        let index = self.atomic_index(p, args.get(1).copied())?;
-        self.atomic_array_kind(p, view)?;
-        if native != Native::AtomicsLoad {
-            self.atomic_require_writable(p, view)?;
-        }
-        let length = self.typed_array_length(view).unwrap_or(0);
-        self.atomic_validate_index(p, length, index)?;
-        let current = self
-            .typed_array_get(view, index)
-            .unwrap_or(Value::UNDEFINED);
-        if native == Native::AtomicsLoad
-            && self.test262_agent.active_callback
-            && kind.is_waitable()
-            && self.atomic_is_zero(kind, current)
-        {
-            let has_waiter = !self.test262_agent.waiters.is_empty();
-            if has_waiter || self.agent_spin_escape() {
-                return Ok(
-                    if kind.is_bigint() {
-                        self.heap.alloc(Cell::bigint(1_u8.into()))
-                    } else {
-                        Value::number(1.0)
-                    },
-                );
-            }
-        }
-        match native {
-            Native::AtomicsLoad => Ok(current),
-            Native::AtomicsStore
-            | Native::AtomicsAdd
-            | Native::AtomicsSub
-            | Native::AtomicsAnd
-            | Native::AtomicsOr
-            | Native::AtomicsXor
-            | Native::AtomicsExchange
-            | Native::AtomicsCompareExchange => {
-                if kind.is_bigint() {
-                    self.atomic_bigint(p, native, view, index, current, args)
-                } else {
-                    self.atomic_number(p, native, kind, view, index, current, args)
-                }
-            }
-            _ => unreachable!(),
-        }
-    }
 
     fn atomic_array_kind(
         &mut self,
@@ -427,7 +348,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if !kind.is_waitable()
+        if !typed_array_kind_is_waitable(kind)
             || self.typed_array_shared(view) != Some(true)
         {
             return Err(self.type_error(
@@ -543,7 +464,7 @@ impl Vm {
     fn atomics_notify(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if !kind.is_waitable() {
+        if !typed_array_kind_is_waitable(kind) {
             return Err(self.type_error(
                 p,
                 "Atomics.notify requires Int32Array or BigInt64Array".into(),
@@ -666,7 +587,7 @@ impl Vm {
         use crate::shared_backing::{Rmw, WaitResult};
         let view = args.first().copied().unwrap_or(Value::UNDEFINED);
         let kind = self.atomic_array_kind(p, view)?;
-        if waits_or_notifies(native) && !kind.is_waitable()
+        if waits_or_notifies(native) && !typed_array_kind_is_waitable(kind)
         {
             return Err(self.type_error(
                 p,
@@ -677,7 +598,7 @@ impl Vm {
         let length = self.typed_array_length(view).unwrap_or(0);
         let index = self.atomic_index(p, args.get(1).copied())?;
         self.atomic_validate_index(p, length, index)?;
-        let big = kind.is_bigint();
+        let big = typed_array_kind_is_bigint(kind);
         let mut store_result = None;
         let mut convert = |vm: &mut Self, value: Value| -> Result<u64, JsError> {
             if big {
@@ -911,4 +832,104 @@ impl Vm {
         }
         result
     }
+}
+
+/// The entry of each Atomics native, by its kind.
+pub(super) fn entry(native: Native) -> Option<native_table::NativeFn> {
+    match native {
+        Native::AtomicsInitialize => Some(atomics_initialize),
+        Native::AtomicsPause => Some(atomics_pause),
+        Native::AtomicsIsLockFree => Some(atomics_is_lock_free),
+        Native::AtomicsLoad
+        | Native::AtomicsStore
+        | Native::AtomicsAdd
+        | Native::AtomicsSub
+        | Native::AtomicsAnd
+        | Native::AtomicsOr
+        | Native::AtomicsXor
+        | Native::AtomicsExchange
+        | Native::AtomicsCompareExchange
+        | Native::AtomicsNotify
+        | Native::AtomicsWait
+        | Native::AtomicsWaitAsync => Some(atomics_operation),
+        _ => None,
+    }
+}
+
+fn atomics_initialize(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    vm.install_atomics(p).map(|()| Value::UNDEFINED)
+}
+
+fn atomics_pause(_vm: &mut Vm, _p: &ResidualProgram, _native: Native, _this: Value, _args: &[Value]) -> Result<Value, JsError> {
+    Ok(Value::UNDEFINED)
+}
+
+fn atomics_is_lock_free(vm: &mut Vm, p: &ResidualProgram, _native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    let size = vm.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+    Ok(if matches!(size, 1.0 | 2.0 | 4.0 | 8.0) { Value::TRUE } else { Value::FALSE })
+}
+
+fn atomics_operation(vm: &mut Vm, p: &ResidualProgram, native: Native, _this: Value, args: &[Value]) -> Result<Value, JsError> {
+    if !vm.test262_agent_owns_atomic(native)
+        && vm
+            .atomic_shared_backing(args.first().copied().unwrap_or(Value::UNDEFINED))
+            .is_some()
+    {
+        return vm.atomic_shared_native(p, native, args);
+}
+if waits(native) {
+    return vm.atomic_wait(p, native, args);
+}
+if native == Native::AtomicsNotify {
+    return vm.atomics_notify(p, args);
+}
+let view = args.first().copied().unwrap_or(Value::UNDEFINED);
+let kind = vm.atomic_array_kind(p, view)?;
+if native != Native::AtomicsLoad {
+    vm.atomic_require_writable(p, view)?;
+}
+let index = vm.atomic_index(p, args.get(1).copied())?;
+vm.atomic_array_kind(p, view)?;
+if native != Native::AtomicsLoad {
+    vm.atomic_require_writable(p, view)?;
+}
+let length = vm.typed_array_length(view).unwrap_or(0);
+vm.atomic_validate_index(p, length, index)?;
+let current = vm
+    .typed_array_get(view, index)
+    .unwrap_or(Value::UNDEFINED);
+if native == Native::AtomicsLoad
+    && vm.test262_agent.active_callback
+    && typed_array_kind_is_waitable(kind)
+    && vm.atomic_is_zero(kind, current)
+{
+    let has_waiter = !vm.test262_agent.waiters.is_empty();
+    if has_waiter || vm.agent_spin_escape() {
+        return Ok(
+            if typed_array_kind_is_bigint(kind) {
+                vm.heap.alloc(Cell::bigint(1_u8.into()))
+            } else {
+                Value::number(1.0)
+            },
+        );
+    }
+}
+match native {
+    Native::AtomicsLoad => Ok(current),
+    Native::AtomicsStore
+    | Native::AtomicsAdd
+    | Native::AtomicsSub
+    | Native::AtomicsAnd
+    | Native::AtomicsOr
+    | Native::AtomicsXor
+    | Native::AtomicsExchange
+    | Native::AtomicsCompareExchange => {
+        if typed_array_kind_is_bigint(kind) {
+            vm.atomic_bigint(p, native, view, index, current, args)
+        } else {
+            vm.atomic_number(p, native, kind, view, index, current, args)
+        }
+    }
+    _ => unreachable!(),
+}
 }

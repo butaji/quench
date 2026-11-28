@@ -55,7 +55,7 @@ impl Lowering<'_, '_> {
         let room = self.builder.use_var(variables.room);
         // The emit stage's words are 64-bit; the view's index, length and room are 32-bit.
         let [index, length, room] = [index, length, room].map(|word| self.raw_unary(Unary::ZeroExtend(Lane::I64), word));
-        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None , payload: None};
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: None , payload: None, facts: Default::default(), fresh: false };
         let grown = quench_runtime::staged::elements::append_element(&mut stage, values, length, room, index, value, miss)
             .expect("the emit stage continues past its guards");
         let grown = self.raw_unary(Unary::Narrow(Lane::I32), grown);

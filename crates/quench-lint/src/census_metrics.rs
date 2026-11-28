@@ -6,7 +6,8 @@ use std::sync::OnceLock;
 use proc_macro2::{TokenStream, TokenTree};
 use syn::{Item, visit::Visit};
 
-use crate::catalog::{self, is_punct};
+use quench_opcodes::Row;
+
 use crate::shape::is_test;
 
 const OPCODE_OWNERS: &[&str] = &["Op", "Class"];
@@ -87,14 +88,14 @@ impl<'ast> Visit<'ast> for Arms<'_> {
     }
 }
 
-/// The opcodes the `opcodes!` table declares: one row each.
-pub fn opcode_variants(file: &syn::File) -> usize {
-    catalog::table(file).len()
+/// The opcodes the opcode table declares: one row each.
+pub fn opcode_variants(rows: &[Row]) -> usize {
+    rows.len()
 }
 
-/// The opcodes the catalog gives a staged operation: the rows that declare a `staged` decoder.
-pub fn staged_opcodes(file: &syn::File) -> usize {
-    catalog::table(file).iter().filter(|row| row.declares(catalog::STAGED)).count()
+/// The opcodes the table gives a staged operation: the rows that declare a `staged` decoder.
+pub fn staged_opcodes(rows: &[Row]) -> usize {
+    rows.iter().filter(|row| row.staged.is_some()).count()
 }
 
 /// Non-empty lines that are not `#` comments.
@@ -162,16 +163,6 @@ pub fn opcode_name_debt(text: &str) -> usize {
     })
 }
 
-/// The listed fallbacks of one kind (`crates/quench-tier-corpus/fallbacks.txt`, lines `kind operation (reason)`).
-fn fallbacks_of(text: &str, kind: &str) -> usize {
-    text.lines().filter(|line| line.split_once(' ').is_some_and(|(first, _)| first == kind)).count()
-}
-
-pub fn fallback_jit_rejects(text: &str) -> usize { fallbacks_of(text, "jit-reject") }
-pub fn fallback_helper_calls(text: &str) -> usize { fallbacks_of(text, "helper-call") }
-pub fn fallback_deopts(text: &str) -> usize { fallbacks_of(text, "deopt") }
-pub fn fallback_opaque_natives(text: &str) -> usize { fallbacks_of(text, "opaque-native") }
-
 /// What the tier crates still take of the runtime's internals: Value words made from raw bits, outside
 /// comments, and the heap names `tier_surface` re-exports. The heap module and `Vm::heap` are
 /// `pub(crate)` (S1.4), so paths into the heap and reads of the heap field cannot be written; this
@@ -209,6 +200,11 @@ fn catalog_predicates() -> &'static BTreeSet<String> {
         });
         tables.flat_map(predicate_names).collect()
     })
+}
+
+/// Whether `tree` is the punctuation `mark`.
+fn is_punct(tree: Option<&TokenTree>, mark: char) -> bool {
+    matches!(tree, Some(TokenTree::Punct(punct)) if punct.as_char() == mark)
 }
 
 /// The identifiers an `op_predicates!` table names before a `=>`.
@@ -382,6 +378,12 @@ pub fn fact_homes(file: &syn::File) -> usize {
         .count()
 }
 
+/// Structs and enums named `*Fact` or `*Facts` declared outside `typed_ir/cell.rs`, the one home
+/// of fact types (`fact_types.txt` lists the ones that predate the rule).
+pub fn fact_types(file: &str, syntax: &syn::File) -> usize {
+    crate::fact_types::outside_home(file, syntax).len()
+}
+
 /// Struct fields named `*epoch`: each is a validity counter a reader compares per use, which a
 /// code dependency replaces for stable facts (P1).
 pub fn epoch_fields(file: &syn::File) -> usize {
@@ -459,18 +461,11 @@ mod tests {
     }
 
     #[test]
-    fn opcode_table_entries_are_counted() {
-        let file = parse("opcodes!($; Nop => Effect::PURE; layout Scalar, @ R, Add => X::Y, @ R);");
-        assert_eq!(opcode_variants(&file), 2);
-    }
-
-    #[test]
-    fn staged_opcodes_are_the_rows_that_declare_a_decoder() {
-        let file = parse(
-            "opcodes!($; Nop => Effect::PURE; layout Scalar, @ R, Add => X::Y; layout Scalar; staged Flow; step Body, @ R,
-             Sub => X::Y; layout Scalar; staged Value, @ R);",
-        );
-        assert_eq!(staged_opcodes(&file), 2);
+    fn opcode_measures_count_the_table_rows() {
+        let rows = quench_opcodes::ROWS;
+        assert_eq!(opcode_variants(rows), rows.len());
+        let staged = staged_opcodes(rows);
+        assert!(staged > 0 && staged < rows.len());
     }
 
     #[test]
@@ -562,6 +557,14 @@ mod tests {
     fn fact_homes_count_memo_cache_hint_and_proof_types() {
         let file = parse("struct ConcatMemo; struct FieldCache; struct HolderHint; struct LocalProofs; struct Cached; mod m { struct ReadMemo; }");
         assert_eq!(fact_homes(&file), 5);
+    }
+
+    #[test]
+    fn fact_types_count_fact_and_facts_items_outside_the_cell() {
+        let source = "struct IntFact; enum ExitFacts { A } struct Facter;";
+        let file = parse(source);
+        assert_eq!(fact_types("crates/quench-runtime/src/staged/proof.rs", &file), 2);
+        assert_eq!(fact_types("crates/quench-runtime/src/typed_ir/cell.rs", &file), 0);
     }
 
     #[test]

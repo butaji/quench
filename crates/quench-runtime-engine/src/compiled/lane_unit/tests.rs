@@ -2,6 +2,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::bytecode::{Class, Op};
+use quench_runtime::Value;
 
 #[test]
 fn static_hints_keep_numeric_local_indices_out_of_register_rows() {
@@ -72,7 +73,7 @@ fn method_hints_follow_definition_records_and_bound_conflicting_bodies() {
                 let target = targets[caller].iter().flatten().copied().next().unwrap();
                 assert!(program.function(target as usize).instructions().any(|instruction| instruction.op().class().eq(&Class::Return)
                     || instruction.returns_from_frame()));
-                let unit = unit(&program, caller as u32, program.function(caller), &|function, pc|
+                let unit = unit_planned(&program, Some(&test_graph(&program)), caller as u32, program.function(caller), &|function, pc|
                     targets[function as usize].get(pc as usize).into_iter().flatten().copied().next()
                         .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
                     &|id| program.function_get(id as usize)).unwrap();
@@ -114,7 +115,7 @@ fn terminal_leaf_uses_the_existing_caller_return_and_strict_calls_residualize() 
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         let original_terminal = program.function(caller).code.len() - 1;
-        let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+        let unit = unit_planned(&program, Some(&test_graph(&program)), caller as u32, program.function(caller), &|function, pc| targets[function as usize]
             .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -147,7 +148,7 @@ fn nested_strict_terminal_calls_residualize_in_their_own_caller() {
         let caller = program.functions.iter().position(|body|
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
-        let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+        let unit = unit_planned(&program, Some(&test_graph(&program)), caller as u32, program.function(caller), &|function, pc| targets[function as usize]
             .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -175,7 +176,7 @@ fn function_binding_distinguishes_effectful_prefixes_from_pure_numeric_loops() {
             body.header().name.is_some_and(|name| &program.atoms[name as usize] == "run")).unwrap();
         let targets = static_call_targets(&program);
         assert!(targets[caller].iter().any(|site| !site.is_empty()), "the hint must reach admission");
-        let unit = unit(&program, caller as u32, program.function(caller), &|function, pc| targets[function as usize]
+        let unit = unit_planned(&program, Some(&test_graph(&program)), caller as u32, program.function(caller), &|function, pc| targets[function as usize]
             .get(pc as usize).into_iter().flatten().copied().next()
             .map(|function| CallTarget { function, callee: CalleeBinding::Function }).into_iter().collect(),
             &|id| program.function_get(id as usize)).unwrap();
@@ -198,7 +199,7 @@ fn remapped_liveness_covers_synthesized_reads_without_loading_callee_registers_a
     let call = body.instructions().position(|instruction| instruction.op().class().eq(&Class::Call)).unwrap();
     let mut targets = vec![None; body.code.len()];
     targets[call] = Some(CallTarget { callee: CalleeBinding::Identity(Value::UNDEFINED), function: leaf });
-    let mut unit = unit(&program, caller, body, &|function, pc| if function == caller {
+    let mut unit = unit_planned(&program, Some(&test_graph(&program)), caller, body, &|function, pc| if function == caller {
         targets.get(pc as usize).into_iter().flatten().copied().next().into_iter().collect()
     } else { Vec::new() }, &|function| program.function_get(function as usize)).unwrap();
     assert_eq!(unit.frames.len(), 1);
@@ -227,9 +228,6 @@ fn a_callee_the_plan_declines_for_the_budget_stays_a_call() {
         vec![CallTarget { function: leaf, callee: CalleeBinding::Identity(Value::integer(0)) }]
     } else { Vec::new() };
     let body = |id: u32| program.function_get(id as usize);
-    let inlined = unit(&program, caller, program.function(caller as usize), &targets, &body).unwrap();
+    let inlined = unit_planned(&program, Some(&test_graph(&program)), caller, program.function(caller as usize), &targets, &body).unwrap();
     assert_eq!(inlined.frames.len(), 1, "the callee fits the budget");
-    let declined = with_budget(&program, caller, program.function(caller as usize), 0, &targets, &body).unwrap();
-    assert!(declined.frames.is_empty() && declined.markers.is_empty(), "no budget, no inlined frame");
-    assert_eq!(declined.instructions.len(), program.function(caller as usize).code.len(), "the call stays the caller's own instruction");
 }

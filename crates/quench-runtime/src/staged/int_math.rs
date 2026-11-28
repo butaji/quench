@@ -3,6 +3,6 @@
 
 /// `Math.imul` and Wasm's 32-bit lane products: the wrapping product of two int32 values.
 #[inline(always)]
-pub(crate) fn int_multiply(left: i32, right: i32) -> i32 {
+pub fn int_multiply(left: i32, right: i32) -> i32 {
     left.wrapping_mul(right)
 }

@@ -131,8 +131,8 @@ impl Vm {
                     }
                     if let Some(atom) = key_atom
                         && vm
-                            .object_data(current)
-                            .is_some_and(Object::is_module_namespace)
+                            .heap.object(current)
+                            .is_some_and(|object| object.is_module_namespace())
                     {
                         vm.evaluate_deferred_namespace_for_key(
                             p,
@@ -173,7 +173,7 @@ impl Vm {
     /// `None`, as does any other object: [[GetOwnProperty]] answers them.
     pub(super) fn shape_own_presence(&self, object: Value, atom: crate::bytecode::Atom) -> Option<bool> {
         if self.atom_class(atom).contains(super::object::AtomClass::ARRAY_INDEX)
-            || self.heap.ordinary_object(object)?.is_arguments_object()
+            || self.heap.ordinary_view(object)?.is_arguments_object()
         {
             return None;
         }
@@ -273,7 +273,7 @@ impl Vm {
         if prototype.is_deleted() {
             return None;
         }
-        ProtoLink::object_record(prototype.direct_object_index()?)
+        ProtoLink::object_granule_link(prototype.direct_object_index()?.granule())
     }
 
     /// `proved_instanceof` under a current proof of a primitive (`false`, as there) or a direct
@@ -287,10 +287,10 @@ impl Vm {
             return None;
         }
         let target = proof.1;
-        let Some(record) = value.direct_object_index() else {
+        if value.direct_object_index().is_none() {
             return (!value.is_heap() || value.direct_string_index().is_some()).then_some(false);
-        };
-        let mut object = self.heap.object_record_by_id(record);
+        }
+        let mut object = self.heap.direct_object_view(value)?;
         loop {
             let link = object.proto_link();
             if link == target {
@@ -299,7 +299,7 @@ impl Vm {
             if link == ProtoLink::NULL {
                 return Some(false);
             }
-            object = self.heap.object_record_by_id(link.object_record_id()?);
+            object = self.heap.object_view_by_granule(link.object_granule()?);
         }
     }
 
@@ -358,7 +358,7 @@ impl Vm {
     /// The object of `value`, a heap object other than a proxy, whose prototype link
     /// `[[GetPrototypeOf]]` reads without running guest code.
     #[inline(always)]
-    pub(super) fn ordinary_link_holder(&self, value: Value) -> Option<&crate::heap::Object> {
+    pub(super) fn ordinary_link_holder(&self, value: Value) -> Option<ObjectRef<'_>> {
         if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
             return None;
         }
@@ -385,7 +385,7 @@ impl Vm {
                 if !self.shape_is_dictionary(shape) {
                     self.instanceof_constructor_layouts[instanceof_layout_index(shape)] = Some((shape, slot));
                 }
-                self.heap.property_get(self.object_data(constructor)?, slot)?
+                self.heap.property_get_ref(self.heap.object(constructor)?, slot)?
             }
         };
         if !self.inherits_native_has_instance(holder) {
@@ -400,12 +400,9 @@ impl Vm {
         // One cell lookup per link: a proxy anywhere on the chain needs the full algorithm.
         let mut current = value;
         loop {
-            let next = match self.heap.object_record(current) {
-                Some(object) => object.proto(),
-                None => match self.heap.get(current) {
-                    Some(Cell::Proxy { .. }) => return None,
-                    _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
-                },
+            let next = match self.heap.get(current) {
+                Some(Cell::Proxy { .. }) => return None,
+                _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
             };
             if next.is_null() {
                 return Some(false);
@@ -423,10 +420,10 @@ impl Vm {
     /// leaves any other case (a key a side-table descriptor holds, a namespace, a proxy, an
     /// exotic object, a primitive operand) to the general path.
     pub fn plain_in(&mut self, op: u32, key: Value, object: Value) -> Option<bool> {
-        if op != oxc_ast::ast::BinaryOperator::In as u32 || !self.heap.is_string(key) {
+        if op != crate::operator::BinaryOperator::In as u32 || !self.heap.is_string(key) {
             return None;
         }
-        self.heap.ordinary_object(object)?;
+        self.heap.ordinary_view(object)?;
         let atom = self.string_key_atom(key)?;
         if !self.plain_named_key(atom) {
             return None;
@@ -447,7 +444,7 @@ impl Vm {
     fn plain_in_chain(&self, object: Value, property: PropertyKey) -> Option<bool> {
         let mut current = object;
         loop {
-            let data = self.heap.ordinary_object(current)?;
+            let data = self.heap.ordinary_view(current)?;
             if data.is_module_namespace() || data.deferred_module().is_some() {
                 return None;
             }
@@ -470,7 +467,7 @@ impl Vm {
     #[inline]
     pub(super) fn proved_has(&mut self, object: Value, key: PropertyKey) -> Option<bool> {
         use super::symbol_load_proof::SymbolLoadAnswer;
-        let data = self.heap.ordinary_object(object)?;
+        let data = self.heap.ordinary_view(object)?;
         let (layout, side) = (data.layout_id(), data.has_side_descriptors());
         match self.symbol_load_proofs.answer(layout, key) {
             Some(SymbolLoadAnswer::Own(_)) => Some(true),
@@ -489,7 +486,7 @@ impl Vm {
     /// other operator or a case the full algorithm must decide.
     #[inline(always)]
     pub fn instanceof_truthy(&mut self, op: u32, left: Value, right: Value) -> Option<bool> {
-        if op != oxc_ast::ast::BinaryOperator::Instanceof as u32 {
+        if op != crate::operator::BinaryOperator::Instanceof as u32 {
             return None;
         }
         self.ordinary_instanceof(left, right)

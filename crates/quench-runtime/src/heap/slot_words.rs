@@ -23,7 +23,7 @@ impl Heap {
     /// owners hold the same types (`encodings_match`). `false`, before any effect, for a source
     /// whose values are not one compact wide run.
     pub(crate) fn copy_slot_words(&mut self, target: Value, source: Value, shape: u32) -> bool {
-        let Some(source_vector) = self.object(source).map(Object::properties) else {
+        let Some(source_vector) = self.object(source).and_then(|object| object.record_only()).map(|record| record.properties()) else {
             return false;
         };
         let len = self.properties.shape_length(shape);
@@ -32,6 +32,7 @@ impl Heap {
             || !source_vector.has_compact_range()
             || source_vector.is_narrow()
             || self.object(target).is_none()
+            || self.live_class_cell(target).is_some()
         {
             return false;
         }

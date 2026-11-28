@@ -153,7 +153,6 @@ fn eval_binding_declarations_survive_residual_round_trip() {
 /// A residual of one function with `code` and `source_positions`, the rest empty.
 fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::SourcePositions) -> ResidualProgram {
     ResidualProgram {
-        specialized: true,
         kind: crate::bytecode::ProgramKind::Script,
         module_requests: Vec::new(),
         module_imports: Vec::new(),
@@ -161,8 +160,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             declared_types: None,
         source_name: String::new(),
         source: None,
-        atoms: AtomTable::default(),
-        constants: vec![].into(),
+        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
         functions: vec![Function {
             parent: None,
             name: None,
@@ -230,6 +228,7 @@ fn one_function_program(code: Vec<Instr>, source_positions: crate::bytecode::Sou
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
+            host_calls_result_once: false,
             closure_reads: None,
             wasm_lazy: None,
     }
@@ -275,7 +274,6 @@ fn decoder_rejects_inconsistent_source_position_tables() {
 #[test]
 fn decoder_rejects_runtime_abi_mismatch_before_tables() {
     let program = ResidualProgram {
-        specialized: true,
         kind: crate::bytecode::ProgramKind::Script,
         module_requests: Vec::new(),
         module_imports: Vec::new(),
@@ -283,8 +281,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             declared_types: None,
         source_name: String::new(),
         source: None,
-        atoms: AtomTable::default(),
-        constants: vec![].into(),
+        record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
         functions: vec![Function {
             parent: None,
             name: None,
@@ -352,6 +349,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
+            host_calls_result_once: false,
             closure_reads: None,
             wasm_lazy: None,
     };
@@ -507,33 +505,23 @@ fn closure_reads_survive_round_trip() {
 #[test]
 fn scoped_binding_sites_survive_residual_round_trip() {
     let source = "for (let x of [1]) { with ({}) { x++; } }";
-    for generic in [false, true] {
-        let program = if generic {
-            crate::Engine::specialize_unspecialized(source, "binding-sites.js")
-        } else {
-            crate::Engine::specialize(source, "binding-sites.js")
-        }
-        .unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "quench-binding-sites-{}-{generic}",
-            std::process::id()
-        ));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        std::fs::remove_file(path).unwrap();
-        assert!(
-            program
-                .functions
-                .iter()
-                .any(|function| !function.binding_sites.is_empty())
-        );
-        for (before, after) in program.functions.iter().zip(&decoded.functions) {
-            assert_eq!(before.binding_sites, after.binding_sites);
-        }
-        crate::Runtime::new(crate::SystemHost)
-            .execute(&decoded)
-            .unwrap();
+    let program = crate::Engine::specialize(source, "binding-sites.js").unwrap();
+    let path = std::env::temp_dir().join(format!("quench-binding-sites-{}", std::process::id()));
+    program.write_binary(&path).unwrap();
+    let decoded = ResidualProgram::read_binary(&path).unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        program
+            .functions
+            .iter()
+            .any(|function| !function.binding_sites.is_empty())
+    );
+    for (before, after) in program.functions.iter().zip(&decoded.functions) {
+        assert_eq!(before.binding_sites, after.binding_sites);
     }
+    crate::Runtime::new(crate::SystemHost)
+        .execute(&decoded)
+        .unwrap();
 }
 
 #[test]
@@ -584,25 +572,19 @@ fn decoder_rejects_invalid_binding_site_metadata() {
 fn fused_field_source_locations_survive_binary_round_trip_and_validate_coordinates() {
     // The stable Node oracle reports columns 87 and 89 for these two distinct gets.
     let source = "const positions=[];Error.prepareStackTrace=(_,frames)=>frames.find(site=>site.getFunctionName()==='read').getColumnNumber();\nconst leaf={get b(){positions.push(new Error().stack);return 1}};\nclass Holder{get a(){positions.push(new Error().stack);return leaf}read(){return this.a.b}}\nnew Holder().read();if(JSON.stringify(positions)!=='[87,89]')throw Error('lost field source locations');";
-    for generic in [false, true] {
-        let program = if generic {
-            crate::Engine::specialize_unspecialized(source, "fused-field-binary.js")
-        } else {
-            crate::Engine::specialize(source, "fused-field-binary.js")
-        }.unwrap();
-        let path = std::env::temp_dir().join(format!("quench-fused-source-{}-{generic}", std::process::id()));
-        program.write_binary(&path).unwrap();
-        let decoded = ResidualProgram::read_binary(&path).unwrap();
-        crate::Runtime::new(crate::SystemHost).execute(&decoded).unwrap();
-        let site = program.field_sites.iter().position(|site| site.second.is_some()).expect("nested field site");
-        for offset in [u32::MAX - 1] {
-            let mut invalid = program.clone();
-            invalid.field_sites[site].sources[0] = offset;
-            invalid.write_binary(&path).unwrap();
-            assert!(ResidualProgram::read_binary(&path).unwrap_err().contains("invalid field site"));
-        }
-        std::fs::remove_file(path).unwrap();
+    let program = crate::Engine::specialize(source, "fused-field-binary.js").unwrap();
+    let path = std::env::temp_dir().join(format!("quench-fused-source-{}", std::process::id()));
+    program.write_binary(&path).unwrap();
+    let decoded = ResidualProgram::read_binary(&path).unwrap();
+    crate::Runtime::new(crate::SystemHost).execute(&decoded).unwrap();
+    let site = program.field_sites.iter().position(|site| site.second.is_some()).expect("nested field site");
+    for offset in [u32::MAX - 1] {
+        let mut invalid = program.clone();
+        invalid.field_sites[site].sources[0] = offset;
+        invalid.write_binary(&path).unwrap();
+        assert!(ResidualProgram::read_binary(&path).unwrap_err().contains("invalid field site"));
     }
+    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -615,7 +597,6 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 0,
         column_offset: 0,
-        call_sites: Default::default(),
         layout: Default::default(),
     };
     for (index, expected) in ["a", "b", "c", "d", "e", ""].into_iter().enumerate() {
@@ -629,7 +610,6 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: 0,
         line_offset: 1,
         column_offset: 2,
-        call_sites: Default::default(),
         layout: Default::default(),
     };
     assert_eq!(wrapped.source_line(1), Some("first"));
@@ -645,7 +625,6 @@ fn source_lines_share_javascript_boundaries_and_preserve_wrapper_origins() {
         base: prefix.len() as u32,
         line_offset,
         column_offset,
-        call_sites: Default::default(),
         layout: Default::default(),
     };
     assert_eq!(retained.source_line(1), Some("first"));

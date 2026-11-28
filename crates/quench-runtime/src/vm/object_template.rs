@@ -23,7 +23,7 @@
 //! (`remap_object_template_shapes`).
 use super::property_key::PropertyKey;
 use super::Vm;
-use crate::heap::RootId;
+use crate::heap::{ObjectRef, RootId};
 use crate::value::Value;
 use smallvec::SmallVec;
 
@@ -130,7 +130,7 @@ impl Vm {
                     if self.shape_may_have_accessors(shape) && self.slot_attributes(data, slot)?.accessor {
                         return None;
                     }
-                    self.heap.property_get(data, slot)?
+                    self.heap.property_get_ref(data, slot)?
                 }
                 None => Value::DELETED,
             };
@@ -208,7 +208,7 @@ impl Vm {
             .map(|layout| {
                 self.template_layout_object(layout.object)
                     .filter(|object| object.was_used_as_prototype())
-                    .and_then(crate::heap::Object::watched_subject)
+                    .and_then(|object| object.watched_subject())
             })
             .collect::<Option<SmallVec<[u32; INLINE_COPIES]>>>()?;
         Some(self.heap.dependencies().subjects_cell(&subjects))
@@ -234,7 +234,7 @@ impl Vm {
                 return true;
             };
             self.template_layout_object(probe.holder)
-                .and_then(|object| self.heap.property_get(object, slot as usize))
+                .and_then(|object| self.heap.property_get_ref(object, slot as usize))
                 == Some(probe.value)
         })
     }
@@ -274,7 +274,7 @@ impl Vm {
         let mut fresh = Vec::new();
         for slot in 0..len {
             let (object, other) = (self.heap.object(template)?, self.heap.object(witness)?);
-            let (value, paired) = (self.heap.property_get(object, slot)?, self.heap.property_get(other, slot)?);
+            let (value, paired) = (self.heap.property_get_ref(object, slot)?, self.heap.property_get_ref(other, slot)?);
             let parameter = parameters.iter().any(|&parameter| parameter as usize == slot);
             if value != paired && !parameter {
                 fresh.push((u32::try_from(slot).ok()?, self.template_node(value, paired, &[], nodes, seen)?));
@@ -317,9 +317,9 @@ impl Vm {
     }
 
     /// The ordinary object part of `value`: a function's own, else the object's.
-    fn template_layout_object(&self, value: Value) -> Option<&crate::heap::Object> {
+    fn template_layout_object(&self, value: Value) -> Option<ObjectRef<'_>> {
         match self.heap.function(value) {
-            Some(function) => Some(&function.object),
+            Some(function) => Some(ObjectRef::Record(&function.object)),
             None => self.heap.object(value),
         }
     }

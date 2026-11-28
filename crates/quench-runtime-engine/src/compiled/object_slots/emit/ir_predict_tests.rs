@@ -22,6 +22,7 @@ use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::staged::{self as staged, Domain, NegativeZero, NumberOperation, Overflow};
 use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary};
 use std::collections::{BTreeSet, VecDeque};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The generated predictions, from this crate's manifest directory.
 const PREDICTIONS: &str = "../quench-tier-corpus/ir_predict.txt";
@@ -114,7 +115,7 @@ fn compiled(isa: &dyn cranelift_codegen::isa::TargetIsa, operation: Option<Numbe
     builder.switch_to_block(entry);
     let [left, right, result] = builder.block_params(entry).try_into().unwrap();
     let miss = builder.create_block();
-    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None, payload: None };
+    let mut stage = Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
     let mut frame = EmitNumberFrame { values: [Some((left, kinds[0])), Some((right, kinds[1])), None], miss };
     let word = match operation {
         Some(operation) => defined(&mut stage, &mut frame, operation)?,

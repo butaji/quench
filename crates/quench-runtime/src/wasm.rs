@@ -31,9 +31,12 @@ pub const INDEX_GROW_FAILURE: i64 = -1;
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
 mod control;
 mod inline;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
+#[quench_macros::test_visible]
 pub(crate) use inline::COMPILED_CALLS_KEPT_FOR_TEST;
 mod scalar;
+mod scalar_types;
+mod memory_ops;
 mod types;
 pub use types::WasmTypes;
 pub mod simd;
@@ -42,7 +45,7 @@ pub use scalar::{CanonicalSignature, ScalarBits, V128_BYTES, WasmSignatures};
 pub use scalar::{
     WasmHostSignature,
     WasmCallableType, WasmFunctionBody, WasmFunctionImport, WasmReferenceKind, WasmSignature,
-    WasmType, WasmValue,
+    WasmType, WasmValue, WasmValueScalarExt,
 };
 pub mod conversion;
 pub mod float;
@@ -56,37 +59,6 @@ use control::{Control, Reachability};
 use conversion::ScalarConversionOperator;
 use float::{F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator};
 use integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};
-
-impl std::fmt::Display for WasmTrap {
-    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        output.write_str(match self {
-            Self::UndefinedElement => "undefined element",
-            Self::UninitializedElement => "uninitialized element",
-            Self::NullReference => "null reference",
-            Self::NullFunctionReference => "null function reference",
-            Self::NullArrayReference => "null array reference",
-            Self::NullExceptionReference => "null exception reference",
-            Self::NullDescriptorReference => "null descriptor reference",
-            Self::ArrayTooLarge => "array too large",
-            Self::NullStructReference => "null structure reference",
-            Self::NullI31Reference => "null i31 reference",
-            Self::CastFailure => "cast failure",
-            Self::DescriptorCastFailure => "descriptor cast failure",
-            Self::IndirectCallTypeMismatch => "indirect call type mismatch",
-            Self::OutOfBoundsArray => "out of bounds array access",
-            Self::OutOfBoundsTable => "out of bounds table access",
-            Self::WaitOnUnsharedMemory => "atomic wait on unshared memory",
-            Self::TooManyWaiters => "too many atomic waiters",
-            Self::UnalignedAtomic => "unaligned atomic",
-            Self::OutOfBoundsMemory => "out of bounds memory access",
-            Self::Unreachable => "unreachable",
-            Self::CallStackExhausted => "call stack exhausted",
-            Self::IntegerDivideByZero => "integer divide by zero",
-            Self::IntegerOverflow => "integer overflow",
-            Self::InvalidConversionToInteger => "invalid conversion to integer",
-        })
-    }
-}
 
 const ZERO_LOCAL_CONSTANT: u32 = 0;
 const VOID_RESULT_CONSTANT: u32 = 1;
@@ -144,6 +116,7 @@ pub struct WasmCustomSection {
 }
 
 /// A typed entry derived from a module's canonical signature table.
+#[quench_macros::test_visible]
 #[derive(Clone)]
 pub struct WasmFunction {
     pub(crate) module: WasmModule,
@@ -232,6 +205,7 @@ pub struct WasmExport {
 }
 
 /// Rooted instance bindings owned by one Runtime. Release with `release_wasm`.
+#[quench_macros::test_visible]
 pub struct WasmInstance {
     pub(crate) module: WasmModule,
     pub(crate) environment: crate::RootId,
@@ -742,11 +716,11 @@ impl Engine {
                 globals: globals.len(),
             },
             &signature_pool,
-            inline::leaf_budget(mode, || {
+            inline::leaf_budget(crate::vm::tier_policy::wasm_module_inlines_leaves(mode, || {
                 (0..sources.count())
                     .map(|index| sources.operators(index).map_or(0, |operators| operators.into_iter().count()))
                     .sum()
-            }),
+            })),
         )?;
         let bindings = ModuleBindings { name, globals, memories, data, tables, elements, tags };
         for position in 0..sources.count() {
@@ -803,7 +777,6 @@ impl Engine {
             })
         });
         let program = ResidualProgram {
-            specialized: false,
             kind: ProgramKind::Wasm,
             module_requests: vec![],
             module_imports: vec![],
@@ -811,8 +784,7 @@ impl Engine {
             declared_types: None,
             source_name: name.into(),
             source: None,
-            atoms: AtomTable::default(),
-            constants: program_constants.into(),
+            record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: program_constants.into(), ..Default::default() },
             functions: slots.into(),
             cache_sites: Default::default(),
             method_sites: vec![].into(),
@@ -827,6 +799,7 @@ impl Engine {
             validated: Default::default(),
             undefined_constant: Default::default(),
             load_encoding: Default::default(),
+            host_calls_result_once: false,
             closure_reads: None,
             wasm_lazy,
         };

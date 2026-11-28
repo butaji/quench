@@ -1,10 +1,10 @@
 //! Tier differential: random terminating programs run in the interpreter and under the JIT
 //! must end identically. The interpreter is the semantic source, so any difference is a tier
 //! bug. Hot loops push each generated function past the tier thresholds, and late argument
-//! type flips make compiled code leave through its guards. A `tier-stress` build compiles at
-//! the first chance as well. `TIER_FUZZ_SEED` and `TIER_FUZZ_CASES` widen a local campaign.
+//! type flips make compiled code leave through its guards. `TIER_FUZZ_SEED` and `TIER_FUZZ_CASES` widen a local campaign.
 
-use quench_runtime::{Engine, ExecutionMode, MemoryPolicy, Runtime, SystemHost, TierEvent};
+use quench_runtime::vm::tier_policy::PredictedTier;
+use quench_runtime::{Engine, ExecutionMode, MemoryPolicy, Runtime, SystemHost};
 use std::fmt::Write;
 
 /// Calls of each generated function: past every tier's warm-up in `tier_policy`.
@@ -138,9 +138,10 @@ fn program(seed: u64) -> String {
     out
 }
 
-/// How a run ended, and the lane bodies it entered: a tier that entered none agrees with anything.
-fn run(source: &str, mode: ExecutionMode) -> (String, u64) {
-    let mut entered = 0;
+/// How a run ended, and whether the load-time policy picks a compiled tier for some function of the program: a tier
+/// the policy never picks agrees with anything.
+fn run(source: &str, mode: ExecutionMode) -> (String, bool) {
+    let mut predicted_compiled = false;
     let outcome = Engine::specialize(source, "tier-differential.js")
         .map_err(|errors| format!("{errors:?}"))
         .and_then(|program| {
@@ -148,10 +149,10 @@ fn run(source: &str, mode: ExecutionMode) -> (String, u64) {
             runtime.set_memory_policy(MemoryPolicy::Throughput);
             runtime.set_execution_mode(mode);
             let outcome = runtime.execute(&program).map_err(|error| error.to_string());
-            entered = runtime.tier_events().count(TierEvent::Entered);
+            predicted_compiled = runtime.predicted_tiers().iter().any(|tier| !matches!(tier, PredictedTier::Interpreter));
             outcome
         });
-    (format!("{outcome:?}"), entered)
+    (format!("{outcome:?}"), predicted_compiled)
 }
 
 fn environment(name: &str, default: u64) -> u64 {
@@ -162,18 +163,18 @@ fn environment(name: &str, default: u64) -> u64 {
 fn compiled_tiers_end_as_the_interpreter_does() {
     let first = environment("TIER_FUZZ_SEED", 1);
     let cases = environment("TIER_FUZZ_CASES", DEFAULT_CASES);
-    let mut entered = 0;
+    let mut engaged = false;
     let divergent: Vec<String> = (first..first + cases)
         .filter_map(|seed| {
             let source = program(seed);
             let (interpreted, _) = run(&source, ExecutionMode::Interpreted);
-            let (compiled, bodies) = run(&source, ExecutionMode::Compiled);
-            entered += bodies;
+            let (compiled, predicted) = run(&source, ExecutionMode::Compiled);
+            engaged |= predicted;
             (interpreted != compiled).then(|| format!("seed {seed}:\n  interpreter {interpreted}\n  jit {compiled}\n{source}"))
         })
         .collect();
     assert!(divergent.is_empty(), "{} of {cases} programs diverge\n{}", divergent.len(), divergent.join("\n"));
-    assert!(entered > 0, "the compiled tier entered no lane body in {cases} programs: the campaign compared the interpreter with itself");
+    assert!(engaged, "the load-time policy picked no compiled tier in {cases} programs: the campaign compared the interpreter with itself");
 }
 
 /// Regressions the campaigns found, kept as fixed programs.

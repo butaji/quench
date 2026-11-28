@@ -3,33 +3,17 @@
 //! position is found in source on the dynamic error path. Native images freeze the same
 //! descriptions before publication, so their error path needs no syntax frontend.
 
-use oxc_ast::ast::{
-    ArrayExpressionElement, CallExpression, ChainElement, Comment, Expression, MemberExpression,
-    NewExpression, SimpleAssignmentTarget,
-};
-use oxc_ast_visit::Visit;
-use oxc_parser::{ParseOptions, Parser, Token, Kind, config::TokensParserConfig};
-use oxc_span::SourceType;
-
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)] use crate::staged::{OperationOperationRecordsExt};
 use super::Vm;
 use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
-use std::collections::BTreeMap;
-mod function_sites;
-#[cfg(feature = "source")]
-pub(crate) use function_sites::unfrozen_call_sites;
-
-/// What `CallPrinter` prints for an operand it does not render.
-const INTERMEDIATE_VALUE: &str = "(intermediate value)";
-
-/// A nested call's arguments.
-const CALL_ARGUMENTS: &str = "(...)";
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// The message templates (V8 `kCalledNonCallable`, `kNotConstructor`).
 const NOT_A_FUNCTION: &str = " is not a function";
 const NOT_A_CONSTRUCTOR: &str = " is not a constructor";
-const CALL_SOURCE_GOALS: [SourceType; 2] = [SourceType::script(), SourceType::mjs()];
 
 /// The messages the call paths give a non-callable callee before its call site is known.
 pub const NOT_CALLABLE_MESSAGE: &str = "value is not callable";
@@ -80,11 +64,10 @@ impl Vm {
         }
         let template = if construct { NOT_A_CONSTRUCTOR } else { NOT_A_FUNCTION };
         let rendered = program
-            .source_offset(function as u32, pc)
+            .call_offset(function as u32, pc)
             .and_then(|offset| {
-                let source = program.source.as_ref()?;
                 let span = program.functions[function].header().source_span;
-                function_sites::call_site_callee(source, span, (offset, construct))
+                call_site_callee(program, span, (offset, construct))
             })
             .unwrap_or_else(|| self.default_call_site(value));
         Some(rendered + template)
@@ -118,7 +101,7 @@ impl Vm {
             if let Some(attributes) = self.property_attributes(holder, key) {
                 return (!attributes.accessor).then(|| self.own_property(holder, atom)).flatten();
             }
-            holder = match self.object_data(holder) {
+            holder = match self.heap.object(holder) {
                 Some(object) => object.proto(),
                 None => return Some(Value::UNDEFINED),
             };
@@ -160,33 +143,47 @@ fn call_kind(instruction: WideInstruction) -> Option<bool> {
 /// Freeze source-derived descriptions without opening or compiling lazy function bodies.
 /// A native-only build freezes them as it compiles; a dynamic one on their first read
 /// (`frozen_call_sites`) or before writing the program, so a load that raises no error
-/// parses its source once.
+/// parses its source once. A program without source freezes none.
 pub fn freeze_call_sites(program: &ResidualProgram) {
-    if let Some(source) = &program.source {
-        freeze_source_call_sites(source);
-    }
-}
-
-/// The call-site descriptions of `source`: frozen ones, or, in a dynamic build, those its
-/// text gives now. Native-only execution never reconstructs syntax on a diagnostic path.
-fn frozen_call_sites(source: &crate::bytecode::ProgramSource) -> Option<&[crate::bytecode::CallSiteDescription]> {
-    if crate::DYNAMIC_EXECUTION_ENABLED && let Some(routes) = crate::compile::source_routes::routes() {
-        (routes.freeze_call_sites)(source);
-    }
-    source.call_sites.get().map(|sites| &sites[..])
-}
-
-pub fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
-    source.call_sites.get_or_init(|| {
-        let mut found = CallSites::new();
-        for goal in CALL_SOURCE_GOALS.map(|goal| goal.with_typescript(source.typescript)) {
-            match parse_call_sites(source.text.as_ref(), goal, found) {
-                Ok((next, valid)) => { found = next; if valid { break; } }
-                Err(previous) => { found = previous; break; }
-            }
-        }
-        found.into_values().collect::<Vec<_>>().into()
+    program.call_sites.get_or_init(|| {
+        program.source.as_ref().map_or_else(Vec::new, crate::compile::call_sites::source_call_sites).into()
     });
+}
+
+/// Freezes the source offset of every call instruction (`ProgramRecord::call_pcs`), which a
+/// native image's error path reads in place of the position table. Needs the source's positions.
+pub fn freeze_call_pcs(program: &ResidualProgram) {
+    program.call_pcs.get_or_init(|| {
+        (0..program.function_count()).flat_map(move |function| {
+            program.function(function).instructions().enumerate()
+                .filter(|(_, instruction)| call_kind(*instruction).is_some())
+                .filter_map(move |(pc, _)| Some(crate::bytecode::CallPc {
+                    function: function as u32,
+                    pc: pc as u32,
+                    offset: program.source_offset(function as u32, pc as u32)?,
+                }))
+        }).collect::<Vec<_>>().into_boxed_slice()
+    });
+}
+
+impl ResidualProgram {
+    /// The source offset of the call instruction at `pc` of `function`: frozen (`freeze_call_pcs`),
+    /// or read from the position table while the program keeps it.
+    pub(crate) fn call_offset(&self, function: u32, pc: u32) -> Option<u32> {
+        match self.call_pcs.get() {
+            Some(calls) => calls.binary_search_by_key(&(function, pc), |call| (call.function, call.pc)).ok().map(|index| calls[index].offset),
+            None => self.source_offset(function, pc),
+        }
+    }
+}
+
+/// The call-site descriptions of `program`: frozen ones, or, in a dynamic build, those its
+/// text gives now. Native-only execution never reconstructs syntax on a diagnostic path.
+fn frozen_call_sites(program: &ResidualProgram) -> Option<&[crate::bytecode::CallSiteDescription]> {
+    if crate::DYNAMIC_EXECUTION_ENABLED && let Some(routes) = crate::compile::source_routes::routes() {
+        (routes.freeze_call_sites)(program);
+    }
+    program.call_sites.get().map(|sites| &sites[..])
 }
 
 /// The admitted source expression at an exact call position. Native-only execution
@@ -194,280 +191,34 @@ pub fn freeze_source_call_sites(source: &crate::bytecode::ProgramSource) {
 pub(super) fn source_expression(program: &ResidualProgram, line: u32, column: u32) -> Option<String> {
     let source = program.source.as_ref()?;
     let offset = source.byte_offset(crate::bytecode::SourcePosition { line, column })?;
-    let sites = frozen_call_sites(source)?;
+    let sites = frozen_call_sites(program)?;
     let index = sites.binary_search_by_key(&offset, |site| site.offset).ok()?;
     let span = sites[index].expression?;
     source.text.get(span.start as usize..span.end as usize).map(str::to_owned)
 }
 
-/// The calls V8 positions at an offset, by offset and kind: a call of a name at the name, a
-/// non-optional call of a named property at the property name, a construction at `new`, any
-/// other call at its argument list's `(`.
-type CallSites = BTreeMap<(u32, bool), crate::bytecode::CallSiteDescription>;
-
-fn parse_call_sites(source: &str, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
-    // Without the front end no source is parsed: the call sites stay as found.
-    if !cfg!(feature = "source") {
-        return Err(found);
+/// The callee text of the call at `site` of a function whose text is `span`. Before the
+/// program's call sites are frozen, a dynamic build reads them from the function's text alone
+/// (`compile::call_sites::unfrozen_call_sites`), so an error a load raises and catches costs
+/// its function, not its whole source.
+fn call_site_callee(program: &ResidualProgram, span: Option<crate::bytecode::SourceSpan>, site: (u32, bool)) -> Option<String> {
+    let lookup = |sites: &[crate::bytecode::CallSiteDescription]| {
+        sites.binary_search_by_key(&site, |found| (found.offset, found.construct)).ok().map(|index| sites[index].callee.clone())
+    };
+    if crate::DYNAMIC_EXECUTION_ENABLED && program.call_sites.get().is_none()
+        && let Some(source) = program.source.as_ref()
+        && let Some(routes) = crate::compile::source_routes::routes()
+        && let Some(callee) = (routes.unfrozen_call_sites)(source, span, site.0).and_then(|sites| lookup(&sites))
+    {
+        return Some(callee);
     }
-    // A data script's literal holds no call, and its tree takes several times its text: it
-    // is parsed blank, as its compilation parses it (`data_literal`).
-    let located = (!goal.is_typescript()).then(|| crate::compile::data_literal::locate(source)).flatten();
-    match located {
-        Some(literal) => parse_call_sites_in(source, &literal.substituted, Some(literal.start), goal, found),
-        None => parse_call_sites_in(source, source, None, goal, found),
-    }
-}
-
-/// `parse_call_sites` of `source` parsed as `text`, which blanks the data literal at `blank`;
-/// a literal that is not a top-level value is parsed as it is.
-fn parse_call_sites_in(source: &str, text: &str, blank: Option<u32>, goal: SourceType, found: CallSites) -> Result<(CallSites, bool), CallSites> {
-    // The parse arena compiles share: its pages go back when it is handed back, and a
-    // diagnostic's parse leaves none of the malloc heap behind.
-    let allocator = crate::compile::lazy_bodies::sized_arena(text);
-    let options = ParseOptions { allow_return_outside_function: true, ..ParseOptions::default() };
-    let parsed = Parser::new(&allocator, text, goal).with_options(options).with_config(TokensParserConfig).parse();
-    if blank.is_some_and(|start| !crate::compile::data_literal::is_top_level_value(&parsed.program, start)) {
-        drop(parsed);
-        return parse_call_sites_in(source, source, None, goal, found);
-    }
-    if crate::compile::stack::validate_parsed(&parsed).is_err() { return Err(found); }
-    let mut finder = CallFinder { source, comments: &parsed.program.comments, found };
-    finder.visit_program(&parsed.program);
-    let mut found = finder.found;
-    freeze_expressions(source, &parsed.tokens, &mut found);
-    Ok((found, parsed.diagnostics.is_empty()))
-}
-
-/// Acorn's `name` label includes contextual keywords, `await`, `yield` and `enum`.
-fn expression_name(kind: Kind) -> bool {
-    kind.is_identifier() || matches!(kind, Kind::Await | Kind::Yield | Kind::Enum)
-}
-
-fn member_access(kind: Kind) -> bool {
-    matches!(kind, Kind::Dot | Kind::QuestionDot | Kind::LBrack | Kind::RBrack)
-}
-
-/// Node 26's `getFirstExpression`: remember a simple member prefix before the
-/// call position, then stop at the first balanced argument list on that line.
-/// OXC owns tokenization; line prefixes and closing pairs are processed once,
-/// even when thousands of calls share a minified line.
-fn freeze_expressions(source: &str, tokens: &[Token], sites: &mut CallSites) {
-    let starts: Vec<_> = crate::bytecode::source_line_starts(source).collect();
-    let mut sites = sites.values_mut().peekable();
-    let mut closes = Vec::new();
-    let mut pending = Vec::new();
-    let mut endings = Vec::new();
-    let mut semicolons = Vec::new();
-    while let Some(site) = sites.peek() {
-        let line = starts.partition_point(|start| *start <= site.offset as usize).checked_sub(1).expect("source begins at zero");
-        let start = starts[line];
-        let text = source[start..starts.get(line + 1).copied().unwrap_or(source.len())]
-            .trim_end_matches(['\r', '\n', '\u{2028}', '\u{2029}']);
-        let end = start + text.len();
-        let first = tokens.partition_point(|token| (token.start() as usize) < start);
-        let last = tokens.partition_point(|token| (token.start() as usize) < end);
-        let tokens = &tokens[first..last];
-        closes.clear();
-        closes.resize(tokens.len(), None);
-        pending.clear();
-        for (index, token) in tokens.iter().enumerate() {
-            match token.kind() {
-                Kind::LParen => pending.push(index),
-                Kind::RParen => if let Some(open) = pending.pop() { closes[open] = Some(token.end()); },
-                _ => {},
-            }
-        }
-        endings.clear();
-        endings.resize(tokens.len() + 1, None);
-        semicolons.clear();
-        semicolons.resize(tokens.len() + 1, None);
-        for index in (0..tokens.len()).rev() {
-            endings[index] = if tokens[index].kind() == Kind::LParen { closes[index] } else { endings[index + 1] };
-            semicolons[index] = if tokens[index].kind() == Kind::Semicolon { Some(tokens[index].start()) } else { semicolons[index + 1] };
-        }
-        let mut cursor = 0;
-        let mut previous_name = None;
-        let mut member_start = None;
-        while sites.peek().is_some_and(|site| (site.offset as usize) < starts.get(line + 1).copied().unwrap_or(source.len() + 1)) {
-            let site = sites.next().expect("line has a site");
-            while cursor < tokens.len() && tokens[cursor].start() < site.offset {
-                let token = tokens[cursor];
-                let kind = token.kind();
-                cursor += 1;
-                if kind == Kind::Semicolon { member_start = None; continue; }
-                if member_access(kind) && previous_name.is_some() {
-                    member_start = member_start.or(previous_name);
-                } else if !member_access(kind) && !expression_name(kind) && kind != Kind::Str && !kind.is_number() {
-                    member_start = None;
-                }
-                previous_name = expression_name(kind).then_some(token.start());
-            }
-            let finish = endings[cursor].unwrap_or(end as u32).min(end as u32);
-            // Node's semicolon terminator converts its token object to zero;
-            // that yields no source expression, rather than the following statement.
-            site.expression = if semicolons[cursor].is_some_and(|semicolon| semicolon < finish) { None }
-                else {
-                    let begin = member_start.unwrap_or(site.offset);
-                    (begin < finish).then_some(crate::bytecode::SourceSpan { start: begin, end: finish })
-                };
-        }
-    }
-}
-
-struct CallFinder<'s> {
-    source: &'s str,
-    comments: &'s [Comment],
-    found: CallSites,
-}
-
-impl CallFinder<'_> {
-    fn call_position(&self, call: &CallExpression<'_>) -> u32 {
-        crate::compile::source_syntax::call_offset(call, self.source, self.comments)
-    }
-
-    fn observe(&mut self, offset: u32, construct: bool, callee: &Expression<'_>) {
-        self.found.entry((offset, construct)).or_insert_with(|| crate::bytecode::CallSiteDescription {
-            offset, construct, callee: find(callee, true), expression: None,
-        });
-    }
-}
-
-impl<'a> Visit<'a> for CallFinder<'_> {
-    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
-        let offset = self.call_position(call);
-        self.observe(offset, false, &call.callee);
-        oxc_ast_visit::walk::walk_call_expression(self, call);
-    }
-
-    fn visit_new_expression(&mut self, new: &NewExpression<'a>) {
-        self.observe(new.span.start, true, &new.callee);
-        oxc_ast_visit::walk::walk_new_expression(self, new);
-    }
-}
-
-/// `CallPrinter::Find` once the call is found: `expression` printed, or the intermediate
-/// value when it prints nothing or is not printed.
-fn find(expression: &Expression<'_>, print: bool) -> String {
-    let printed = if print { render(expression) } else { String::new() };
-    if printed.is_empty() { INTERMEDIATE_VALUE.to_owned() } else { printed }
-}
-
-/// `CallPrinter`'s rendering of `expression`; empty when it prints nothing.
-fn render(expression: &Expression<'_>) -> String {
-    let expression = expression.get_inner_expression();
-    if let Some(member) = expression.as_member_expression() {
-        return render_member(member);
-    }
-    match expression {
-        Expression::Identifier(identifier) => identifier.name.to_string(),
-        Expression::ThisExpression(_) => "this".into(),
-        Expression::Super(_) => "super".into(),
-        Expression::ChainExpression(chain) => match &chain.expression {
-            ChainElement::CallExpression(call) => format!("{}{CALL_ARGUMENTS}", find(&call.callee, true)),
-            ChainElement::TSNonNullExpression(inner) => render(&inner.expression),
-            element => element.as_member_expression().map_or_else(String::new, render_member),
-        },
-        Expression::CallExpression(call) => format!("{}{CALL_ARGUMENTS}", find(&call.callee, true)),
-        // A nested construction's callee is not printed.
-        Expression::NewExpression(_) => INTERMEDIATE_VALUE.into(),
-        Expression::SequenceExpression(sequence) => {
-            let parts: Vec<String> = sequence.expressions.iter().map(|part| find(part, true)).collect();
-            format!("({})", parts.join(" , "))
-        }
-        Expression::BinaryExpression(binary) => {
-            format!("({} {} {})", find(&binary.left, true), binary.operator.as_str(), find(&binary.right, true))
-        }
-        Expression::LogicalExpression(logical) => {
-            format!("({} {} {})", find(&logical.left, true), logical.operator.as_str(), find(&logical.right, true))
-        }
-        Expression::UnaryExpression(unary) => {
-            let operator = unary.operator.as_str();
-            let space = if operator.chars().all(char::is_alphabetic) { " " } else { "" };
-            format!("({operator}{space}{})", find(&unary.argument, true))
-        }
-        Expression::UpdateExpression(update) => {
-            let target = render_simple_target(&update.argument);
-            let operator = update.operator.as_str();
-            if update.prefix { format!("({operator}{target})") } else { format!("({target}{operator})") }
-        }
-        Expression::StringLiteral(literal) => format!("\"{}\"", literal.value),
-        Expression::NumericLiteral(literal) => crate::number_to_string::format(literal.value),
-        Expression::BooleanLiteral(literal) => literal.value.to_string(),
-        Expression::NullLiteral(_) => "null".into(),
-        Expression::ArrayExpression(array) => {
-            let parts: Vec<String> = array
-                .elements
-                .iter()
-                .map(|element| match element {
-                    ArrayExpressionElement::Elision(_) => String::new(),
-                    ArrayExpressionElement::SpreadElement(spread) => format!("(...{})", find(&spread.argument, true)),
-                    element => element.as_expression().map_or_else(String::new, |value| find(value, true)),
-                })
-                .collect();
-            format!("[{}]", parts.join(","))
-        }
-        // Each operand is visited without printing (`CallPrinter::VisitConditional`).
-        Expression::ConditionalExpression(_) => INTERMEDIATE_VALUE.repeat(3),
-        // The target prints; the value is not visited for printing.
-        Expression::AssignmentExpression(assignment) => assignment
-            .left
-            .as_simple_assignment_target()
-            .map_or_else(String::new, render_simple_target),
-        Expression::RegExpLiteral(literal) => format!("/{}/{}", literal.regex.pattern.text, literal.regex.flags),
-        // A template without substitutions is a string literal to V8; one with them prints
-        // its substitutions.
-        Expression::TemplateLiteral(template) if template.expressions.is_empty() => template
-            .quasis
-            .first()
-            .and_then(|quasi| quasi.value.cooked)
-            .map_or_else(String::new, |cooked| format!("\"{cooked}\"")),
-        Expression::TemplateLiteral(template) => {
-            template.expressions.iter().map(|expression| find(expression, true)).collect()
-        }
-        Expression::ObjectExpression(object) => {
-            format!("{{{}}}", INTERMEDIATE_VALUE.repeat(object.properties.len()))
-        }
-        _ => String::new(),
-    }
-}
-
-/// A member: `object.name` for a name or string key, `object[key]` for any other key.
-fn render_member(member: &MemberExpression<'_>) -> String {
-    let dot = |optional: bool| if optional { "?." } else { "." };
-    match member {
-        MemberExpression::StaticMemberExpression(member) => {
-            format!("{}{}{}", find(&member.object, true), dot(member.optional), member.property.name)
-        }
-        MemberExpression::ComputedMemberExpression(member) => match &member.expression {
-            Expression::StringLiteral(key) => {
-                format!("{}{}{}", find(&member.object, true), dot(member.optional), key.value)
-            }
-            key => format!(
-                "{}{}[{}]",
-                find(&member.object, true),
-                if member.optional { "?." } else { "" },
-                find(key, true)
-            ),
-        },
-        MemberExpression::PrivateFieldExpression(member) => {
-            let open = if member.optional { "?.[" } else { "[" };
-            format!("{}{open}#{}]", find(&member.object, true), member.field.name)
-        }
-    }
-}
-
-/// An update's target, printed as a member or name.
-fn render_simple_target(target: &SimpleAssignmentTarget<'_>) -> String {
-    match target {
-        SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => identifier.name.to_string(),
-        target => target.as_member_expression().map_or_else(|| INTERMEDIATE_VALUE.to_owned(), render_member),
-    }
+    lookup(frozen_call_sites(program)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn assertion_expression_projection_follows_node_token_boundaries() {
@@ -486,7 +237,7 @@ mod tests {
             let program = crate::Engine::specialize(text, "assertion-source.js").unwrap();
             freeze_call_sites(&program);
             let source = program.source.as_ref().unwrap();
-            let site = source.call_sites.get().expect("facts are frozen from source").iter()
+            let site = program.call_sites.get().expect("facts are frozen from source").iter()
                 .find(|site| site.offset as usize == text.find(position).unwrap())
                 .expect("assertion call");
             let actual = site.expression.map(|span| &source.text[span.start as usize..span.end as usize]);
@@ -494,7 +245,7 @@ mod tests {
         }
         let program = crate::Engine::specialize("assert.ok((()=>{return false;})())", "semicolon-expression.js").unwrap();
         freeze_call_sites(&program);
-        let sites = program.source.as_ref().unwrap().call_sites.get().unwrap();
+        let sites = program.call_sites.get().unwrap();
         assert!(sites.iter().find(|site| site.callee == "assert.ok").unwrap().expression.is_none(),
             "Node's semicolon terminator yields an empty expression");
     }
@@ -506,29 +257,27 @@ mod tests {
         let released: Vec<_> = program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect();
         assert!(released.iter().any(|released| *released), "the fixture must keep a cold record");
         // A dynamic build defers the facts to their first read; a native-only one admits them.
-        assert_eq!(program.source.as_ref().unwrap().call_sites.get().is_some(), !crate::DYNAMIC_EXECUTION_ENABLED);
-        program.source.as_mut().unwrap().call_sites.take();
+        assert_eq!(program.call_sites.get().is_some(), !crate::DYNAMIC_EXECUTION_ENABLED);
+        program.call_sites.take();
         freeze_call_sites(&program);
         assert_eq!(program.functions.iter().map(crate::bytecode::FunctionSlot::is_released).collect::<Vec<_>>(), released);
-        let source = program.source.as_ref().unwrap();
-        let sites = source.call_sites.get().unwrap();
-        let owner = sites.as_ptr();
+        let owner = program.call_sites.get().unwrap().as_ptr();
         let column = "function cold(value) { assert.".len() as u32 + 1;
         for _ in 0..2 {
             assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"));
-            assert_eq!(program.source.as_ref().unwrap().call_sites.get().unwrap().as_ptr(), owner);
+            assert_eq!(program.call_sites.get().unwrap().as_ptr(), owner);
         }
-        program.source.as_mut().unwrap().call_sites.take();
+        program.call_sites.take();
         if crate::DYNAMIC_EXECUTION_ENABLED {
             assert_eq!(source_expression(&program, 1, column).as_deref(), Some("assert.ok(value)"), "a dynamic lookup derives them");
         } else {
             assert_eq!(source_expression(&program, 1, column), None, "lookup never derives missing facts");
-            assert!(program.source.as_ref().unwrap().call_sites.get().is_none());
+            assert!(program.call_sites.get().is_none());
         }
     }
 
     #[test]
-    fn frozen_expression_ranges_are_validated_by_binary_and_snapshot_readers() {
+    fn frozen_expression_ranges_are_validated_by_the_binary_reader() {
         use crate::bytecode::SourceSpan;
         let text = "const face='😀'; call();\nnext();";
         let offset = text.find("call").unwrap() as u32;
@@ -543,15 +292,9 @@ mod tests {
         ] {
             let mut program = crate::Engine::specialize(text, "invalid-expression.js").unwrap();
             program.freeze_native_diagnostics();
-            let source = program.source.as_mut().unwrap();
-            let mut sites = source.call_sites.take().unwrap().to_vec();
+            let mut sites = program.call_sites.take().unwrap().to_vec();
             sites.iter_mut().find(|site| site.offset == offset).unwrap().expression = Some(span);
-            source.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
-            let mut writer = crate::snapshot::Writer::new();
-            source.write_snapshot(&mut writer);
-            let bytes = writer.finish();
-            let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
-            assert!(crate::bytecode::ProgramSource::read_snapshot(&mut reader).is_err(), "{span:?}");
+            program.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites));
             let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(program.encode_trusted())).unwrap();
             assert!(decoded.validate().unwrap_err().contains("call-site expression"), "{span:?}");
         }
@@ -569,11 +312,10 @@ mod tests {
             let mut program = crate::Engine::specialize_host_script(&text, "calls.js", &crate::compile::NoAtomPrefix,
                 crate::HostScriptOptions { origin, typescript, keep_records: true }, crate::compile::ReleasedRecords::Encoded, false).unwrap();
             if let Some((prefix, body)) = retained {
+                program.retain_body(crate::bytecode::SourceText::Shared(body.into()), prefix.len() as u32);
                 let source = program.source.as_mut().unwrap();
-                source.retain_body(crate::bytecode::SourceText::Shared(body.into()), prefix.len() as u32);
                 (source.line_offset, source.column_offset) = origin.unwrap();
             }
-            let source = program.source.as_ref().unwrap();
             let mut calls = std::collections::BTreeSet::new();
             for function in 0..program.function_count() {
                 for (pc, instruction) in program.function(function).instructions().enumerate() {
@@ -583,7 +325,7 @@ mod tests {
                 }
             }
             program.freeze_native_diagnostics();
-            let actual: BTreeMap<_, _> = source.call_sites.get().unwrap().iter()
+            let actual: BTreeMap<_, _> = program.call_sites.get().unwrap().iter()
                 .map(|site| ((site.offset, site.construct), site.callee.clone())).collect();
             assert!(!calls.is_empty(), "typescript={typescript} retained={retained:?}");
             assert!(calls.iter().all(|call| actual.contains_key(call)), "typescript={typescript} retained={retained:?}");
@@ -591,14 +333,7 @@ mod tests {
                 assert!(actual.values().any(|rendered| rendered == callee), "{callee}: typescript={typescript} retained={retained:?}");
             }
             let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(program.encode_trusted())).unwrap();
-            assert_eq!(decoded.source.as_ref().unwrap().call_sites.get(), source.call_sites.get());
-            let mut writer = crate::snapshot::Writer::new();
-            source.write_snapshot(&mut writer);
-            let bytes = writer.finish();
-            let mut reader = crate::snapshot::Reader::new(&bytes, None).unwrap();
-            let restored = crate::bytecode::ProgramSource::read_snapshot(&mut reader).unwrap();
-            reader.finish().unwrap();
-            assert_eq!(restored.call_sites.get(), source.call_sites.get());
+            assert_eq!(decoded.call_sites.get(), program.call_sites.get());
         }
     }
 
@@ -606,7 +341,7 @@ mod tests {
     fn invalid_frozen_descriptions_are_rejected_and_empty_facts_are_complete() {
         let program = crate::Engine::specialize("42;", "empty.js").unwrap();
         program.freeze_native_diagnostics();
-        assert!(program.source.as_ref().unwrap().call_sites.get().unwrap().is_empty());
+        assert!(program.call_sites.get().unwrap().is_empty());
         for sites in [
             vec![(0, "first"), (0, "duplicate")],
             vec![(2, "later"), (0, "earlier")],
@@ -614,7 +349,7 @@ mod tests {
             vec![(0, "")],
         ] {
             let mut invalid = crate::Engine::specialize("42;", "invalid.js").unwrap();
-            invalid.source.as_mut().unwrap().call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.into_iter()
+            invalid.call_sites = std::cell::OnceCell::from(std::sync::Arc::from(sites.into_iter()
                 .map(|(offset, callee)| crate::bytecode::CallSiteDescription { offset, construct: false, callee: callee.into(), expression: None })
                 .collect::<Vec<_>>()));
             let decoded = crate::ResidualProgram::decode_trusted(std::rc::Rc::new(invalid.encode_trusted())).unwrap();
@@ -629,7 +364,7 @@ mod tests {
             "typed-calls.cts",
         ).unwrap();
         program.freeze_native_diagnostics();
-        let sites = program.source.as_ref().unwrap().call_sites.get().unwrap();
+        let sites = program.call_sites.get().unwrap();
         assert_eq!(sites.len(), 4);
         assert!(sites.iter().all(|site| site.callee == "f"), "{sites:?}");
     }

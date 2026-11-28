@@ -5,15 +5,18 @@
 //!
 //! A thin view over the facts analysis: one run of it models the unit (`facts::Model`: its
 //! inlined frames, its dense accesses, the PCs a previous body left at) and takes the entry's
-//! guarded ranges (`Lowering::entering`), so the ranges, the length relations and the proofs
+//! proven inputs (`initial`), so the ranges, the length relations and the proofs
 //! are rows of the same fixpoint that types every register, which widens a range that keeps
 //! growing instead of assuming one and checking it on the back edge.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::super::facts::{self, Model, Observed, ObservedRead, Point, Seeds, Text};
-use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Resolved, Shape, Version};
+use super::super::facts::{self, Model, Point, Seeds, Text, TypedRead};
+use super::loop_versions::{Bound, Decision, Hoist, Induction, Nest, Reach, Resolved, Shape, Version};
+use super::loop_versions::affine_reach::Ends;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The facts one analysis proves, by unit PC.
 pub(crate) struct IntRanges {
@@ -22,8 +25,12 @@ pub(crate) struct IntRanges {
     /// The string reads whose index the point proves below the string's length (`string_in_bounds`), by PC.
     string_bounds: quench_runtime::dataflow::BitSet,
     /// The accesses whose indices their loop's entry compares with the array's length once
-    /// (`Lowering::version_loops`), by PC (ascending).
+    /// (`Lowering::version_loops`), by PC (ascending). Every loop whose body may resize an array
+    /// keeps none of its own, and the body of a loop keeps only the versions its own entries check.
     versioned: Vec<Version>,
+    /// The accesses whose index is an integer wherever it is not NaN, and whose affine version keeps its
+    /// entry check (`Ends::integral`): inside that version the index is an int32 with no representation test.
+    integral: quench_runtime::dataflow::BitSet,
     /// The pure integer operations a loop's entry evaluates once (`Lowering::hoist_pure`), by PC (ascending).
     hoisted: Vec<Hoist>,
     /// The relations of registers holding no Number that a loop's entry decides once
@@ -40,6 +47,8 @@ pub(crate) struct IntRanges {
     signless: Vec<usize>,
     /// The products no operands make a negative zero of.
     zero_free: quench_runtime::dataflow::BitSet,
+    /// The arithmetic whose exact result lies within `IntRange::PRODUCT_EXACT` (`Point::product_exact`), by PC.
+    product_exact: quench_runtime::dataflow::BitSet,
     /// The remainders whose dividend the point before them proves no negative, so no `-0` (`prove_at`).
     non_negative_dividend: quench_runtime::dataflow::BitSet,
     /// The remainders whose divisor the point before them proves no zero, so no zero-divisor test.
@@ -52,7 +61,8 @@ impl IntRanges {
     pub(crate) fn new(instructions: usize) -> Self {
         Self { overflow_free: quench_runtime::dataflow::BitSet::with_capacity(instructions), in_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             string_bounds: quench_runtime::dataflow::BitSet::with_capacity(instructions),
-            versioned: Vec::new(), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            versioned: Vec::new(), integral: quench_runtime::dataflow::BitSet::with_capacity(instructions), hoisted: Vec::new(), decisions: Vec::new(), bounds: Vec::new(), inductions: Vec::new(), index_ranges: Vec::new(), signless: Vec::new(), zero_free: quench_runtime::dataflow::BitSet::with_capacity(instructions),
+            product_exact: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             non_negative_dividend: quench_runtime::dataflow::BitSet::with_capacity(instructions), nonzero_divisor: quench_runtime::dataflow::BitSet::with_capacity(instructions),
             numeric_stores: quench_runtime::dataflow::BitSet::with_capacity(instructions) }
     }
@@ -83,6 +93,10 @@ impl IntRanges {
     /// result, whatever int32 operands reach it.
     pub(crate) fn overflow_free(&self, pc: usize) -> bool { self.overflow_free.contains(pc) }
 
+    /// Whether the arithmetic at `pc` has an exact result within `IntRange::PRODUCT_EXACT`, so the
+    /// ToInt32 of its product needs no exactness test (`Lowering::truncated_product`).
+    pub(crate) fn product_exact(&self, pc: usize) -> bool { self.product_exact.contains(pc) }
+
     /// Whether the index of the element access at `pc` lies in `0..length` of its array: proved
     /// at the access, or by its loop's entry (`versioned`).
     pub(crate) fn in_bounds(&self, pc: usize) -> bool {
@@ -90,11 +104,15 @@ impl IntRanges {
     }
 
     /// Whether the string read at `pc` (a `charCodeAt` call or a `base[index]` of a string) has an
-    /// index below its string's length, so its row takes no bounds test (`Point::string_index_proven`).
+    /// index below its string's length, so its row takes no bounds test (`Lowering::proven_below_length`).
     pub(crate) fn string_in_bounds(&self, pc: usize) -> bool { self.string_bounds.contains(pc) }
 
     /// The accesses whose indices their loop's entry compares with the array's length, by PC.
     pub(crate) fn versioned(&self) -> &[Version] { &self.versioned }
+
+    /// Whether the index of the element access at `pc` is an int32 inside its affine version, which its loop's entry
+    /// proved in range and integral wherever it is not NaN: its representation takes no test (`Lowering::integral_index`).
+    pub(crate) fn integral_index(&self, pc: usize) -> bool { self.integral.contains(pc) }
 
     /// The pure integer operations hoisted to a loop's entry, by PC.
     pub(crate) fn hoisted(&self) -> &[Hoist] { &self.hoisted }
@@ -137,52 +155,25 @@ impl Lowering<'_, '_> {
         }).map(|(pc, _)| pc).collect()
     }
 
-    /// The element reads the entry observed to yield Numbers (`observed`), and the reads of a
-    /// hoisted typed array of a fixed kind, each of which yields a Number of the kind's element
-    /// type: an integer kind's range, a typed-array load being its elements' own integers.
-    fn element_reads(&self, instructions: &[WideInstruction]) -> Vec<ObservedRead> {
-        let typed: Vec<ObservedRead> = instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::compiled::performed(**instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })))
+    /// The reads of a hoisted typed array of a fixed kind, each of which yields a Number of the kind's element type: an
+    /// integer kind's range, a typed-array load being its elements' own integers. The kind is the view's (`ElementViews`), so
+    /// the element type is the kind's: the solve keeps no typed-array element class to prove it from (no solver fact).
+    fn typed_reads(&self, instructions: &[WideInstruction]) -> Vec<TypedRead> {
+        instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::compiled::performed(**instruction), Some(quench_runtime::staged::Operation::ElementRead { .. })))
             .filter_map(|(pc, instruction)| {
                 let array = self.loop_array(pc, instruction.operand_b().register_index())?;
-                Some(ObservedRead { pc, ty: array.views.observed_kind().and_then(NativeKind::new)?.element_type(), kind: None })
-            }).collect();
-        let mut reads: Vec<ObservedRead> = self.observed.0.iter().filter(|read| read.ty != quench_runtime::typed_ir::Type::ANY && typed.iter().all(|seed| seed.pc != read.pc))
-            .copied().chain(typed.iter().copied()).collect();
-        reads.sort_by_key(|read| read.pc);
-        reads
-    }
-
-    /// The entering ranges (`entering`) the loop keeps: those still narrower than int32 at the
-    /// entry `entry` once its backedges join in. An entry sample is one value; where the loop
-    /// writes the register out of the range (a hash, say), the header's fact is the whole int32
-    /// range and the guard proves nothing, yet it leaves every later entry the sample misses.
-    pub(crate) fn kept_entering(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
-        leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>) -> Vec<(Register, IntRange)> {
-        if self.entering.is_empty() { return Vec::new(); }
-        let dense = |pc: usize| self.hoisted_access(pc);
-        let typed = |pc: usize| self.typed_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
-        let reads = self.element_reads(instructions);
-        let signless = self.signless_products(instructions);
-        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
-            signless: &signless };
-        let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
-            native_calls: self.native_calls, raises: &self.raises };
-        let facts = facts::analyze_text(&text, initial, seeds);
-        let Some(header) = facts.at(entry) else { return self.entering.clone() };
-        self.entering.iter().copied().filter(|&(register, _)| header.get(usize::from(register))
-            .and_then(|ty| ty.int_range()).is_some_and(|range| range != IntRange::FULL)).collect()
+                Some((pc, array.views.observed_kind().and_then(NativeKind::new)?.element_type()))
+            }).collect()
     }
 
     /// The proofs of the unit entered at `entry` with the checked inputs `initial`, over `loops`, its local loops.
     pub(crate) fn prove_ranges(&self, entry: usize, initial: &[Type], instructions: &[WideInstruction],
         leaders: &quench_runtime::dataflow::BitSet, own_shape: &dyn Fn(usize) -> Option<(Register, u32)>, loops: &[(usize, usize)]) -> IntRanges {
         let dense = |pc: usize| self.hoisted_access(pc);
-        let typed = |pc: usize| self.typed_access(pc);
-        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense, typed: &typed };
-        let reads = self.element_reads(instructions);
+        let model = Model { program: self.program, unit: self.unit, generic: self.generic, dense: &dense };
+        let reads = self.typed_reads(instructions);
         let signless = self.signless_products(instructions);
-        let seeds = Seeds { contracts: self.facts.contracts(), observed: Observed(&reads), entering: &self.entering, model: Some(model),
+        let seeds = Seeds { contracts: self.facts.contracts(), typed_reads: &reads, model: Some(model),
             signless: &signless };
         let text = Text { entry, instructions, leaders, constants: &self.program.constants, written: &writes, own_shape,
             native_calls: self.native_calls, raises: &self.raises };
@@ -190,9 +181,7 @@ impl Lowering<'_, '_> {
         let mut seen = Seen::default();
         facts::analyze_text(&text, initial, seeds).replay(&text, seeds, |pc, point| self.prove_at((&mut proved, &mut seen), (&model, &signless, instructions), pc, point));
         proved.signless = signless;
-        if self.entry_bounds {
-            self.prove_loops(&mut proved, &model, Nest { instructions, loops: &self.lowered_loops(loops), hoists: &[] }, &seen);
-        }
+        self.prove_loops(&mut proved, Nest { instructions, loops: &self.lowered_loops(loops), hoists: &[] }, &seen);
         proved
     }
 
@@ -202,12 +191,18 @@ impl Lowering<'_, '_> {
         pc: usize, point: &Point) {
         let instruction = instructions[pc];
         if point.overflow_free(&self.program.constants, instruction) { proved.overflow_free.insert(pc); }
-        match point.index_proof(model, pc, instruction) {
+        if point.product_exact(&self.program.constants, instruction) { proved.product_exact.insert(pc); } else { proved.product_exact.remove(pc); }
+        let below = |index: Register, array: Register| self.proven_below_length(pc, index, array);
+        let bound_of = |index: Register| self.bound_below(pc, index);
+        match point.index_proof(model, pc, instruction, &below, &bound_of) {
             facts::IndexProof::Proven => { proved.in_bounds.insert(pc); }
-            proof => seen.shapes.extend(self.shape(instructions, pc, point, proof)),
+            proof => {
+                seen.shapes.extend(self.shape(instructions, pc, point, proof));
+                seen.ends.extend(self.index_ends(pc).map(|ends| (pc, ends)));
+            }
         }
         if let Some((receiver, index)) = self.string_read(pc, instruction)
-            && point.int_range(index).is_some_and(|range| range.min >= 0) && point.string_index_proven(receiver, index) {
+            && self.proven_below_length(pc, index, receiver) {
             proved.string_bounds.insert(pc);
         } else {
             proved.string_bounds.remove(pc);
@@ -278,17 +273,49 @@ impl Lowering<'_, '_> {
     }
 
     /// What the entries of `nest`'s loops prove of what `seen`: the operations each evaluates once, and
-    /// the accesses each proves within their arrays.
-    fn prove_loops(&self, proved: &mut IntRanges, model: &Model<'_>, nest: Nest<'_>, seen: &Seen) {
+    /// the accesses each proves within their arrays. A loop keeps its versions only where its body's
+    /// resizes are all checked by versions of its own entries (`settled_versions`).
+    fn prove_loops(&self, proved: &mut IntRanges, nest: Nest<'_>, seen: &Seen) {
         proved.hoisted = self.plan_hoists(nest, &seen.hoistable);
         proved.decisions = self.plan_decisions(nest, &seen.decisions);
         proved.bounds = self.plan_bounds(nest, &seen.bounds);
         let hoists = proved.hoisted.clone();
         let nest = Nest { hoists: &hoists, ..nest };
-        for shape in &seen.shapes {
-            if let Some(resolved) = self.resolve((nest, &*proved), model, shape) { proved.keep(resolved); }
+        let mut resolved: Vec<Resolved> = seen.shapes.iter().filter_map(|shape| self.resolve((nest, &*proved), shape)).collect();
+        // An access its shape proves keeps that proof; the index range proves the rest.
+        let affine: Vec<Resolved> = seen.ends.iter().filter(|(pc, _)| resolved.iter().all(|found| found.version.pc != *pc))
+            .filter_map(|(pc, ends)| self.affine_resolve(nest, *pc, ends)).collect();
+        resolved.extend(affine);
+        let candidates: Vec<Version> = resolved.iter().map(|resolved| resolved.version).collect();
+        let settled = self.settled_versions(nest.loops, candidates);
+        for resolved in resolved {
+            if settled.iter().any(|version| version.pc == resolved.version.pc && version.header == resolved.version.header) { proved.keep(resolved); }
+        }
+        for (pc, _) in seen.ends.iter().filter(|(pc, ends)| ends.integral && settled.iter().any(|version| version.pc == *pc && matches!(version.reach, Reach::Affine { .. }))) {
+            proved.integral.insert(*pc);
         }
         proved.versioned.sort_by_key(|version| version.pc);
+    }
+
+    /// The versions that stay once every loop whose body may resize an array is settled: a loop with a resizing step keeps
+    /// its versions only where each such step is itself a version of an entry inside the loop (its reach is checked before
+    /// the loop's body runs, so the step never resizes), and a loop that fails the test drops all its versions, which can
+    /// only make other loops fail it too. Each round drops the failing loops until none fails.
+    fn settled_versions(&self, loops: &[(usize, usize)], mut versions: Vec<Version>) -> Vec<Version> {
+        loop {
+            let failing: Vec<usize> = versions.iter().map(|version| version.header).filter(|&header| {
+                let Some(&(_, back)) = loops.iter().find(|(at, _)| *at == header) else { return true };
+                !self.steady((header, back), &versions)
+            }).collect();
+            if failing.is_empty() { return versions; }
+            versions.retain(|version| !failing.contains(&version.header));
+        }
+    }
+
+    /// Whether the body `(header, back)` changes no array's length through a step that no version inside it checks.
+    fn steady(&self, (header, back): (usize, usize), versions: &[Version]) -> bool {
+        (header..=back).all(|at| !self.may_resize(at)
+            || versions.iter().any(|version| version.pc == at && (header..=back).contains(&version.header)))
     }
 }
 
@@ -301,4 +328,6 @@ struct Seen {
     decisions: Vec<usize>,
     /// The relation jumps' PCs with the register each orders against an int32 counter (`int_bound`).
     bounds: Vec<(usize, Register)>,
+    /// The accesses the point leaves to their index range (`Lowering::index_ends`), by PC.
+    ends: Vec<(usize, Ends)>,
 }

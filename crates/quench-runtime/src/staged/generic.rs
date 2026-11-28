@@ -16,88 +16,14 @@ use crate::Value;
 #[cfg(not(stencil_build))]
 /// Whether `operand` names a register or a program constant: the operands a `Binary` or an
 /// `Equality` row reads (`NumericFrame::operand_word`).
-pub(super) fn is_value_operand(operand: Operand) -> bool {
+pub fn is_value_operand(operand: Operand) -> bool {
     matches!(operand.kind(), Some(OperandKind::Register | OperandKind::Constant))
 }
 
-#[cfg(not(stencil_build))]
-impl<W, P> Operation<W, P> {
-    #[cfg(not(stencil_build))]
-    /// The `Binary`, `ToPropertyKey` and `JumpBinaryFalse` operations of `decode`; `None` where a `Binary`
-    /// carries a result flag (`decode_completed` strips it first).
-    #[inline(always)]
-    pub fn decode_generic(instruction: WideInstruction) -> Option<Self> {
-        Some(match instruction.op() {
-            Op::ToPropertyKey => Self::PropertyKey {
-                destination: instruction.result_register(), source: instruction.register_b() },
-            Op::Binary => return Self::decode_binary(instruction),
-            #[cfg(not(stencil_build))]
-            Op::NumericAdd | Op::NumericMultiply => return Self::decode_numeric_arithmetic(instruction),
-            Op::JumpBinaryFalse => Self::decode_compare(instruction),
-            Op::IntCaseIndex => return Self::decode_int_case(instruction),
-            _ => return None,
-        })
-    }
-
-    #[cfg(not(stencil_build))]
-    /// `IntCaseIndex`: the case slot of register `c` among the `b` dense int labels from `imm`.
-    fn decode_int_case(instruction: WideInstruction) -> Option<Self> {
-        let count = instruction.element_count();
-        if count == 0 { return None; }
-        let minimum = instruction.imm() as i32;
-        let maximum = minimum.checked_add(i32::from(count) - 1)?;
-        Some(Self::Number(NumberOperation::IntCase {
-            destination: instruction.result_register(),
-            source: crate::bytecode::Operand::register(instruction.register_c()),
-            minimum,
-            maximum,
-            count,
-        }))
-    }
-
-    /// `Binary` over two registers: equality as its own row, any other operator the VM's.
-    /// `NumericAdd` and `NumericMultiply`: the Number arithmetic of their own operator (`+` or `*`)
-    /// over their two operands, which `Binary` decodes to the same operation (`decode_binary`). A record
-    /// whose operator field names another operator is none.
-    #[cfg(not(stencil_build))]
-    #[inline(always)]
-    fn decode_numeric_arithmetic(instruction: WideInstruction) -> Option<Self> {
-        let own = match instruction.op() {
-            Op::NumericAdd => oxc_ast::ast::BinaryOperator::Addition,
-            _ => oxc_ast::ast::BinaryOperator::Multiplication,
-        } as u32;
-        if instruction.binary_operator() != own { return None; }
-        Self::decode_binary(instruction)
-    }
-
-    #[cfg(not(stencil_build))]
-    /// `Binary`: an arithmetic, bitwise or relation operator as its Number operation
-    /// (`numeric::binary_operation`), equality as its own row, and any other operator the VM's.
-    /// Every operand kind decodes; whether a frame asks the VM for a record its words leave is
-    /// the frame's (`NumericFrame::general_operators`), not the decode's.
-    #[inline(always)]
-    fn decode_binary(instruction: WideInstruction) -> Option<Self> {
-        if instruction.result_flags() != 0 { return None; }
-        let destination = instruction.result_register();
-        let operator = instruction.binary_operator();
-        let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        if let Some(number) = super::numeric::binary_operation(operator, destination, left, right) {
-            return Some(Self::Number(number));
-        }
-        #[cfg(not(stencil_build))]
-        return Some(match equality_operator(operator) {
-            Some((strict, negated)) => Self::Equality { destination, left, right, strict, negated },
-            None => Self::Binary { destination, left, right, operator },
-        });
-        // The stencil build has no equality classifier: every other `Binary` is the VM's operator.
-        #[cfg(stencil_build)]
-        return Some(Self::Binary { destination, left, right, operator });
-    }
-}
 
 /// Run the value step `operation`; the other operations are `Unresolved`.
 #[inline(always)]
-pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     match operation {
         Operation::Void { destination } => if const { super::op_kind::admits(KIND, &[super::op_kind::VOID]) } { void(stage, frame, destination) } else { unreachable!() },
@@ -132,7 +58,7 @@ pub(super) fn step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stag
 
 /// `step_of` for any operation.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     step_of::<{ super::op_kind::ANY }, S, F>(stage, frame, operation)
 }
@@ -167,7 +93,7 @@ fn property_key<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut 
 
 /// Whether `bits` is `null` or `undefined`.
 #[inline(always)]
-pub(super) fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
+pub fn nullish<S: NumericStage>(stage: &mut S, bits: S::Word) -> S::Cond {
     let null = stage.eq_imm(bits, Value::NULL.to_bits());
     let undefined = stage.eq_imm(bits, Value::UNDEFINED.to_bits());
     stage.either(null, undefined)
@@ -326,3 +252,11 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
     frame.write(stage, destination, value, fact);
     Step::Value(value)
 }
+
+#[cfg(not(stencil_build))]
+mod glue;
+#[cfg(not(stencil_build))]
+pub use glue::*;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;

@@ -1,9 +1,9 @@
-//! The typed edge out of a compiled unit (TOD-2195): the fact its leave was missing, and where.
+//! The fact a compiled unit's leave was missing (TOD-2195).
 
 use crate::bytecode::WideInstruction;
 
 /// The fact a compiled unit's leave was missing: the only reason code leaves a compiled unit for
-/// the next lower tier (`FactMissing`). Classed for now by the leaving instruction; a guard that
+/// the next lower tier. Classed for now by the leaving instruction; a guard that
 /// names its own fact refines it (TOD-2195 step 4c).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -41,10 +41,3 @@ impl ExitFact {
     }
 }
 
-/// The typed edge out of a compiled unit: the fact that was missing and the site (`ExitSite::id`)
-/// it left at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FactMissing {
-    pub fact: ExitFact,
-    pub site: u32,
-}

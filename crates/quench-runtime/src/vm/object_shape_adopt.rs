@@ -21,7 +21,7 @@ impl Vm {
         if self.heap.array_elements(exclusions).is_some_and(|elements| !elements.is_empty()) {
             return false;
         }
-        let (Some(source_data), Some(target_data)) = (self.object_data(source), self.object_data(target)) else {
+        let (Some(source_data), Some(target_data)) = (self.heap.object(source), self.heap.object(target)) else {
             return false;
         };
         if !self.shape_lists_enumerable_keys(source)
@@ -81,7 +81,7 @@ impl Vm {
         }
         let mut values = smallvec::SmallVec::<[Value; ADOPT_INLINE_PROPERTIES]>::new();
         for slot in 0..atoms.len() {
-            let Some(value) = self.heap.property_get(source_data, slot) else {
+            let Some(value) = self.heap.property_get_ref(source_data, slot) else {
                 return false;
             };
             values.push(value);
@@ -106,7 +106,7 @@ impl Vm {
     /// shape and the target's prototype, with the chain's cell (`heap::ChainCell`); while that cell
     /// holds, the chain still intercepts none of the keys, and a hit skips the walk.
     pub(crate) fn adopt_source_shape_for_set(&mut self, target: Value, source: Value) -> bool {
-        let (Some(source_data), Some(target_data)) = (self.object_data(source), self.object_data(target)) else {
+        let (Some(source_data), Some(target_data)) = (self.heap.object(source), self.heap.object(target)) else {
             return false;
         };
         let target_proto = target_data.proto();
@@ -167,9 +167,10 @@ impl Vm {
             }
             let mut holder = prototype;
             while !holder.is_null() {
-                let Some(data) = self.object_data(holder) else {
+                let Some(data) = self.heap.object(holder) else {
                     return false;
                 };
+                // The arguments-object flag is record data.
                 if !self.shape_lists_enumerable_keys(holder) || data.is_arguments_object() || data.is_frozen() {
                     return false;
                 }

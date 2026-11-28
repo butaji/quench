@@ -16,6 +16,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::operations::NumberArithmetic;
 use quench_runtime::staged::number_machine;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The span of integers an index word holds of an arithmetic result of `range`: the Numbers it agrees with.
 pub(crate) fn held(range: IntRange) -> IntRange { range.intersect(IntRange::EXACT).unwrap_or(IntRange::EXACT) }
@@ -64,6 +65,20 @@ impl Lowering<'_, '_> {
         let long = operand.register_index()
             .and_then(|register| frame::held_long(&mut self.builder, &mut self.registers, state, register));
         long.or_else(|| self.operand_int(state, operand, otherwise))
+    }
+
+    /// The int32 index of the access at `pc` read from `register`, where its loop's entry proved the index integral
+    /// wherever it is not NaN (`IntRanges::integral_index`): the truncation of the register's binary64, with no test.
+    /// `None` where the access is not one, or the register is no untagged binary64 (its guarded read applies).
+    pub(crate) fn integral_index(&mut self, state: &State, pc: usize, register: Register) -> Option<ir::Value> {
+        if !self.ranges.integral_index(pc) { return None; }
+        frame::integral_index_value(&mut self.builder, &mut self.registers, state, register)
+    }
+
+    /// The index word of the access at `pc` (`operand_index`), taking its integral form where `integral_index` gives one.
+    pub(crate) fn access_index(&mut self, state: &mut State, pc: usize, operand: Operand, otherwise: ir::Block) -> Option<ir::Value> {
+        let integral = operand.register_index().and_then(|register| self.integral_index(state, pc, register));
+        integral.or_else(|| self.operand_index(state, operand, otherwise))
     }
 
     /// An operand's integer value as a signed 64-bit word (`frame::operand_long`).

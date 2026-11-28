@@ -8,27 +8,31 @@ impl Vm {
     /// A VM that runs only code its image archived: it installs no JIT routes and no source
     /// routes, so a static executable links neither compiler.
     pub(crate) fn new_static<T: crate::Host>(host: T) -> Self {
-        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>())
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>(), &ExecutionTable::ALL)
     }
 
     /// `new_static` for an image that proved some intrinsic families unreachable: the realm
     /// installs only `builtins`' families, and a family whose installer is `None` keeps its
-    /// code out of the image.
-    pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable) -> Self {
-        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>());
+    /// code out of the image. `execution` is the image's engine entries (`ExecutionTable`).
+    pub(crate) fn new_static_with_builtins<T: crate::Host>(host: T, builtins: &'static super::BuiltinTable, execution: &'static ExecutionTable) -> Self {
+        let mut vm = Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::of::<T>(), execution);
         vm.builtins = builtins;
+        if let Some(natives) = builtins.natives {
+            vm.native_table = super::native_table::NativeTable::closed(natives);
+        }
         vm
     }
 
     /// A VM only ever restored from a runtime saved at rest (`HostStatics::at_rest`).
     pub(crate) fn new_at_rest<T: crate::Host>(host: T) -> Self {
-        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>())
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::at_rest::<T>(), &ExecutionTable::ALL)
     }
 
     pub(crate) fn new_restored<T: crate::Host>(host: T) -> Self {
-        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::restored::<T>())
+        Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::restored::<T>(), &ExecutionTable::ALL)
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,
@@ -41,13 +45,14 @@ impl Vm {
         // A static image's support (no `source`) links no parser: its routes never install.
         #[cfg(feature = "source")]
         crate::compile::source_routes::enable();
-        Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>())
+        Self::with_statics(host, execution_interrupt, crate::host::HostStatics::of::<T>(), &ExecutionTable::ALL)
     }
 
     fn with_statics<T: crate::Host>(
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,
         host_statics: crate::host::HostStatics,
+        execution: &'static ExecutionTable,
     ) -> Self {
         let runs_lane = host.runs_lane();
         let mut vm = Self {
@@ -55,6 +60,7 @@ impl Vm {
             host_statics,
             runs_lane,
             builtins: &BuiltinTable::ALL,
+            execution,
             typed_views: Default::default(),
             native_microtask_running: false,
             queue_resumed: Value::UNDEFINED,
@@ -64,7 +70,6 @@ impl Vm {
             job_queue_programs: Vec::new(),
             queue_chains: false,
             chainable_job: false,
-            specialized: true,
             heap: Heap::new(),
             realm: Realm {
                 globals: Value::NULL,
@@ -135,7 +140,7 @@ impl Vm {
             prepared_roots: vec![],
             step_native_proofs: Default::default(),
             with_stack: vec![],
-            with_scope_entered: false, this_trust: std::cell::Cell::new(1), scope_names: Default::default(),
+            with_scope_entered: false, scope_names: Default::default(),
             test262_agent: Default::default(),
             shared_async_waiters: Vec::new(),
             programs: ProgramStore::default(),
@@ -197,8 +202,7 @@ impl Vm {
             concat_memo: Default::default(),
             regexp_matchers: Default::default(),
             atom_classes: vec![],
-            intrinsic_natives: Vec::new(),
-            native_families: Vec::new(),
+            native_table: super::native_table::NativeTable::all(),
             first_chunks: Default::default(), streamed_stubs: Default::default(),
             dynamic_strings: None,
             typeof_names: [Value::UNDEFINED; super::TYPEOF_NAMES],
@@ -219,8 +223,6 @@ impl Vm {
             megamorphic_fields: vec![],
             field_stubs: Default::default(),
             holder_hints: Default::default(),
-            rc_pinned_shapes: 0,
-            rc_pin_epoch: u64::MAX,
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
             instanceof_constructor_layouts: [None; INSTANCEOF_CONSTRUCTOR_LAYOUTS],
@@ -278,10 +280,9 @@ impl Vm {
         };
         vm.active_context = &*vm.idle_context;
         vm.intern_typeof_names();
+        // Every mode keeps slot representations: an image's typed field reads stand on the slots' types.
+        vm.track_slots();
 
-        if crate::trace::Dev::RcGc.on() {
-            vm.heap.set_rc(true);
-        }
         vm
     }
 }

@@ -98,7 +98,8 @@ impl Vm {
         if !self.shape_lists_enumerable_keys(object) {
             return None;
         }
-        let data = self.object_data(object)?;
+        // Side descriptors are record data.
+        let data = self.heap.object(object)?;
         let shape = data.shape();
         if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
             return None;
@@ -125,7 +126,8 @@ impl Vm {
         if !self.shape_lists_enumerable_keys(object) {
             return None;
         }
-        let data = self.object_data(object)?;
+        // Side descriptors are record data.
+        let data = self.heap.object(object)?;
         let shape = data.shape();
         if data.has_side_descriptors() || self.shape_is_dictionary(shape) {
             return None;
@@ -158,7 +160,8 @@ impl Vm {
         if !self.shape_lists_enumerable_keys(object) {
             return None;
         }
-        let data = self.object_data(object)?;
+        // Side descriptors are record data.
+        let data = self.heap.object(object)?;
         if data.has_side_descriptors() || self.shape_is_dictionary(data.shape()) {
             return None;
         }
@@ -173,7 +176,7 @@ impl Vm {
     pub(super) fn shape_enumerable_slots_checked(
         &self,
         object: Value,
-        data: &Object,
+        data: crate::heap::ObjectRef<'_>,
     ) -> Option<super::enumerable_key_memo::EnumerableSlots> {
         let shape = data.shape();
         if let Some(slots) = self.enumerable_keys.get(shape) {
@@ -196,15 +199,16 @@ impl Vm {
     /// property, each key as its text. `None` leaves the reads to guest order.
     pub(crate) fn plain_enumerable_entries(&self, object: Value) -> Option<Vec<(String, Value)>> {
         let slots = self.shape_enumerable_slots(object)?;
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
         slots
             .iter()
             .map(|&(atom, slot)| {
                 let slot = slot as usize;
+                // Slot attributes are record data.
                 if self.slot_attributes(data, slot)?.accessor {
                     return None;
                 }
-                Some((self.atom_value(atom).host_string().to_owned(), self.heap.property_get(data, slot)?))
+                Some((self.atom_value(atom).host_string().to_owned(), self.heap.property_get_ref(data, slot)?))
             })
             .collect()
     }
@@ -215,7 +219,7 @@ impl Vm {
         !matches!(self.heap.get(object), Some(Cell::Proxy { .. } | Cell::TypedArray { .. }))
             && self.heap.array(object).is_none()
             && self.string_wrapper_primitive(object).is_none()
-            && self.object_data(object).is_some_and(|data| !data.is_module_namespace())
+            && self.heap.object(object).is_some_and(|data| !data.is_module_namespace())
     }
 
     /// The enumerable own string keys of `object` with their slots, in OrdinaryOwnPropertyKeys
@@ -239,7 +243,7 @@ impl Vm {
     /// keys, accessors and every other object to the general path.
     fn shape_enumerable_data_items(&mut self, object: Value, kind: EnumerableOwnPropertyKind) -> Option<Value> {
         let slots = self.shape_enumerable_slots(object)?;
-        let data = self.object_data(object)?;
+        let data = self.heap.object(object)?;
         // A shape whose chain added no accessor (`shape_may_have_accessors`) holds data
         // properties only, so no slot needs its attributes read.
         let data_only = !self.shape_may_have_accessors(data.shape());
@@ -248,7 +252,7 @@ impl Vm {
             .map(|&(_, slot)| {
                 let slot = slot as usize;
                 (data_only || self.slot_attributes(data, slot).is_some_and(|attributes| !attributes.accessor))
-                    .then(|| self.heap.property_get(data, slot))
+                    .then(|| self.heap.property_get_ref(data, slot))
                     .flatten()
             })
             .collect::<Option<smallvec::SmallVec<[Value; 8]>>>()?;

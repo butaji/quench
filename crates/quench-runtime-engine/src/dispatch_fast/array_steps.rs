@@ -61,11 +61,9 @@ fn array_callback_activation_in_lane(
 }
 
 /// `script_target_in_in_lane` of an array callback method's `callback` at its call record `ip`,
-/// whose read memo slot (`CallOperand::memo`), which no native's call reads, links the
-/// callback's cache entry as a script call's `call_link` links its callee's: the link, tested
-/// first, skips the set's hash. The record's `call_link` stays its own callee's, which a lane
-/// body reads (`site_targets_in_lane`); a read memo the slot named once is another site's or
-/// this one's, as `site_read_memo` tells.
+/// whose `CallOperand::memo` slot, which no native's call reads, links the callback's cache
+/// entry as a script call's `call_link` links its callee's: the link, tested first, skips the
+/// set's hash. The record's `call_link` stays its own callee's.
 #[inline(always)]
 fn callback_target_in_lane(
     cx: *mut LaneContext,
@@ -84,7 +82,7 @@ fn callback_target_in_lane(
     }
     let target = script_target_in_in_lane(cx, callback, resolved)?;
     if let Some(index) = vm.script_call_index(callback) {
-        // SAFETY: as `requicken`: the record's operand is the call's, written in place.
+        // SAFETY: as `edge_rewrite`: the record's operand is the call's, written in place.
         unsafe { (*ip.cast_mut()).operand.call.memo = index as u32 };
     }
     Some(target)
@@ -94,7 +92,7 @@ fn callback_target_in_lane(
 /// plain call (`script_target_in_in_lane`): not a frame, an environment or a settling one.
 #[inline(always)]
 pub(crate) fn admits_activation_in_lane(target: &ScriptCallTarget) -> bool {
-    !matches!(target.entry, CallEntry::Frame | CallEntry::Environment | CallEntry::Settles)
+    !target.body.entry.needs_frame_path()
 }
 
 /// `forEach` at the lane `Call` record `ip`, whose result nothing reads

@@ -1,4 +1,4 @@
-use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, Object, PromiseCell};
+use super::{ArrayObject, AwaitState, CollectionRecord, FunctionRecord, IteratorRecord, PromiseCell};
 use super::pacing::{AgedFates, PromotionAge};
 
 #[cfg(all(test, feature = "bench-primitives"))]
@@ -7,28 +7,22 @@ mod primitive_bench;
 mod vacancy_tests;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
-mod prefetch;
 mod reservation;
 pub(super) mod sweep_support;
 use reservation::{Reservation, page_bytes, return_pages};
+#[allow(unused_imports)]
+pub(super) use reservation::AddressRange;
 use crate::vm::wtf16::JsString;
 use crate::value::Value;
 use std::mem::MaybeUninit;
 #[cfg(feature = "profile-memory")]
 use std::mem::size_of;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 pub(super) type RecordId = u32;
 
-/// What a record keeps alive, copied out for the reference-count barrier
-/// (`RecordSpace::rc_note`): the values its trace would push, read before a write changes them.
-/// Shape roots are left out.
-pub(super) trait TraceRecord {
-    fn extend_children(&self, properties: &crate::value_vec::ValueArena, out: &mut Vec<Value>);
-}
 
-pub(super) type ObjectRecordSpace = RecordSpace<Object, OBJECT_RECORD_CAPACITY>;
 pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject, ARRAY_RECORD_CAPACITY>;
 pub(super) type FunctionRecordSpace = RecordSpace<FunctionRecord, FUNCTION_RECORD_CAPACITY>;
 pub(super) type PromiseRecordSpace = RecordSpace<PromiseCell, PROMISE_RECORD_CAPACITY>;
@@ -61,9 +55,18 @@ const _: () = assert!(STRING_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(STRING_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(STRING_RECORD_CAPACITY <= u32::MAX as usize);
 
+/// The `Value` of a record of one family, named by the family's element type. A family names its
+/// records by id (an ordinary object is a class cell, named by its granule, and has no record space).
+pub(super) trait RecordValue: Sized {
+    /// The `Value` of record `id` of `space`. The id names a live record of `space` (`RecordFamily::value_of`).
+    fn value_of<const CAPACITY: usize, const HOLE: usize>(space: &RecordSpace<Self, CAPACITY, HOLE>, id: RecordId) -> Value;
+}
+
 /// What the collector does to every record family alike, whatever its record type: the
 /// per-collection passes iterate `Heap::record_families` instead of naming each space.
 pub(super) trait RecordFamily {
+    /// The `Value` of record `id`, which must be live in this family (`RecordValue::value_of`).
+    fn value_of(&self, id: RecordId) -> Value;
     /// Every record becomes young: a full collection's starting state.
     fn clear_marks(&mut self);
     /// The records the barrier logged since the last collection; each is unmarked.
@@ -78,14 +81,11 @@ pub(super) trait RecordFamily {
     /// What minor sweeps found of the aged records since the last call, emptied.
     fn take_aged_fates(&mut self) -> AgedFates;
     fn live_count(&self) -> usize;
-    /// Bytes of the occupied ids: live plus unswept garbage before a sweep, the survivors
-    /// after it (pacing's resident measure).
-    fn occupied_bytes(&self) -> usize;
     /// Visits every live record's id.
     fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId));
     #[cfg(feature = "profile-aggregate")]
     fn high_water(&self) -> usize;
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(test, feature = "profile-aggregate"))]
     fn remembered_count(&self) -> usize;
     #[cfg(debug_assertions)]
     fn snapshot_marks(&self) -> Vec<u64>;
@@ -99,7 +99,10 @@ pub(super) trait RecordFamily {
     fn return_free_pages(&mut self);
 }
 
-impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
+impl<T: RecordValue, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T, CAPACITY, HOLE> {
+    fn value_of(&self, id: RecordId) -> Value {
+        T::value_of(self, id)
+    }
     fn clear_marks(&mut self) {
         RecordSpace::clear_marks(self);
     }
@@ -121,9 +124,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
     fn live_count(&self) -> usize {
         RecordSpace::live_count(self)
     }
-    fn occupied_bytes(&self) -> usize {
-        self.live.saturating_mul(size_of::<T>())
-    }
     fn for_each_live_id(&self, visit: &mut dyn FnMut(RecordId)) {
         self.for_each_live(|id, _| visit(id));
     }
@@ -131,7 +131,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordFamily for RecordSpace<T
     fn high_water(&self) -> usize {
         RecordSpace::high_water(self)
     }
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(test, feature = "profile-aggregate"))]
     fn remembered_count(&self) -> usize {
         RecordSpace::remembered_count(self)
     }
@@ -167,28 +167,29 @@ const BLOCK_WORDS: usize = RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS;
 /// The capacities live in `staged::object_encoding`, beside the link layout they fit in.
 pub(super) use crate::staged::object_encoding::{
     ARRAY_RECORD_CAPACITY, AWAIT_RECORD_CAPACITY, COLLECTION_RECORD_CAPACITY, FUNCTION_RECORD_CAPACITY,
-    ITERATOR_RECORD_CAPACITY, OBJECT_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY, V128_RECORD_CAPACITY,
+    ITERATOR_RECORD_CAPACITY, PROMISE_RECORD_CAPACITY, V128_RECORD_CAPACITY,
     WASM_GC_RECORD_CAPACITY,
 };
 
 #[cfg(test)]
 pub(super) const TEST_RECORD_CAPACITY: usize = 1 << 24;
 
-const _: () = assert!(OBJECT_RECORD_CAPACITY.is_power_of_two() && ARRAY_RECORD_CAPACITY.is_power_of_two());
+const _: () = assert!(ARRAY_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(FUNCTION_RECORD_CAPACITY.is_power_of_two() && PROMISE_RECORD_CAPACITY.is_power_of_two());
 const _: () = assert!(ITERATOR_RECORD_CAPACITY.is_power_of_two() && COLLECTION_RECORD_CAPACITY.is_power_of_two());
-const _: () = assert!(OBJECT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+const _: () = assert!(ARRAY_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(AWAIT_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK) && V128_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 const _: () = assert!(WASM_GC_RECORD_CAPACITY.is_power_of_two() && WASM_GC_RECORD_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
 // Ids are `u32`, and the id after a space's last one must still fit.
-const _: () = assert!(OBJECT_RECORD_CAPACITY < u32::MAX as usize && FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
+const _: () = assert!(FUNCTION_RECORD_CAPACITY < u32::MAX as usize);
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(OCCUPANCY_WORD_BITS.is_power_of_two());
 
-/// A space's allocation cursor: the run `[next, limit)` of fresh ids the allocator hands out
-/// one by one (`RecordSpace::cursor_take`). Every id of the run is occupied from the refill
-/// that made it (`cursor_refill`), so an allocation writes no occupancy bit; the ids past
+/// A space's allocation cursor: the run `[next, limit)` of unallocated ids the allocator hands out
+/// one by one (`RecordSpace::cursor_take`), a free run or the fresh ids past the high water mark.
+/// Every id of the run is occupied from the refill that made it (`cursor_refill`), so an
+/// allocation writes no occupancy bit; the ids past
 /// `next` are freed again by `retire_cursor` before any collection reads occupancy. Generated
 /// code reads and bumps `next` through `NATIVE_RECORD_CURSOR_LAYOUT`, so this is `repr(C)`.
 #[repr(C)]
@@ -214,25 +215,20 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize, const HOLE: usize = 0> {
     /// with `blocks`, outside the block so that `RecordBlock` keeps the layout native code reads.
     dirty: Vec<bool>,
     next_id: u32,
-    /// Where the downward scan for reusable IDs continues; 0 once none remain below it.
-    free_cursor: RecordId,
-    /// The reusable IDs of the occupancy word the scan last reached, starting at
-    /// `free_word_base`; allocation takes them highest first before scanning further.
-    pub(super) free_word: u64,
-    pub(super) free_word_base: RecordId,
-    /// The occupancy word `free_word` was loaded from: a claim sets its bit through this
-    /// pointer, with no block or word index. Valid while `free_word` is nonzero, as blocks are
-    /// added only once no free word is left (`claim_slow`), and set by `load_free_word` alone.
-    pub(super) free_word_occupied: *mut u64,
+    /// The free ids below the high water mark, as runs `[start, end)` each within one block.
+    /// The sweep lists the ids it frees, `release_live` and `retire_cursor` list theirs, and a
+    /// snapshot or a release of withheld ids rebuilds the list. Allocation takes the last run
+    /// first (`take_free_run`). An id withheld after its run was listed is skipped when taken.
+    free_runs: Vec<(RecordId, RecordId)>,
     pub(super) live: usize,
     /// Old records written since the last collection, each logged once by the write barrier.
     remembered: Vec<RecordId>,
     /// Where young records can be. Every sweep frees each occupied, unmarked record it
     /// visits, so between collections only the ids taken since the last sweep are occupied
-    /// and unmarked: fresh ids from `young_floor` up, and the free words loaded since. A
+    /// and unmarked: fresh ids from `young_floor` up, and the runs taken since. A
     /// minor sweep visits those words alone, at a cost that follows allocation, not heap size.
     young_floor: RecordId,
-    /// The first id of each occupancy word `load_free_word` loaded since the last sweep.
+    /// The first id of each occupancy word a cursor run was taken from since the last sweep.
     young_words: Vec<RecordId>,
     /// The first id of each occupancy word holding an aged record (`RecordBlock::aged`),
     /// which the next minor sweep visits beside the words young records were allocated in.
@@ -252,20 +248,6 @@ pub(super) struct RecordSpace<T, const CAPACITY: usize, const HOLE: usize = 0> {
     /// Touches what a dead record's drop will free, before the drop (`release`): the drops of
     /// one occupancy word then wait on their cache misses together, not one after another.
     warm: Option<fn(&T)>,
-    /// Whether counts are kept (`QUENCH_DEV=rc-gc`, `super::rc`): the barrier then copies an
-    /// old record's children before its first write in an epoch (`rc_note`) and logs every
-    /// store into an old record.
-    rc: bool,
-    /// The counts, a block of them per record block while `rc` (`rc_ensure`).
-    rc_blocks: Vec<RcBlock>,
-    /// The references past `RC_STUCK` of each record whose count bits hold it: the exact
-    /// count is `RC_STUCK` plus its entry. Counts above the bits are rare and brief (a record
-    /// held by its live holder and by dead ones not yet freed), so a table holds them.
-    rc_overflow: std::sync::Mutex<rustc_hash::FxHashMap<RecordId, u32>>,
-    /// The children the barrier copied this epoch, for decrements, and the records it logged,
-    /// for increments of their children at the epoch's end.
-    rc_decrements: Vec<Value>,
-    rc_logged: Vec<RecordId>,
     /// The bump cursor the hot spaces allocate from (`RecordCursor`); empty elsewhere.
     pub(super) cursor: RecordCursor,
 }
@@ -279,10 +261,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
             blocks: Vec::new(),
             dirty: Vec::new(),
             next_id: 0,
-            free_cursor: 0,
-            free_word: 0,
-            free_word_base: 0,
-            free_word_occupied: std::ptr::null_mut(),
+            free_runs: Vec::new(),
             cursor: RecordCursor::default(),
             live: 0,
             remembered: Vec::new(),
@@ -294,11 +273,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> Default for RecordSpace<T, CAP
             aged_fates: AgedFates::default(),
             withheld: 0,
             warm: None,
-            rc: false,
-            rc_blocks: Vec::new(),
-            rc_overflow: std::sync::Mutex::new(rustc_hash::FxHashMap::default()),
-            rc_decrements: Vec::new(),
-            rc_logged: Vec::new(),
         }
     }
 }
@@ -326,36 +300,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
 // Native JIT/AOT guards read `marked` using offsets exported from this layout (`staged::object_encoding`).
 use crate::staged::object_encoding::RecordBlock;
-
-/// A block's reference counts under `QUENCH_DEV=rc-gc` (`super::rc`), beside its
-/// `RecordBlock` (whose layout native code reads): two bits per record, a saturating count of
-/// 0..=3 where 3 is stuck. Atomic only so a count changes through a shared view of the space
-/// (one thread; relaxed loads and stores, no read-modify-write).
-struct RcBlock {
-    lo: [AtomicU64; BLOCK_WORDS],
-    hi: [AtomicU64; BLOCK_WORDS],
-    /// Records whose count passed `RC_STUCK + RC_OVERFLOW_LIMIT`: no longer counted, they are
-    /// freed only by a trace (prototypes, shared constant strings).
-    stuck: [AtomicU64; BLOCK_WORDS],
-}
-
-impl RcBlock {
-    fn new() -> Self {
-        Self {
-            lo: [const { AtomicU64::new(0) }; BLOCK_WORDS],
-            hi: [const { AtomicU64::new(0) }; BLOCK_WORDS],
-            stuck: [const { AtomicU64::new(0) }; BLOCK_WORDS],
-        }
-    }
-
-    /// Clears the counts of the ids of `word_index` that `kept` leaves out.
-    #[inline(always)]
-    fn keep(&mut self, word_index: usize, kept: u64) {
-        *self.lo[word_index].get_mut() &= kept;
-        *self.hi[word_index].get_mut() &= kept;
-        *self.stuck[word_index].get_mut() &= kept;
-    }
-}
 
 /// Authoritative record-mark layout for native write-barrier guards.
 pub(super) const NATIVE_RECORDS_PER_BLOCK: usize = RECORDS_PER_BLOCK;
@@ -469,7 +413,26 @@ struct Sweeper<'v, D, V> {
     visit: &'v mut V,
 }
 
-impl RecordBlock {
+/// The methods of `RecordBlock`, which is defined in `staged::object_encoding` (the layout the
+/// native guards read), so its impl cannot stay inherent here (spec 4.5).
+pub trait RecordBlockRecordsExt: Sized {
+    /// A block with no record occupied, withheld, marked or aged.
+    fn new() -> Self;
+    /// Whether any id of this block is occupied or withheld.
+    fn in_use(&self) -> bool;
+    fn claim(&mut self, index: usize) -> bool;
+    fn is_occupied(&self, index: usize) -> bool;
+    /// The occupancy bits of record indices `from..to` of this block, word by word: the masks
+    /// of one occupancy word at a time. `set` occupies them (none may be occupied yet), else frees them.
+    fn set_occupancy_range(&mut self, from: usize, to: usize, set: bool);
+    /// The first withheld id in `from..to` (block indices), or `to` when none is.
+    fn first_withheld(&self, from: usize, to: usize) -> usize;
+    fn release(&mut self, index: usize);
+    fn mark(&mut self, index: usize) -> bool;
+    fn is_marked(&self, index: usize) -> bool;
+}
+
+impl RecordBlockRecordsExt for RecordBlock {
     fn new() -> Self {
         Self {
             occupied: [0; BLOCK_WORDS],
@@ -479,7 +442,6 @@ impl RecordBlock {
         }
     }
 
-    /// Whether any id of this block is occupied or withheld.
     fn in_use(&self) -> bool {
         self.occupied.iter().chain(self.withheld.iter()).any(|&word| word != 0)
     }
@@ -502,8 +464,6 @@ impl RecordBlock {
         self.occupied[word_index] & (1_u64 << bit) != 0
     }
 
-    /// The occupancy bits of record indices `from..to` of this block, word by word: the masks
-    /// of one occupancy word at a time. `set` occupies them (none may be occupied yet), else frees them.
     fn set_occupancy_range(&mut self, from: usize, to: usize, set: bool) {
         let mut index = from;
         while index < to {
@@ -522,7 +482,22 @@ impl RecordBlock {
         }
     }
 
-    #[cfg(test)]
+    fn first_withheld(&self, from: usize, to: usize) -> usize {
+        let mut index = from;
+        while index < to {
+            let word_index = index / OCCUPANCY_WORD_BITS;
+            let word_end = ((word_index + 1) * OCCUPANCY_WORD_BITS).min(to);
+            let width = word_end - index;
+            let window = if width == OCCUPANCY_WORD_BITS { u64::MAX } else { (1_u64 << width) - 1 };
+            let hits = (self.withheld[word_index] >> (index % OCCUPANCY_WORD_BITS)) & window;
+            if hits != 0 {
+                return index + hits.trailing_zeros() as usize;
+            }
+            index = word_end;
+        }
+        to
+    }
+
     fn release(&mut self, index: usize) {
         let word_index = index / OCCUPANCY_WORD_BITS;
         let bit = index % OCCUPANCY_WORD_BITS;
@@ -554,49 +529,32 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// uninitialized, to be written before the next safepoint (`try_insert` writes it at once).
     #[inline(always)]
     pub(super) fn claim_uninit(&mut self) -> Option<RecordId> {
-        // The common allocation, inline: an id from the loaded free word, else the next fresh id
-        // in a block that exists; `claim_slow` names no value (no address of the caller's stack).
-        let id = if self.free_word != 0 {
-            self.take_free_word_id()
-        } else if self.free_cursor == 0
-            && self.is_reserved()
-            && (self.next_id as usize) < self.reserved
-            && Self::split_id(self.next_id).0 < self.blocks.len()
-        {
-            let id = self.next_id;
-            let (block_index, record_index) = Self::split_id(id);
-            if !self.claim_block(block_index, record_index) {
-                return None;
-            }
-            self.next_id += 1;
-            id
-        } else {
-            self.claim_slow()?
-        };
-        self.live += 1;
-        Some(id)
+        match self.claim_uninit_quick() {
+            Some(id) => Some(id),
+            None => self.claim_slow(),
+        }
     }
 
     /// `claim_uninit` without its slow path: `None`, with nothing claimed, wherever that would run.
+    /// The cursor's next id, else the next fresh id once no free run is left and its block exists.
     #[inline(always)]
     pub(super) fn claim_uninit_quick(&mut self) -> Option<RecordId> {
-        let id = if self.free_word != 0 {
-            self.take_free_word_id()
-        } else if self.free_cursor == 0
-            && self.is_reserved()
-            && (self.next_id as usize) < self.reserved
-            && Self::split_id(self.next_id).0 < self.blocks.len()
+        if let Some(id) = self.cursor_take() {
+            return Some(id);
+        }
+        if !self.free_runs.is_empty()
+            || !self.is_reserved()
+            || self.next_id as usize >= self.reserved
+            || Self::split_id(self.next_id).0 >= self.blocks.len()
         {
-            let id = self.next_id;
-            let (block_index, record_index) = Self::split_id(id);
-            if !self.claim_block(block_index, record_index) {
-                return None;
-            }
-            self.next_id += 1;
-            id
-        } else {
             return None;
-        };
+        }
+        let id = self.next_id;
+        let (block_index, record_index) = Self::split_id(id);
+        if !self.claim_block(block_index, record_index) {
+            return None;
+        }
+        self.next_id += 1;
         self.live += 1;
         Some(id)
     }
@@ -622,19 +580,27 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// allocation, with no occupancy write (the refill occupied the run). `None` once spent.
     #[inline(always)]
     pub(super) fn cursor_take(&mut self) -> Option<RecordId> {
-        let mut stage = crate::staged::Concrete::new(core::ptr::null());
+        let mut stage = crate::staged::Concrete::pure();
         crate::staged::bump::cursor_take(&mut stage, (&raw mut self.cursor) as u64, ()).map(|id| id as RecordId)
     }
 
-    /// Claims the rest of the block the high water mark is in as the cursor's run, occupying
-    /// it, and returns the run's length (the allocation charge it carries). `None` where the
-    /// run cannot be fresh: a hole or loaded free word is still to reuse (the free scan takes
-    /// those first), the space is a hole space, or the range is not reserved or full.
+    /// Whether the cursor's run has an id left, which `cursor_take` would hand out.
+    #[inline(always)]
+    pub(super) fn cursor_open(&self) -> bool {
+        self.cursor.next < self.cursor.limit
+    }
+
+    /// Makes the cursor's run the next free run (`take_free_run`), else the rest of the block the
+    /// high water mark is in, occupied as a whole, and returns the run's length (the allocation
+    /// charge it carries). `None` where no run can be made: a hole space, or a range not reserved or full.
     #[cold]
     #[inline(never)]
     pub(super) fn cursor_refill(&mut self) -> Option<usize> {
         debug_assert!(self.cursor.next == self.cursor.limit, "a run is refilled once spent");
-        if HOLE != 0 || self.free_word != 0 || self.free_cursor != 0 || !self.ensure_reserved() {
+        if let Some(run) = self.take_free_run() {
+            return Some(run);
+        }
+        if HOLE != 0 || !self.ensure_reserved() {
             return None;
         }
         let start = self.next_id as usize;
@@ -665,10 +631,13 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         let (block_index, first) = Self::split_id(next);
         let count = (limit - next) as usize;
         self.blocks[block_index].set_occupancy_range(first, first + count, false);
-        // A tail at the high water mark is never used: the high water falls back to it, so no
-        // hole is left for the free scan to reuse one id at a time.
-        if limit == self.next_id {
+        // A tail at the high water mark is never used: the high water falls back to it. Any other
+        // tail is listed again as a free run. The high water never falls below `young_floor`, which
+        // the minor sweep's word list is built from.
+        if limit == self.next_id && next >= self.young_floor {
             self.next_id = next;
+        } else {
+            self.free_runs.push((next, limit));
         }
         self.live -= count;
         count
@@ -697,47 +666,56 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[cold]
     #[inline(never)]
     fn bump_id_slow(&mut self, allocated: &mut usize) -> Option<RecordId> {
-        // Holes are reused first (the free words, then the free scan), one id at a time.
-        if self.free_word == 0 && self.free_cursor == 0 {
-            if let Some(run) = self.cursor_refill() {
-                *allocated += run;
-                return self.cursor_take();
-            }
+        if let Some(run) = self.cursor_refill() {
+            *allocated += run;
+            return self.cursor_take();
         }
         let id = self.claim_uninit()?;
         *allocated += 1;
         Some(id)
     }
 
-    /// Claims the highest id of the loaded free word, whose bits name unoccupied ids of one
-    /// occupancy word, with no test of the id it already proved free; hints the next one.
-    #[inline(always)]
-    fn take_free_word_id(&mut self) -> RecordId {
-        debug_assert_ne!(self.free_word, 0);
-        let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
-        let mask = 1_u64 << bit;
-        self.free_word &= !mask;
-        prefetch::next_free_record(self.base.as_ptr(), self.free_word_base, self.free_word);
-        // SAFETY: `free_word_occupied` names the occupancy word the nonzero free word came from,
-        // in a block that has not moved since (see the field).
-        let word = unsafe { &mut *self.free_word_occupied };
-        debug_assert_eq!(*word & mask, 0, "a free-word bit names an unoccupied id");
-        *word |= mask;
-        self.free_word_base + bit as RecordId
+    /// Occupies the first free run that holds no withheld id as the cursor's run, and returns its
+    /// length; `None` once no free run is left. A withheld id can sit in a listed run (`withhold`
+    /// follows the sweep that listed it): it ends the run taken, and the rest of the run is listed
+    /// again, so the next take skips it.
+    fn take_free_run(&mut self) -> Option<usize> {
+        while let Some((start, end)) = self.free_runs.pop() {
+            let (block_index, first) = Self::split_id(start);
+            let to = first + (end - start) as usize;
+            let found = self.blocks[block_index].first_withheld(first, to);
+            if found == first {
+                if first + 1 < to {
+                    self.free_runs.push((start + 1, end));
+                }
+                continue;
+            }
+            if found < to {
+                self.free_runs.push((start + (found - first) as RecordId, end));
+            }
+            let run = found - first;
+            self.blocks[block_index].set_occupancy_range(first, found, true);
+            self.dirty[block_index] = true;
+            let block_base = block_index * RECORDS_PER_BLOCK;
+            for word in (first / OCCUPANCY_WORD_BITS)..=((found - 1) / OCCUPANCY_WORD_BITS) {
+                self.young_words.push((block_base + word * OCCUPANCY_WORD_BITS) as RecordId);
+            }
+            self.cursor = RecordCursor { next: start, limit: start + run as RecordId };
+            self.live += run;
+            return Some(run);
+        }
+        None
     }
 
-    /// `try_insert`'s claim of an unoccupied id when it reserves the range, adds a block or
-    /// loads a free word; `None` when no id is free.
+    /// `claim_uninit`'s claim where the quick path has none: a free run's id, a new run of fresh
+    /// ids, or the single fresh id a hole or a block boundary leaves.
     #[inline(never)]
     fn claim_slow(&mut self) -> Option<RecordId> {
         if !self.ensure_reserved() {
             return None;
         }
-        if self.free_word == 0 && self.free_cursor != 0 {
-            self.load_free_word();
-        }
-        if self.free_word != 0 {
-            return Some(self.take_free_word_id());
+        if self.cursor_refill().is_some() {
+            return self.cursor_take();
         }
         if HOLE != 0 && self.next_id as usize == HOLE {
             self.next_id = 2 * HOLE as RecordId;
@@ -754,7 +732,51 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             return None;
         }
         self.next_id = following;
+        self.live += 1;
         Some(id)
+    }
+
+    /// Lists the free ids of `bits`, the occupancy bits of the word at `base` (each set bit names a
+    /// free id), as runs.
+    fn push_free_bits(&mut self, base: RecordId, mut bits: u64) {
+        while bits != 0 {
+            let low = bits.trailing_zeros();
+            let count = (bits >> low).trailing_ones();
+            let span = if count as usize >= OCCUPANCY_WORD_BITS { u64::MAX } else { ((1_u64 << count) - 1) << low };
+            bits &= !span;
+            self.push_free_run(base + low, base + low + count);
+        }
+    }
+
+    /// Lists the free ids `[start, end)`, which lie in one block, as a run. The last run is extended
+    /// when it ends at `start` inside the same block.
+    fn push_free_run(&mut self, start: RecordId, end: RecordId) {
+        if let Some(last) = self.free_runs.last_mut() {
+            if last.1 == start && start as usize % RECORDS_PER_BLOCK != 0 {
+                last.1 = end;
+                return;
+            }
+        }
+        self.free_runs.push((start, end));
+    }
+
+    /// Lists every free id below the high water mark: no occupied, withheld or unreached id. Run by
+    /// the paths that make ids free outside a sweep's word (a snapshot's skipped ids, released withheld ids).
+    fn rebuild_free_runs(&mut self) {
+        self.free_runs.clear();
+        let high = self.next_id as usize;
+        for block_index in 0..self.blocks.len() {
+            for word_index in 0..BLOCK_WORDS {
+                let base = block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS;
+                if base >= high {
+                    return;
+                }
+                let block = &self.blocks[block_index];
+                let free = !(block.occupied[word_index] | block.withheld[word_index]);
+                let reached = if base + OCCUPANCY_WORD_BITS <= high { u64::MAX } else { (1_u64 << (high - base)) - 1 };
+                self.push_free_bits(base as RecordId, free & reached);
+            }
+        }
     }
 
     /// Whether `id` lies in the ids `HOLE` keeps out of use.
@@ -809,38 +831,15 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         true
     }
 
-    /// Makes the ids `insert_snapshot` skipped reusable, scanning down from the high water.
+    /// Makes the ids `insert_snapshot` skipped reusable.
     pub(super) fn finish_snapshot_inserts(&mut self) {
-        self.free_cursor = self.next_id;
-        self.free_word = 0;
+        self.rebuild_free_runs();
         self.young_floor = self.next_id;
     }
 
     /// The first id never used: a snapshot restores the space up to it.
     pub(super) fn high_water_id(&self) -> RecordId {
         self.next_id
-    }
-
-    /// Loads the occupancy word holding the highest reusable ID below `free_cursor` and moves
-    /// the cursor to that word's start, or to 0 when no reusable ID remains.
-    #[inline(never)]
-    fn load_free_word(&mut self) {
-        let Some(id) = self.highest_free_before(self.free_cursor) else {
-            self.free_cursor = 0;
-            return;
-        };
-        let (block_index, record_index) = Self::split_id(id);
-        let word_index = record_index / OCCUPANCY_WORD_BITS;
-        let bit = record_index % OCCUPANCY_WORD_BITS;
-        let below_and_at = u64::MAX >> (OCCUPANCY_WORD_BITS - 1 - bit);
-        // A claim from the loaded word writes the id's record without `claim_block`.
-        self.dirty[block_index] = true;
-        let block = &mut self.blocks[block_index];
-        self.free_word = !(block.occupied[word_index] | block.withheld[word_index]) & below_and_at;
-        self.free_word_occupied = &raw mut block.occupied[word_index];
-        self.free_word_base = id - bit as RecordId;
-        self.free_cursor = self.free_word_base;
-        self.young_words.push(self.free_word_base);
     }
 
     /// Starts loading record `id`'s first cache line, for a read soon after.
@@ -878,11 +877,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// # Safety
     /// As for `get_live_mut_unbarriered`.
     #[inline(always)]
-    pub(super) unsafe fn get_live_mut(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena) -> &mut T
-    where
-        T: TraceRecord,
+    pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T
     {
-        self.barrier(id, properties);
+        self.barrier(id);
         // SAFETY: the caller's contract.
         unsafe { self.get_live_mut_unbarriered(id) }
     }
@@ -898,14 +895,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         &mut self,
         id: RecordId,
         stored: Value,
-        properties: &crate::value_vec::ValueArena,
     ) -> &mut T
-    where
-        T: TraceRecord,
     {
-        if self.rc {
-            self.rc_barrier(id, properties);
-        } else if stored.heap_index().is_some() {
+        if stored.heap_index().is_some() {
             self.remember(id);
         }
         // SAFETY: the caller's contract.
@@ -914,43 +906,10 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
 
     /// The write barrier for a write into record `id`: the generational log (`remember`).
     #[inline(always)]
-    pub(super) fn barrier(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
-    where
-        T: TraceRecord,
+    pub(super) fn barrier(&mut self, id: RecordId)
     {
-        if self.rc {
-            self.rc_barrier(id, properties);
-        } else {
-            self.remember(id);
-        }
+        self.remember(id);
     }
-
-    /// The barrier under counts: an old record's first write in the epoch unmarks and logs it,
-    /// as `remember` does, and copies the children it holds before the write.
-    #[inline(always)]
-    fn rc_barrier(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
-    where
-        T: TraceRecord,
-    {
-        if self.barrier_marked(id) {
-            self.rc_note(id, properties);
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn rc_note(&mut self, id: RecordId, properties: &crate::value_vec::ValueArena)
-    where
-        T: TraceRecord,
-    {
-        // The mark is set: `rc_barrier` tested it.
-        self.unmark_and_log(id);
-        self.rc_logged.push(id);
-        // SAFETY: a barrier runs only for a live record of this family.
-        let record = unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() };
-        record.extend_children(properties, &mut self.rc_decrements);
-    }
-
 
     /// Mutable access that writes no reference into the record (the collector's own
     /// compaction and remapping). It does not pass the write barrier.
@@ -973,8 +932,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// store passes the barrier without effect.
     #[inline(always)]
     pub(super) fn store_logs(&self, id: RecordId, stored: Value) -> bool {
-        // Under counts, overwriting a reference with any value deletes an edge.
-        if stored.heap_index().is_none() && !self.rc {
+        if stored.heap_index().is_none() {
             return false;
         }
         self.barrier_marked(id)
@@ -985,7 +943,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     #[inline(always)]
     fn barrier_marked(&self, id: RecordId) -> bool {
         // A live id belongs to an initialized block, so the staged bit test reads within the table.
-        let mut stage = crate::staged::Concrete::new(core::ptr::null());
+        let mut stage = crate::staged::Concrete::pure();
         crate::staged::barrier::mark_bit(&mut stage, self.blocks.as_ptr() as u64, u64::from(id)) != 0
     }
 
@@ -1024,18 +982,25 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.remembered.len()
     }
 
-    #[cfg(test)]
-    pub(super) fn remove_live(&mut self, id: RecordId) -> T {
-        debug_assert!(self.is_occupied(id), "sweep removes an initialized record");
+    /// Frees the occupied record `id` without reading it: its value holds nothing to drop, or the
+    /// caller has taken it (`ClassSpace::release_stub`). The id is reusable as a swept dead record's is.
+    pub(super) fn release_live(&mut self, id: RecordId) {
+        debug_assert!(self.is_occupied(id), "a release frees an initialized record");
         let (block_index, record_index) = Self::split_id(id);
         self.blocks[block_index].release(record_index);
         self.blocks[block_index].marked[record_index / OCCUPANCY_WORD_BITS] &=
             !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-        self.free_cursor = self.next_id;
-        self.free_word = 0;
+        self.push_free_run(id, id + 1);
         self.live -= 1;
-        // SAFETY: release cleared the bit and this id was initialized exactly once.
-        unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
+    }
+
+    #[cfg(test)]
+    pub(super) fn remove_live(&mut self, id: RecordId) -> T {
+        debug_assert!(self.is_occupied(id), "sweep removes an initialized record");
+        // SAFETY: the id is initialized (asserted above) and is read once, before it is released.
+        let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
+        self.release_live(id);
+        value
     }
 
     #[inline(always)] pub(super) fn mark(&mut self, id: RecordId) -> bool {
@@ -1043,15 +1008,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.blocks
             .get_mut(block_index)
             .is_some_and(|block| block.is_occupied(record_index) && block.mark(record_index))
-    }
-
-    /// Whether record `id` is aged: a newborn a minor collection under
-    /// `PromotionAge::First` names (`age_newborns`), or a candidate counts unmarked
-    /// (`rc_unmark`).
-    #[inline(always)]
-    pub(super) fn is_aged(&self, id: RecordId) -> bool {
-        let (block_index, record_index) = Self::split_id(id);
-        self.blocks[block_index].aged[record_index / OCCUPANCY_WORD_BITS] & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
     }
 
     pub(super) fn is_marked(&self, id: RecordId) -> bool {
@@ -1127,9 +1083,9 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.next_id as usize
     }
 
-    /// The first id of each word young records can occupy: the free words loaded since the
-    /// last sweep and the words of the fresh ids from `young_floor` up. A word may be listed
-    /// twice (the free scan can reach the fresh ids' first word).
+    /// The first id of each word young records can occupy: the words cursor runs were taken
+    /// from since the last sweep and the words of the fresh ids from `young_floor` up. A word may
+    /// be listed twice (a run can start in the fresh ids' first word).
     fn young_word_bases(
         young_words: &[RecordId],
         young_floor: RecordId,
@@ -1290,12 +1246,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.live = live_count;
         self.young_floor = self.next_id;
         self.young_words.clear();
-        self.free_cursor = if live_count < self.next_id as usize {
-            self.next_id
-        } else {
-            0
-        };
-        self.free_word = 0;
         #[cfg(debug_assertions)]
         self.debug_assert_swept();
         (live_count, freed_count)
@@ -1327,9 +1277,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             live &= live - 1;
         }
         block.occupied[word_index] = marked;
-        if self.rc {
-            self.rc_keep(block_index, word_index, marked);
-        }
+        self.push_free_bits(id_base, dead);
         (marked.count_ones() as usize, self.release(id_base, dead, visit))
     }
 
@@ -1362,9 +1310,7 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         block.aged[word_index] = stays;
         block.marked[word_index] = marked & !stays;
         block.occupied[word_index] &= !dead;
-        if self.rc {
-            self.rc_keep(block_index, word_index, !dead);
-        }
+        self.push_free_bits(base, dead);
         if stays != 0 {
             self.aged_words.push(base);
         }
@@ -1469,30 +1415,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         (id / RECORDS_PER_BLOCK, id % RECORDS_PER_BLOCK)
     }
 
-    fn highest_free_before(&self, mut end: RecordId) -> Option<RecordId> {
-        while end != 0 {
-            let candidate = end - 1;
-            let (block_index, record_index) = Self::split_id(candidate);
-            let word_index = record_index / OCCUPANCY_WORD_BITS;
-            let bit_count = record_index % OCCUPANCY_WORD_BITS + 1;
-            let valid_bits = u64::MAX >> (OCCUPANCY_WORD_BITS - bit_count);
-            let block = self
-                .blocks
-                .get(block_index)
-                .expect("every allocated ID belongs to an initialized record block");
-            let free_bits = !(block.occupied[word_index] | block.withheld[word_index]) & valid_bits;
-            if free_bits != 0 {
-                let bit = OCCUPANCY_WORD_BITS - 1 - free_bits.leading_zeros() as usize;
-                return Some(
-                    (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS + bit)
-                        as RecordId,
-                );
-            }
-            end = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
-        }
-        None
-    }
-
     /// The bytes this space holds committed: every block's metadata, and the records of the
     /// blocks whose pages are still resident (`dirty`). `return_free_pages` gives a block's
     /// pages back and clears its `dirty` bit, so the ledger falls with them: the block count
@@ -1529,17 +1451,15 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
             block.withheld = [if hole { u64::MAX } else { 0 }; BLOCK_WORDS];
         }
         self.withheld = 0;
-        self.free_cursor = self.next_id;
-        self.free_word = 0;
+        self.rebuild_free_runs();
     }
 
     /// After a full collection's sweep: gives the pages of the empty record blocks back to the
     /// kernel, and lowers the high water mark past the empty top blocks, so allocation reuses the
     /// low ids first. Returns the bytes returned.
     ///
-    /// The block metadata stays where it is (`blocks` never shrinks, and `free_word_occupied`
-    /// and the native mark pointers name it); only the pages of the records move. A block is
-    /// returned when it is `returnable`, and the `RESERVE_MIN_BLOCKS` (or a quarter of the live
+    /// The block metadata stays where it is (`blocks` never shrinks, and the native mark pointers
+    /// name it); only the pages of the records move. A block is returned when it is `returnable`, and the `RESERVE_MIN_BLOCKS` (or a quarter of the live
     /// blocks, if more) nearest the high water mark on each side stay resident: the ids that
     /// allocation reaches first. The high water mark falls to the end of the last block holding
     /// an occupied or withheld id; a cursor run is occupied, so no returned page holds one.
@@ -1547,12 +1467,17 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
     /// A returned page reads back as zero. That is no record: a record is read only where its
     /// occupancy bit is set, and the sweep, the marks and the drop all read occupancy first.
     pub(super) fn return_free_pages(&mut self) -> usize {
-        if !self.is_reserved() || self.cursor.next < self.cursor.limit || self.free_word != 0 {
+        if !self.is_reserved() || self.cursor.next < self.cursor.limit {
             return 0;
         }
         let end_block = self.blocks.iter().rposition(RecordBlock::in_use).map_or(0, |index| index + 1);
         let lowered = (end_block * RECORDS_PER_BLOCK).min(self.next_id as usize) as RecordId;
         self.next_id = lowered;
+        // The ids from `lowered` up are unreached now: no run names one.
+        self.free_runs.retain_mut(|run| {
+            run.1 = run.1.min(lowered);
+            run.0 < run.1
+        });
         // The sweep set `young_floor` to the old high water mark; the ids between are free now.
         self.young_floor = lowered;
         let pivot = self.next_id as usize / RECORDS_PER_BLOCK;
@@ -1598,7 +1523,6 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
                 returned += end - start;
             }
         }
-        self.free_cursor = if self.live < self.next_id as usize { self.next_id } else { 0 };
         returned
     }
 
@@ -1606,304 +1530,10 @@ impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE>
         self.next_id as usize - self.live
     }
 
-    pub(super) fn allocation_scan_cursor(&self) -> usize {
-        self.free_cursor as usize
+    pub(super) fn free_run_count(&self) -> usize {
+        self.free_runs.len()
     }
 }
 
 #[cfg(test)]
 mod tests;
-
-/// Reference counts (`super::rc`).
-impl<T, const CAPACITY: usize, const HOLE: usize> RecordSpace<T, CAPACITY, HOLE> {
-    /// Turns counting on or off; off forgets the epoch's buffers.
-    pub(super) fn set_rc(&mut self, on: bool) {
-        self.rc = on;
-        self.rc_decrements.clear();
-        self.rc_logged.clear();
-        if on {
-            self.rc_ensure();
-        } else {
-            self.rc_blocks = Vec::new();
-        }
-    }
-
-    /// Gives every record block its counts, zero for the blocks made since the last call: the
-    /// collector calls it before it reads or changes counts.
-    pub(super) fn rc_ensure(&mut self) {
-        while self.rc_blocks.len() < self.blocks.len() {
-            self.rc_blocks.push(RcBlock::new());
-        }
-    }
-
-    /// The count of live record `id`: 0..=3, 3 stuck.
-    #[inline(always)]
-    pub(super) fn rc_count(&self, id: RecordId) -> u8 {
-        let (block_index, record_index) = Self::split_id(id);
-        let block = &self.rc_blocks[block_index];
-        let (word, bit) = (record_index / OCCUPANCY_WORD_BITS, record_index % OCCUPANCY_WORD_BITS);
-        let lo = (block.lo[word].load(Ordering::Relaxed) >> bit) & 1;
-        let hi = (block.hi[word].load(Ordering::Relaxed) >> bit) & 1;
-        (hi << 1 | lo) as u8
-    }
-
-    /// The exact count of `id`, with its overflow entry; `u32::MAX` when stuck.
-    #[cfg(test)]
-    pub(super) fn rc_exact_count(&self, id: RecordId) -> u32 {
-        if self.rc_stuck(id) {
-            return u32::MAX;
-        }
-        let count = self.rc_count(id) as u32;
-        let overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
-        count + if count == RC_STUCK as u32 { overflow.get(&id).copied().unwrap_or(0) } else { 0 }
-    }
-
-    /// Adds a reference to live record `id`; past `RC_STUCK`, in the overflow table. The
-    /// count's low bit is set first: 0 -> 1 and 2 -> 3 set it, 1 -> 2 carries into the high bit.
-    #[inline(always)]
-    pub(super) fn rc_increment(&self, id: RecordId) {
-        let (block_index, record_index) = Self::split_id(id);
-        let block = &self.rc_blocks[block_index];
-        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-        let lo = block.lo[word].load(Ordering::Relaxed);
-        if lo & mask == 0 {
-            block.lo[word].store(lo | mask, Ordering::Relaxed);
-            return;
-        }
-        let hi = block.hi[word].load(Ordering::Relaxed);
-        if hi & mask == 0 {
-            block.lo[word].store(lo & !mask, Ordering::Relaxed);
-            block.hi[word].store(hi | mask, Ordering::Relaxed);
-        } else if block.stuck[word].load(Ordering::Relaxed) & mask == 0 {
-            self.rc_overflow_add(id);
-        }
-    }
-
-    /// Makes `id`'s count stuck (`Heap::rc_pin`), dropping its overflow entry.
-    pub(super) fn rc_pin(&self, id: RecordId) {
-        let (block_index, record_index) = Self::split_id(id);
-        let block = &self.rc_blocks[block_index];
-        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-        if block.stuck[word].load(Ordering::Relaxed) & mask != 0 {
-            return;
-        }
-        if block.lo[word].load(Ordering::Relaxed) & block.hi[word].load(Ordering::Relaxed) & mask != 0 {
-            self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner()).remove(&id);
-        }
-        block.lo[word].fetch_or(mask, Ordering::Relaxed);
-        block.hi[word].fetch_or(mask, Ordering::Relaxed);
-        block.stuck[word].fetch_or(mask, Ordering::Relaxed);
-    }
-
-    /// Whether `id`'s count is stuck: past the overflow table's limit.
-    #[cfg(test)]
-    fn rc_stuck(&self, id: RecordId) -> bool {
-        let (block_index, record_index) = Self::split_id(id);
-        let word = &self.rc_blocks[block_index].stuck[record_index / OCCUPANCY_WORD_BITS];
-        word.load(Ordering::Relaxed) & (1_u64 << (record_index % OCCUPANCY_WORD_BITS)) != 0
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn rc_overflow_add(&self, id: RecordId) {
-        let mut overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
-        let extra = overflow.entry(id).or_default();
-        *extra += 1;
-        if *extra > RC_OVERFLOW_LIMIT {
-            overflow.remove(&id);
-            let (block_index, record_index) = Self::split_id(id);
-            let word = &self.rc_blocks[block_index].stuck[record_index / OCCUPANCY_WORD_BITS];
-            word.fetch_or(1_u64 << (record_index % OCCUPANCY_WORD_BITS), Ordering::Relaxed);
-        }
-    }
-
-    /// Drops a reference to live record `id`; whether its count reached 0. A count of 0 (an
-    /// over-decrement, which a deletion the barrier missed cannot cause: those only
-    /// over-count) stays 0.
-    #[inline(always)]
-    pub(super) fn rc_decrement(&self, id: RecordId) -> bool {
-        let (block_index, record_index) = Self::split_id(id);
-        let block = &self.rc_blocks[block_index];
-        let (word, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-        let lo = block.lo[word].load(Ordering::Relaxed);
-        let hi = block.hi[word].load(Ordering::Relaxed);
-        match (lo & mask != 0, hi & mask != 0) {
-            (false, false) => false,
-            (true, false) => {
-                block.lo[word].store(lo & !mask, Ordering::Relaxed);
-                true
-            }
-            (false, true) => {
-                block.lo[word].store(lo | mask, Ordering::Relaxed);
-                block.hi[word].store(hi & !mask, Ordering::Relaxed);
-                false
-            }
-            (true, true) => {
-                if block.stuck[word].load(Ordering::Relaxed) & mask == 0 && !self.rc_overflow_take(id) {
-                    block.lo[word].store(lo & !mask, Ordering::Relaxed);
-                }
-                false
-            }
-        }
-    }
-
-    /// Takes one reference from `id`'s overflow entry; `false` when it has none.
-    #[cold]
-    #[inline(never)]
-    fn rc_overflow_take(&self, id: RecordId) -> bool {
-        let mut overflow = self.rc_overflow.lock().unwrap_or_else(|poison| poison.into_inner());
-        match overflow.get_mut(&id) {
-            Some(extra) => {
-                *extra -= 1;
-                if *extra == 0 {
-                    overflow.remove(&id);
-                }
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Makes old record `id` a candidate for freeing: its mark bit is cleared, so a minor
-    /// collection's mark re-marks it if anything it traces names it, and its word goes to the
-    /// minor sweep's list (`aged_words`), which frees it otherwise. `false` when it is not
-    /// marked: logged by the barrier this epoch, young, or a candidate already.
-    pub(super) fn rc_unmark(&mut self, id: RecordId) -> bool {
-        let (block_index, record_index) = Self::split_id(id);
-        let (word_index, mask) = (record_index / OCCUPANCY_WORD_BITS, 1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-        let word = &mut self.blocks[block_index].marked[word_index];
-        if *word & mask == 0 {
-            return false;
-        }
-        *word &= !mask;
-        // Aged, as a newborn is: if the mark re-marks it, it counts its children there. A
-        // word aged already is listed already, among the young words or `aged_words`.
-        let aged = &mut self.blocks[block_index].aged[word_index];
-        if *aged == 0 {
-            self.aged_words.push(id - (record_index % OCCUPANCY_WORD_BITS) as RecordId);
-        }
-        *aged |= mask;
-        true
-    }
-
-    /// Clears the counts of the ids of a word that `kept` leaves out, as the sweep frees
-    /// them, with their overflow entries.
-    #[inline(never)]
-    fn rc_keep(&mut self, block_index: usize, word_index: usize, kept: u64) {
-        let Some(counts) = self.rc_blocks.get_mut(block_index) else { return };
-        let mut overflowed = *counts.lo[word_index].get_mut() & *counts.hi[word_index].get_mut()
-            & !*counts.stuck[word_index].get_mut() & !kept;
-        counts.keep(word_index, kept);
-        if overflowed != 0 {
-            let overflow = self.rc_overflow.get_mut().unwrap_or_else(|poison| poison.into_inner());
-            if !overflow.is_empty() {
-                let base = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
-                while overflowed != 0 {
-                    overflow.remove(&(base + overflowed.trailing_zeros()));
-                    overflowed &= overflowed - 1;
-                }
-            }
-        }
-    }
-
-    /// Every count becomes 0, as a recount starts.
-    pub(super) fn rc_clear(&mut self) {
-        self.rc_overflow.get_mut().unwrap_or_else(|poison| poison.into_inner()).clear();
-        self.rc_ensure();
-        for block in &mut self.rc_blocks {
-            for word in 0..BLOCK_WORDS {
-                block.keep(word, 0);
-            }
-        }
-    }
-
-    /// The records old as a full collection starts, one bit per id, `BLOCK_WORDS` words per
-    /// block: the marked ones and the barrier's `logged` (old, though it unmarked them).
-    pub(super) fn rc_old_bits(&self, logged: &[RecordId]) -> Vec<u64> {
-        let mut bits = Vec::with_capacity(self.blocks.len() * BLOCK_WORDS);
-        for block in &self.blocks {
-            bits.extend_from_slice(&block.marked);
-        }
-        for &id in logged {
-            let (block_index, record_index) = Self::split_id(id);
-            bits[block_index * BLOCK_WORDS + record_index / OCCUPANCY_WORD_BITS] |= 1 << (record_index % OCCUPANCY_WORD_BITS);
-        }
-        bits
-    }
-
-    /// After a full collection's mark, before its sweep: shows `visit` each record old at its
-    /// start (`old`, from `rc_old_bits`) the mark left (`false`), and each record young then
-    /// the mark kept (`true`).
-    pub(super) fn rc_full_changes(&self, old: &[u64], mut visit: impl FnMut(RecordId, bool)) {
-        for (block_index, block) in self.blocks.iter().enumerate() {
-            for word_index in 0..BLOCK_WORDS {
-                let was = old.get(block_index * BLOCK_WORDS + word_index).copied().unwrap_or(0);
-                let (occupied, marked) = (block.occupied[word_index], block.marked[word_index]);
-                let base = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
-                let mut changed = occupied & (was ^ marked);
-                while changed != 0 {
-                    let bit = changed.trailing_zeros();
-                    visit(base + bit, marked & (1 << bit) != 0);
-                    changed &= changed - 1;
-                }
-            }
-        }
-    }
-
-    /// The children the barrier copied and the records it logged this epoch, emptied.
-    pub(super) fn take_rc_epoch(&mut self) -> (Vec<Value>, Vec<RecordId>) {
-        self.rc_ensure();
-        (std::mem::take(&mut self.rc_decrements), std::mem::take(&mut self.rc_logged))
-    }
-
-    /// Under `PromotionAge::First`, after a minor collection's mark and before its sweep: the
-    /// young records the mark reached (the marked aged ones of the young words), which the
-    /// sweep makes old.
-    pub(super) fn for_each_young_survivor(&self, mut visit: impl FnMut(RecordId)) {
-        self.for_each_young_survivor_word(|base, _block_index, _word_index, mut survivors| {
-            while survivors != 0 {
-                visit(base + survivors.trailing_zeros());
-                survivors &= survivors - 1;
-            }
-        });
-    }
-
-    /// `for_each_young_survivor` a word at a time: each word's first id, block and word
-    /// position, and its survivors' bits.
-    fn for_each_young_survivor_word(&self, mut visit: impl FnMut(RecordId, usize, usize, u64)) {
-        // A word reloaded for allocation is listed once per load; a candidate's word is in
-        // `aged_words`.
-        let mut bases: Vec<RecordId> = Self::young_word_bases(&self.young_words, self.young_floor, self.next_id).collect();
-        bases.extend_from_slice(&self.aged_words);
-        bases.sort_unstable();
-        bases.dedup();
-        for base in bases {
-            let (block_index, word_index) = Self::word_position(base);
-            let block = &self.blocks[block_index];
-            let survivors = block.aged[word_index] & block.marked[word_index];
-            if survivors != 0 {
-                visit(base, block_index, word_index, survivors);
-            }
-        }
-    }
-
-    /// The young survivors (`for_each_young_survivor`) whose count is 0, a word of counts at
-    /// a time; the counts cover every block (`rc_ensure`).
-    pub(super) fn rc_zero_survivors(&self, mut visit: impl FnMut(RecordId)) {
-        self.for_each_young_survivor_word(|base, block_index, word_index, survivors| {
-            let counts = &self.rc_blocks[block_index];
-            let mut zero = survivors
-                & !(counts.lo[word_index].load(Ordering::Relaxed) | counts.hi[word_index].load(Ordering::Relaxed));
-            while zero != 0 {
-                visit(base + zero.trailing_zeros());
-                zero &= zero - 1;
-            }
-        });
-    }
-}
-
-/// The largest count the bits hold: references past it are counted in the overflow table.
-#[cfg(test)]
-pub(super) const RC_STUCK: u8 = 3;
-/// The references past `RC_STUCK` the overflow table counts before the record's count sticks.
-const RC_OVERFLOW_LIMIT: u32 = 64;

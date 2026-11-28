@@ -78,11 +78,13 @@ impl Vm {
         // matcher compiles on the first match (`Vm::regexp_matcher`), as a snapshot's
         // patterns do: a module evaluates every literal it holds, and most never run
         // (tr46's 34 Unicode classes were 3.3% of the whatwg-url npm scenario).
+        let static_frequency = self.programs.call_graph(program).map_or(0, |graph| graph.regexp_site_frequency(site_index));
         let meta = Rc::new(crate::heap::RegExpMeta {
             source,
             flags: RegExpFlags::validated(flags),
             legacy_constructor: owner,
             matcher: crate::heap::RegExpMatcher::default(),
+            static_frequency,
         });
         if !self.programs.cache_regexp_literal_meta(program, site_index, Rc::clone(&meta)) {
             return Err(JsError::validation("RegExp literal cache site is invalid".into()));
@@ -225,7 +227,7 @@ impl Vm {
         if !self.fuse_intact_at(IntactFuse::RegExpSpecies, constructor) {
             return None;
         }
-        let prototype = self.object_data(object)?.proto();
+        let prototype = self.heap.object(object)?.proto();
         self.heap.mark_prototype(prototype);
         let watch = crate::heap::watch_prototype_values(self.heap.object(prototype)?.exact_shape())?;
         self.verify_regexp_builtin_layout(object, prototype)?;
@@ -237,7 +239,7 @@ impl Vm {
         ] {
             let symbol = self.well_known_symbols.get(symbol)?;
             let slot = self.verify_regexp_symbol_layout(object, prototype, symbol)?;
-            let method = self.heap.property_get(self.object_data(prototype)?, slot)?;
+            let method = self.heap.property_get_ref(self.heap.object(prototype)?, slot)?;
             if !self.is_current_realm_native(method, native) {
                 return None;
             }

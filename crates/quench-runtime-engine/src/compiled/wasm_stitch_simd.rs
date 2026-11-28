@@ -19,13 +19,14 @@ use crate::ext_traits::*;
 use super::wasm_stitch_simd_more;
 use super::{Planned, WasmCode, World, codes, leak, row, slot};
 use quench_runtime::bytecode::WideInstruction;
-use quench_runtime::staged::wasm_instance::Instance;
+use quench_runtime::staged::wasm_instance::{Instance, InstanceWasmInstanceExt};
 use quench_runtime::staged::wasm_simd::Simd;
 use quench_runtime::staged::wasm_step::Step;
 use quench_runtime::wasm::V128_BYTES;
 use quench_runtime::wasm::integer::I64BinaryOperator as Binary;
 use quench_runtime::wasm::simd::SimdOperator;
 use quench_bjit::padded_holes;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The frame byte of vector register `register` in a function of `registers` registers: its low
 /// word (the high word is 8 more).

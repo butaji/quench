@@ -9,6 +9,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::{Stage, add::Edge, naming::{name_form, site_name}};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Lowering<'_, '_> {
     /// The staged naming of the function `instruction` names, or `None` (nothing emitted, so the
@@ -25,7 +26,7 @@ impl Lowering<'_, '_> {
         let function = self.tagged(state, source);
         let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
         let empty = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.empty_string));
-        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: Some(self.payload) , payload: None};
+        let mut stage = super::object_slots::Emit { builder: &mut self.builder, property_values: Some(properties), gate: Some(self.payload) , payload: None, facts: Default::default(), fresh: false };
         let Edge { before, after, slot } = transition.edge();
         let edge = Edge { before: stage.constant(before), after: stage.constant(after), slot: stage.constant(slot) };
         let name = stage.constant(word);

@@ -3,8 +3,9 @@
 //!
 //! The code holds the global object's layout (`GlobalLayoutFact`: the slot stays a data property at
 //! its index until the object's shape, integrity or prototype use changes, or a lexical declaration
-//! shadows the name) and the slot's observed type (`SlotDependency`), so a row names the slot by a
-//! per-site byte offset and the object by its record id, and checks nothing per use. A realm proof
+//! shadows the name) and the slot's observed type (`SlotDependency`), so a row names the slot by its field-cache
+//! slot word and the object by its class cell's granule, addressed as `class_slot_address` addresses any cell's
+//! field, and checks nothing per use. A realm proof
 //! once at entry (`Heap::Realm`) says the VM runs the realm whose global object that is.
 //!
 //! 1. A load reads the slot live (`Heap::GlobalRead`), a Number where the slot's type says so.
@@ -20,6 +21,7 @@
 //!
 //! A name call's receiver, `undefined`, is a second definition of the row (`Decoded::also`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationNamesExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -28,9 +30,10 @@ use quench_runtime::tier_surface::{GlobalFact, GlobalLayoutFact};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::vm::global_facts::{GlobalRead, GlobalSlot, LexicalSlot, StableCell};
 use quench_bjit::{padded_holes, HOLES};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The global object's slot a row holds: the fact the VM took (`Vm::stable_global_slot`) and the
-/// record id the object is named by.
+/// granule of the global object's class cell, which the slot word is addressed in (`class_slot_address`).
 #[derive(Clone, Copy)]
 pub(crate) struct Access {
     pub(crate) slot: GlobalSlot,
@@ -40,14 +43,15 @@ pub(crate) struct Access {
 impl Access {
     fn of(slot: GlobalSlot) -> Option<Self> {
         Some(Self {
-            id: slot.global.direct_object_index()?,
+            id: slot.granule,
             slot,
         })
     }
 
-    /// The byte offset of the slot's value in the arena run behind the object's extras.
-    fn offset(self) -> u64 {
-        u64::from(self.slot.slot) * quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64
+    /// The field-cache slot word of the slot (`GlobalSlot::slot`), which the lane addresses in the global's class cell
+    /// (`staged::entry::class_slot_address`); a row holds the word itself, not a byte offset into an arena.
+    fn slot_word(self) -> u64 {
+        u64::from(self.slot.slot)
     }
 
     /// Whether the slot's observed type is Numbers only, which a load of it yields.
@@ -86,9 +90,9 @@ pub(crate) fn global_row(known: Known, pc: u32, instruction: WideInstruction) ->
 /// The row of an access of the global object's slot: a load reads it (a `typeof`'s load too, whose
 /// value the `Unary` after it names), and a store writes it.
 fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Option<Decoded> {
-    if loads_global(instruction) {
+    if read_op(instruction).is_some() {
         Some(Decoded {
-            hole: access.offset(),
+            hole: access.slot_word(),
             global: Some(access),
             also: receiver(instruction),
             ..Decoded::heap(
@@ -98,7 +102,7 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
                 None,
             )
         })
-    } else if stores_name(instruction) {
+    } else if store_op(instruction).is_some() {
         store_row(known, instruction, access)
     } else {
         None
@@ -108,9 +112,9 @@ fn slot_row(known: Known, instruction: WideInstruction, access: Access) -> Optio
 /// The row of an access of a global lexical binding's word at its address: a load reads it, leaving where it is in its dead zone, and a store
 /// writes it where it is initialized. Any other access is the VM's.
 fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decoded> {
-    let row = if named_load(instruction) {
+    let row = if quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some() {
         Decoded { also: receiver(instruction), ..Decoded::heap(Heap::LexicalRead, Some(instruction.result_register()), None, None) }
-    } else if stores_name(instruction) {
+    } else if store_op(instruction).is_some() {
         Decoded::heap(Heap::LexicalWrite, None, Some(Source::Register(instruction.register_a())), None)
     } else {
         return None;
@@ -118,31 +122,29 @@ fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decode
     Some(Decoded { hole: slot.address as u64, lexical: Some(slot), ..row })
 }
 
-/// Whether `instruction` stores to a global name, which may write a field of the global object that a
-/// loop's entry record holds (`Facts::Entry`), or to a script-top-level lexical, which writes the realm's record.
+/// Whether `instruction` stores to a global name, which may write a field of the global object's class cell, or to a
+/// script-top-level lexical, which writes the realm's record.
 pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
-    crate::compiled::meaning_compiled::stores_name(instruction)
-        || matches!(quench_runtime::staged::Operation::<(), ()>::decode(instruction, quench_runtime::staged::DecodeContext::EMPTY),
-            Some(quench_runtime::staged::Operation::GlobalLexicalStore { .. }))
+    store_op(instruction).is_some()
 }
 
-/// Whether `instruction` is a by-name read, `LoadName` or a call's `LoadNameCall`: the decode names both
-/// (`Operation::decode_load_name`), whose proof decides nothing about which opcode it is.
-fn named_load(instruction: WideInstruction) -> bool {
-    quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()).is_some()
+/// The staged operation of a by-name read of `instruction`: `LoadName` or a call's `LoadNameCall` (`decode_load_name`, whose
+/// proof decides nothing about the opcode), or the `typeof` read `GlobalTypeof`. Every row of a read is chosen by this.
+fn read_op(instruction: WideInstruction) -> Option<quench_runtime::staged::Operation<(), ()>> {
+    quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ())
+        .or_else(|| crate::compiled::decoded(instruction).filter(|op| matches!(op, quench_runtime::staged::Operation::GlobalTypeof { .. })))
 }
 
-/// Whether `instruction` loads a global name's value: a by-name read (`named_load`), or the load a
-/// `typeof` reads (`Operation::GlobalTypeof`).
-fn loads_global(instruction: WideInstruction) -> bool {
-    named_load(instruction)
-        || matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::GlobalTypeof { .. }))
+/// The staged operation of a store to a global name: `GlobalWrite` (the global object's slot, which a flagged record
+/// performs too, `performed`) or `GlobalLexicalStore` (a script-top-level lexical). Every store row is chosen by this.
+fn store_op(instruction: WideInstruction) -> Option<quench_runtime::staged::Operation<(), ()>> {
+    crate::compiled::performed(instruction).filter(|op| matches!(op, quench_runtime::staged::Operation::GlobalWrite { .. }))
+        .or_else(|| crate::compiled::decoded(instruction).filter(|op| matches!(op, quench_runtime::staged::Operation::GlobalLexicalStore { .. })))
 }
 
 /// The register a name call's `undefined` receiver is defined in.
 fn receiver(instruction: WideInstruction) -> Option<Register> {
-    matches!(quench_runtime::staged::Operation::<(), ()>::decode_load_name(instruction, ()),
-        Some(quench_runtime::staged::Operation::LoadName { receiver: Some(_), .. })).then(|| instruction.register_b())
+    matches!(read_op(instruction), Some(quench_runtime::staged::Operation::LoadName { receiver: Some(_), .. })).then(|| instruction.register_b())
 }
 
 /// The row that defines the load's result as the constant `value`, an immutable global's.
@@ -161,7 +163,7 @@ fn store_row(known: Known, instruction: WideInstruction, access: Access) -> Opti
     known.stores_in_place(atom).then(|| {
         let value = Some(Source::Register(instruction.register_a()));
         Decoded {
-            hole: access.offset(),
+            hole: access.slot_word(),
             global: Some(access),
             atom: Some(atom),
             ..Decoded::heap(Heap::GlobalStore, None, value, None)
@@ -170,7 +172,7 @@ fn store_row(known: Known, instruction: WideInstruction, access: Access) -> Opti
 }
 
 /// The hole values of a global slot row, given its holes of destination and first operand: `None` for
-/// any other row. The slot's byte offset is hole 2 of the slot rows, the word of a constant row hole 1.
+/// any other row. The slot word is hole 2 of the slot rows, the word of a constant row hole 1.
 pub(crate) fn global_holes(
     decoded: &Decoded,
     heap: Heap,

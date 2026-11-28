@@ -1,6 +1,6 @@
 use quench_runtime::native_link::{CATALOG_FILENAME, REQUIRED_EXPORTS_FILENAME};
 use quench_runtime::{
-    ExecutionMode, NativeProgramNamespace, NativeSourceCompilation, ResidualProgram, SourceKind,
+    ExecutionMode, ImageRetention, NativeProgramNamespace, NativeSourceCompilation, ResidualProgram, SourceKind,
 };
 use quench_test262::{HarnessCache, TestMetadata, TestVariant};
 use std::{
@@ -21,12 +21,16 @@ fn emit(
 ) -> Result<(String, String, String), String> {
     program.freeze_native_diagnostics();
     let label = format!("test262_linked_{index}");
-    let module = quench_layers::engine::lower_native_js_module(program, &label)?;
+    let mut module = quench_layers::engine::lower_native_js_module(program, &label)?;
     let symbol = module.entry_table_symbol().to_owned();
     for f in &module.functions {
         if let quench_layers::engine::NativeFunction::Import { name, .. } = f {
             exports.insert(name.clone());
         }
+    }
+    // The entry's object carries the lane stubs its binder installs; their one import the runtime exports by name.
+    if index == 0 {
+        quench_layers::engine::link_lane_stubs(&mut module.functions, &quench_runtime::NativeTarget::default())?;
     }
     let object = root.join(format!("unit_{index}.o"));
     fs::write(&object, quench_layers::engine::emit_native_module(&label, module.functions, module.data)?)
@@ -34,7 +38,7 @@ fn emit(
     objects.push(object);
     let metadata = root.join(format!("unit_{index}.bin"));
     if let Some(namespace) = namespace {
-        fs::write(&metadata, namespace.encode_with_external_source(program)?)
+        fs::write(&metadata, namespace.encode_with_external_source(program, ImageRetention::ALL)?)
             .map_err(|e| e.to_string())?;
     } else {
         program.write_binary(&metadata)?;

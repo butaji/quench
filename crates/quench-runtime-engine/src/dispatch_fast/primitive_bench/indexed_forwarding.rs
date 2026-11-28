@@ -86,7 +86,7 @@ fn compare(proofs: &ArrayStorageProofs, initial: [Value; REGISTER_COUNT]) -> Sto
     let mut dead = initial;
     assert_eq!(pair::<true, false>(proofs, Registers(dead.as_mut_ptr())), stop);
     if stop == Stop::Complete {
-        // This is the sole unobserved register under the kernel's dead-result contract.
+        // This is the sole unobserved register under the dead-result contract.
         expected[Slot::Intermediate as usize] = initial[Slot::Intermediate as usize];
     }
     assert_eq!(dead, expected, "dead intermediate: {stop:?}");

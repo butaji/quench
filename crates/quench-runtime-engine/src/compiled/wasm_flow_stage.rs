@@ -5,13 +5,14 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::wasm_instance_stage::value_kind;
-use super::{Analysis, AnalysisState, Emitter, Kind, Slot, eager_unreachable_admitted};
+use super::{Analysis, AnalysisState, Emitter, Kind, Slot};
 use quench_runtime::WasmType;
 use quench_runtime::bytecode::{Function, WideInstruction};
 use quench_runtime::staged::machine::{MachineFlow, MachineStage};
 use quench_runtime::staged::wasm::Width;
 use quench_runtime::staged::wasm_flow::{Flow, Leave};
 use cranelift_codegen::ir;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 impl Emitter<'_, '_> {
     /// Lowers a flow step; whether control continues to the next instruction.
@@ -108,9 +109,9 @@ impl Analysis<'_> {
                 (kind(instruction.c())? == selected).then_some(())?;
                 state.set(instruction.a(), registers, Slot::Value(selected))
             }
-            Flow::Unreachable => {
-                (self.experimental_root_compilation || eager_unreachable_admitted()).then_some(())
-            }
+            // The trap lowers to a return of the trap status (C asserts and aborts, which most Emscripten
+            // functions hold), so a function holding `unreachable` lowers like any other.
+            Flow::Unreachable => Some(()),
             Flow::Return => match result {
                 Some(ty) => (kind(instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),

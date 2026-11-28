@@ -1,4 +1,9 @@
-//! What the C version of each kernel (first line of its fixture) needs in the hot loop, per tier.
+//! What the C version of each kernel (first line of its fixture) needs in the hot loop, per mode.
+//!
+//! The modes: the interpreter compiles no loop, so its target is zero. AOT compiles every function
+//! with the Cranelift tier (u-jit), so its target is the CLIF count. The default mode puts each
+//! function in its predicted-cheapest tier, so its target is the lower of the two tiers' counts in
+//! each category (`lower`).
 //!
 //! Conventions, shared by every row:
 //! - boxes 0: C stores raw integers and doubles; a tag store is residual.
@@ -13,8 +18,21 @@
 //!   back-edge poll row (1), the increment row (1); an element access is one `Index` or
 //!   `Store` row (bounds inside the stencil).
 
-use super::{Counts, Kernel};
+use super::{CATEGORY_COUNT, Counts, Kernel};
 
+/// The lower of two count rows, category by category.
+const fn lower(u: [u32; CATEGORY_COUNT], b: [u32; CATEGORY_COUNT]) -> [u32; CATEGORY_COUNT] {
+    let mut out = [0; CATEGORY_COUNT];
+    let mut index = 0;
+    while index < CATEGORY_COUNT {
+        out[index] = if u[index] < b[index] { u[index] } else { b[index] };
+        index += 1;
+    }
+    out
+}
+
+/// A kernel's row: the targets of `Mode::ALL` in order (no-jit, default, aot), from its u-jit and
+/// b-jit counts.
 macro_rules! kernel {
     ($name:literal, u: $u:expr, b: $b:expr $(,)?) => {
         Kernel {
@@ -24,7 +42,7 @@ macro_rules! kernel {
                 $name,
                 ".js"
             )),
-            expect: [Counts($u), Counts($b)],
+            expect: [Counts([0; CATEGORY_COUNT]), Counts(lower($u, $b)), Counts($u)],
         }
     };
 }

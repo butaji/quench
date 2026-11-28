@@ -48,6 +48,7 @@ impl FunctionNameShapes {
 pub(super) struct ConstructedShape {
     shape: u32,
     constructor: Value,
+    class: u32,
     new_target_is_base: bool,
     constructed: u32,
 }
@@ -60,6 +61,7 @@ impl ConstructedShape {
     pub(super) const EMPTY: Self = Self {
         shape: u32::MAX,
         constructor: Value::UNDEFINED,
+        class: 0,
         new_target_is_base: false,
         constructed: u32::MAX,
     };
@@ -76,6 +78,7 @@ impl ConstructedShape {
     fn same_construction(&self, other: &Self) -> bool {
         self.shape == other.shape
             && self.constructor == other.constructor
+            && self.class == other.class
             && self.new_target_is_base == other.new_target_is_base
     }
 }
@@ -88,11 +91,11 @@ pub(super) fn metadata_transitions(shapes: &[Shape], shape: u32) -> impl Iterato
         function_name.map(|name| ShapeTransition::FunctionName { name }),
         name_reconfigured.then_some(ShapeTransition::FunctionNameReconfigured),
         shape_function_length_reconfigured(shapes, shape).then_some(ShapeTransition::FunctionLengthReconfigured),
-        constructed_name.map(|(constructor, new_target_is_base)| ShapeTransition::Constructed { constructor, new_target_is_base }),
+        constructed_name.map(|(constructor, class, new_target_is_base)| ShapeTransition::Constructed { constructor, class, new_target_is_base }),
     ].into_iter().flatten()
 }
 
-pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, bool)>, bool) {
+pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option<(Value, u32, bool)>, bool) {
     let (mut function, mut constructed) = (None, None);
     let mut current = Some(shape);
     while let Some(id) = current {
@@ -101,8 +104,9 @@ pub(super) fn shape_names(shapes: &[Shape], shape: u32) -> (Option<Atom>, Option
             ShapeTransition::FunctionName { name } if function.is_none() => function = Some(name),
             ShapeTransition::Constructed {
                 constructor,
+                class,
                 new_target_is_base,
-            } if constructed.is_none() => constructed = Some((constructor, new_target_is_base)),
+            } if constructed.is_none() => constructed = Some((constructor, class, new_target_is_base)),
             _ => {}
         }
         current = shape.parent();
@@ -133,7 +137,7 @@ impl Vm {
     }
 
     fn capture_function_name_atom(&mut self, function: Value, name: Atom) {
-        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        let Some(shape) = self.heap.object(function).map(|object| object.shape()) else { return; };
         // A first original name makes the function record what it constructs.
         if shape_names(&self.shapes, shape).0.is_none() {
             self.constructed_shapes.fill(ConstructedShape::EMPTY);
@@ -148,7 +152,7 @@ impl Vm {
         let Some(record_id) = function.direct_function_index() else {
             return false;
         };
-        let Some(shape) = self.object_data(function).map(Object::shape) else {
+        let Some(shape) = self.heap.object(function).map(|object| object.shape()) else {
             return false;
         };
         let Some((_, cache)) = self.field_add_entry(self.field_cache_index(site), shape, name) else {
@@ -174,10 +178,10 @@ impl Vm {
     /// plain layouts, and `before` already records an original name, so the naming moves no
     /// construction memo (`capture_function_name_atom`).
     pub(super) fn record_function_name_edge(&mut self, site: u16, function: Value, name: Atom, ((before, layout), slot): ((u32, u32), usize)) {
-        let Some(after) = self.object_data(function).map(Object::shape) else {
+        let Some(after) = self.heap.object(function).map(|object| object.shape()) else {
             return;
         };
-        let Ok(slot) = u16::try_from(slot) else {
+        let Ok(slot) = u32::try_from(slot) else {
             return;
         };
         let plain = |vm: &Self, shape: u32| !vm.shape_is_dictionary(shape);
@@ -194,7 +198,7 @@ impl Vm {
     /// collection, which cleared `constructed_shapes`, so no memo entry names it.
     pub(super) fn capture_fresh_closure_name(&mut self, function: Value, name: Option<Atom>) {
         let name = name.unwrap_or(self.runtime_atoms.empty);
-        let Some(shape) = self.object_data(function).map(Object::shape) else { return; };
+        let Some(shape) = self.heap.object(function).map(|object| object.shape()) else { return; };
         debug_assert!(shape_names(&self.shapes, shape).0.is_none(), "a fresh closure has no original name");
         self.append_function_name(function, shape, name);
     }
@@ -227,17 +231,18 @@ impl Vm {
         if !matches!(key, PropertyKey::String(atom) if self.atom_units_equal_str(atom, "name"))
             || !self.heap.is_function_value(function)
         { return false; }
-        let Some(object) = self.object_data(function) else { return false; };
+        let Some(object) = self.heap.object(function) else { return false; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         name.is_some() && !reconfigured
             && self.shape_entries(object.shape()).nth(FUNCTION_NATIVE_NAME_DESCRIPTOR_INDEX)
                 .is_some_and(|(candidate, _)| candidate == key)
+            // The prototype-lookup flag is record data.
             && (!object.was_used_as_prototype() || object.prototype_lookup_ready())
     }
 
     pub(super) fn reconfigure_function_name(&mut self, function: Value, key: PropertyKey) {
         if !self.heap.is_function_value(function) { return; }
-        let Some(object) = self.object_data(function) else { return; };
+        let Some(object) = self.heap.object(function) else { return; };
         let (name, _, reconfigured) = shape_names(&self.shapes, object.shape());
         if name.is_none() { return; }
         let transition = match key {
@@ -282,17 +287,18 @@ impl Vm {
             return;
         }
         let receiver = object;
-        while let Some(data) = self.object_data(object) {
+        while let Some(data) = self.heap.object(object) {
             if self.proxy_parts(object).is_some() { return; }
             if self.own_property(object, atom).is_some() {
                 if self.heap.is_function_value(object) {
                     let facts = self.shapes[data.shape() as usize].facts;
                     if facts.function_named() && !if name { facts.name_reconfigured() } else { facts.length_reconfigured() } {
                         let mut current = receiver;
-                        while let Some(data) = self.object_data(current) {
+                        while let Some(data) = self.heap.object(current) {
+                            // The prototype-lookup flag is record data.
                             if self.proxy_parts(current).is_some() || data.prototype_lookup_ready() { break; }
                             let next = data.proto();
-                            self.object_data_mut(current).expect("lookup object").prepare_prototype_lookup();
+                            self.heap.object_mut(current).expect("lookup object").prepare_prototype_lookup();
                             current = next;
                         }
                     }
@@ -307,12 +313,7 @@ impl Vm {
     /// Whether the prototype chain from `object` holds a function before it ends or reaches a
     /// proxy, where `prepare_function_info_prototypes` stops.
     fn chain_reaches_function(&self, mut object: Value) -> bool {
-        // An object record is neither a function nor a proxy, so a run of them is passed
-        // reading only each one's prototype, without the cell families' dispatch.
-        while let Some(record) = object.direct_object_index() {
-            object = self.heap.object_record_by_id(record).proto();
-        }
-        while let Some(data) = self.object_data(object) {
+        while let Some(data) = self.heap.object(object) {
             if self.proxy_parts(object).is_some() {
                 return false;
             }
@@ -325,7 +326,7 @@ impl Vm {
     }
 
     pub(super) fn original_function_name(&self, function: Value) -> Option<Atom> {
-        let object = self.object_data(function)?;
+        let object = self.heap.object(function)?;
         shape_names(&self.shapes, object.shape()).0
     }
 
@@ -352,38 +353,45 @@ impl Vm {
         self.original_debug_name(function)
     }
 
+    /// The shape a construction of class `class` by `constructor` gives an object of `shape`: its `Constructed` root,
+    /// seeded with the union of `class` (`seed_union_domains`) when the root is a base's own.
     fn constructed_shape(
         &mut self,
         shape: u32,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) -> u32 {
-        let entry = ConstructedShape { shape, constructor, new_target_is_base, constructed: shape };
+        let entry = ConstructedShape { shape, constructor, class, new_target_is_base, constructed: shape };
         let index = entry.cache_index();
         let cached = self.constructed_shapes[index];
         if cached.same_construction(&entry) {
             return cached.constructed;
         }
-        let constructed = self.derive_constructed_shape(shape, constructor, new_target_is_base);
+        let constructed = self.derive_constructed_shape(shape, constructor, class, new_target_is_base);
+        self.seed_union_domains(constructor, class, constructed);
         self.constructed_shapes[index] = ConstructedShape { constructed, ..entry };
         constructed
     }
 
+    /// The shape of a construction by `constructor`: the chain of `shape` with its `Constructed` transition. Keyed by the
+    /// constructor value alone, so an anonymous constructor gets its root too (the allocator's union cell is keyed by the
+    /// class, not its name); the name is read lazily where provenance reads it (`constructed_name`).
     fn derive_constructed_shape(
         &mut self,
         shape: u32,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) -> u32 {
-        if self.original_function_name(constructor).is_none()
-            || shape_names(&self.shapes, shape).1 == Some((constructor, new_target_is_base))
-        {
+        if shape_names(&self.shapes, shape).1 == Some((constructor, class, new_target_is_base)) {
             return shape;
         }
         self.append_cached_shape_transition(
             shape,
             ShapeTransition::Constructed {
                 constructor,
+                class,
                 new_target_is_base,
             },
         )
@@ -393,29 +401,36 @@ impl Vm {
     /// runs (`capture_constructed_name`, `new.target` the constructor itself): an ahead image's
     /// shape recipe of a constructed object starts there (`aot_image::symbols::shape`).
     pub fn constructed_root_shape(&mut self, shape: u32, constructor: Value) -> u32 {
-        self.constructed_shape(shape, constructor, true)
+        let class = self.ordinary_class(constructor);
+        self.constructed_shape(shape, constructor, class, true)
     }
 
+    /// Records on `object` the `Constructed` root of a construction of class `class` by `constructor`. A construction
+    /// with no construct site passes `ordinary_class(constructor)`.
     pub(super) fn capture_constructed_name(
         &mut self,
         object: &mut Object,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) {
-        let shape = self.constructed_shape(object.shape(), constructor, new_target_is_base);
+        let shape = self.constructed_shape(object.shape(), constructor, class, new_target_is_base);
         self.heap.set_detached_object_shape(object, shape);
     }
 
+    /// Records on the object `value` the `Constructed` root of a construction of class `class` by `constructor`
+    /// (`capture_constructed_name` for an object already allocated).
     pub fn capture_constructed_value(
         &mut self,
         value: Value,
         constructor: Value,
+        class: u32,
         new_target_is_base: bool,
     ) {
-        let Some(shape) = self.object_data(value).map(Object::shape) else {
+        let Some(shape) = self.heap.object(value).map(|object| object.shape()) else {
             return;
         };
-        let shape = self.constructed_shape(shape, constructor, new_target_is_base);
+        let shape = self.constructed_shape(shape, constructor, class, new_target_is_base);
         self.heap.set_object_shape(value, shape);
     }
 
@@ -462,14 +477,16 @@ impl Vm {
     }
 
     pub(super) fn constructed_name(&self, value: Value) -> Option<JsString> {
-        let object = self.object_data(value)?;
+        let object = self.heap.object(value)?;
         if object.was_used_as_prototype() {
             return None;
         }
-        if let Some((constructor, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
+        if let Some((constructor, _, new_target_is_base)) = shape_names(&self.shapes, object.shape()).1 {
+            // An anonymous constructor's root names nothing: its empty name reads as no name, as it did before the root was made.
             return new_target_is_base
                 .then(|| self.debug_function_name(constructor))
-                .flatten();
+                .flatten()
+                .filter(|name| !name.units().is_empty());
         }
         if let Some(constructor) = self.function_factory_constructor(value) {
             return self.debug_function_name(constructor);

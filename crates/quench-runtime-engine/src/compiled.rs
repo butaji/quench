@@ -23,9 +23,9 @@
 //! interpreter's `WasmTrap`, and an imported call is a callout through which
 //! the VM makes the call exactly as the interpreter would (`import_callout`).
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use tier_policy::Tiers;
 use crate::dispatch_fast::{frame_word, set_frame_word, Activation};
 use quench_runtime::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};
 use crate::engine_prelude::*;
@@ -39,7 +39,7 @@ use quench_runtime::staged::wasm_step::Step;
 use quench_runtime::staged::machine::{MachineAccess as _, MachineFlow as _, MachineScalar as _, MachineStage};
 use quench_runtime::staged::Stage as _;
 use quench_runtime::staged::wasm::{Width, integer_binary};
-use quench_runtime::staged::wasm_operation::{Form, Operand as Right, WasmOperation};
+use quench_runtime::staged::wasm_operation::{Form, Operand as Right, WasmOperation, wasm_operation_of};
 use quench_runtime::staged::ConcreteWasm;
 use cranelift_codegen::ir::{self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, types};
 #[cfg(test)]
@@ -110,18 +110,13 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
-pub(crate) mod fallback_sites;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{start_osr_region, RegionStart, CallCode, OsrCompile, OsrOnline, PendingOsrRegion, RegionCalls};
-#[cfg(feature = "jit")]
-pub(crate) use osr_compile::compile_osr_region;
-pub(crate) use lane_compile::FactTables;
-pub(crate) use lane_facts::bind_callees as bind_region_callees;
+pub(crate) use osr_compile::{CallCode, OsrCompile, PendingOsrRegion};
+pub(crate) use quench_runtime::vm::engine_types::OwnedCallRecord;
 pub(crate) use lane_region::ElementViews;
-pub(crate) use lane_region::{inlines_in_loop, inlines_in_loop_call, native_method_call};
 use quench_runtime::typed_ir;
 
 #[path = "compiled/facts.rs"]
@@ -144,12 +139,10 @@ pub(crate) mod lane_unit_polymorphic_tests;
 #[path = "compiled/lane_sites.rs"]
 pub(crate) mod lane_sites;
 #[path = "compiled/lane_allocations.rs"] pub(crate) mod lane_allocations;
-use lane_allocations::{binary_in_lane, collection_lookup_in_lane, concat_pair_in_lane, flatten_string_in_lane, scalar_native_in_lane, new_array_in_lane, new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
+use lane_allocations::{binary_in_lane, collection_lookup_in_lane, concat_pair_in_lane, define_kept_element_in_lane, flatten_string_in_lane, scalar_native_in_lane, materialize_array_in_lane, new_array_in_lane,new_closure_in_lane, new_concat_in_lane, new_const_array_in_lane, compiled_new_object, new_object_literal_in_lane, new_object_pair_in_lane, lane_new_regexp, new_template_in_lane};
 #[path = "compiled/lane_compile.rs"]
 pub(crate) mod lane_compile;
 #[path = "compiled/lane_method.rs"] pub(crate) mod lane_method;
-#[path = "compiled/site_posterior.rs"]
-pub(crate) mod site_posterior;
 #[path = "compiled/entry_cell.rs"] pub(crate) mod entry_cell;
 #[path = "compiled/numeric_image.rs"] pub(crate) mod numeric_image; #[cfg(test)] pub(crate) use numeric_image::compile_js_typed_numeric_region;
 pub(crate) use numeric_image::NumericImage;
@@ -158,8 +151,6 @@ pub use ahead_images::{AHEAD_BUILD_ID, AHEAD_BUILD_ID_PREFIX, ahead_program_fing
 #[path = "compiled/lane_body_abi.rs"] pub(crate) mod lane_body_abi; use lane_body_abi::{BodyEntry, BodyReturn};
 #[path = "compiled/lane_facts.rs"]
 pub(crate) mod lane_facts;
-#[path = "compiled/tier_model.rs"] pub(crate) mod tier_model;
-#[path = "compiled/loop_model.rs"] pub(crate) mod loop_model;
 #[path = "compiled/loop_tier_up.rs"] pub(crate) mod loop_tier_up;
 pub(crate) use lane_compile::{LaneBodyOutcome, LaneBodyWork, PendingLaneMethod};
 #[path = "compiled/static_loops.rs"]
@@ -171,7 +162,6 @@ pub(crate) mod wasm_growth;
 pub(crate) mod wasm_stage;
 pub(crate) mod wasm_instance_stage;
 pub(crate) mod instance_context;
-pub(crate) mod indirect_profile;
 pub use instance_context::{InstanceContext, InstanceRecord, NativeRoots};
 #[cfg(test)]
 pub(crate) mod wasm_global_tests;
@@ -192,7 +182,6 @@ pub(crate) mod wasm_roots;
 pub(crate) mod wasm_simd_stage;
 // The one stitcher every b-jit family places its rows through.
 pub(crate) mod stitcher;
-// `--b-jit` enters a module's functions through their stitched rows (`stitched_entry`).
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_stitch;
 pub(crate) mod wasm_specializer;
@@ -201,7 +190,7 @@ pub(crate) mod wasm_specializer;
 pub(crate) mod wasm_image;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) mod wasm_world;
-use wasm_specializer::{WasmResidual, WasmSpecializer, WasmTierChoice};
+use wasm_specializer::{WasmOptimizing, WasmResidual, WasmSpecializer};
 use quench_runtime::vm::specializer::Specializer as _;
 /// The b-jit's Wasm codes equal the runtime's values (compile-time checks only).
 pub(crate) mod wasm_codes_check;
@@ -267,7 +256,7 @@ pub(crate) use code_heap::CodeMemory;
 #[path = "compiled/direct_call.rs"]
 pub(crate) mod direct_call;
 pub(crate) mod direct_callee;
-pub(crate) use direct_callee::{frames_window, window_width, DirectCallee, DirectCandidates};
+pub(crate) use direct_callee::{frames_window, window_width, DirectArm, DirectBody, DirectCandidates};
 #[path = "compiled/lane_storage.rs"]
 pub(crate) mod lane_storage;
 pub(crate) mod lane_body_run;
@@ -284,21 +273,17 @@ pub(crate) mod general_store;
 use direct_call::direct_call;
 #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
 pub(crate) mod guard_aarch64;
-pub(crate) mod eager;
 pub(crate) mod frozen;
 #[cfg(feature = "native-execution")]
 pub(crate) mod semantic_stop;
-pub(crate) use frozen::ClosedFrozen;
-pub(crate) use eager::compile_eager_native;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]
 pub(crate) mod fault_handler;
 #[cfg(unix)]
 pub use fault_handler::NativeFaultHandler;
 pub(crate) use osr_loop::{
-    CALLEE_CAPTURE, THIS_CAPTURE,
-    FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
-    MethodCalls, Observation, RegionAnalysisFailure, RegionRejection,
+    FieldReceiver, FieldUse, CalleeSource, InlineCallee, LoopEntry, LoopRegion,
+    MethodCalls, RegionAnalysisFailure,
 };
 
 pub(crate) use quench_runtime::staged::Domain as NumberRelationDomain;
@@ -421,11 +406,11 @@ fn emit_js_guard(
     builder.seal_block(passed);
 }
 
-/// The array record reservation's base in the dispatch payload: fixed until the arrays change.
-fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value) -> ir::Value {
+/// The array record reservation's base in the dispatch payload, read at `record` (`regions::record_base`): fixed for the
+/// run where the unit's arrays stay put.
+fn emit_array_record_base(stage: &mut object_slots::Emit<'_, '_>, payload: ir::Value, record: quench_runtime::staged::Access) -> ir::Value {
     use quench_runtime::staged::machine::Lane;
-    stage.raw_load(Lane::I64, MemFlagsData::trusted(), payload,
-        std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32)
+    stage.raw_load(Lane::I64, regions::flags(record), payload, std::mem::offset_of!(JsStepDispatch, head.array_record_base) as i32)
 }
 
 /// The `length` of the direct array `base`, tagged, as an int32: its dense elements' count,
@@ -436,12 +421,13 @@ pub(crate) fn emit_array_length_read(
     builder: &mut FunctionBuilder<'_>,
     payload: ir::Value,
     base: ir::Value,
+    access: regions::ArrayAccess,
     fallback: ir::Block,
 ) -> ir::Value {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
-    let length = quench_runtime::staged::elements::array_length(&mut stage, record_base, base, fallback)
+    let record_base = emit_array_record_base(&mut stage, payload, access.record);
+    let length = quench_runtime::staged::elements::array_length_as(&mut stage, record_base, base, fallback, access.backing.length)
         .expect("the emit stage continues past its guards");
     stage.raw_unary(Unary::Narrow(Lane::I32), length)
 }
@@ -483,12 +469,13 @@ pub(crate) fn emit_dense_array_view(
     payload: ir::Value,
     base: ir::Value,
     writable: bool,
+    access: regions::ArrayAccess,
     fallback: ir::Block,
 ) -> DenseArrayView {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
-    let backing = quench_runtime::staged::elements::array_backing(&mut stage, record_base, base, fallback)
+    let record_base = emit_array_record_base(&mut stage, payload, access.record);
+    let backing = quench_runtime::staged::elements::array_backing_as(&mut stage, record_base, base, fallback, access.backing)
         .expect("the emit stage continues past its guards");
     let quench_runtime::staged::elements::Backing { values, length, .. } = backing;
     if writable {
@@ -505,10 +492,11 @@ pub(crate) fn emit_dense_array_view(
 /// writability stay what the view proved, so only the backing is read again. The helper may
 /// also have given the array extras (a sparse store's facts), which then hold the backing:
 /// `staged::elements::array_header` reads it from either place.
-pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    at: quench_runtime::staged::Access) -> (ir::Value, ir::Value) {
     use quench_runtime::staged::machine::{Lane, Unary};
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, at);
     let record = quench_runtime::staged::elements::array_record(&mut stage, record_base, base);
     let quench_runtime::staged::elements::Backing { values, length, .. } = quench_runtime::staged::elements::record_backing(&mut stage, record);
     // A helper may have changed the backing's storage form in place (narrow or double kind,
@@ -525,18 +513,19 @@ pub(crate) fn emit_dense_array_reload(builder: &mut FunctionBuilder<'_>, payload
 /// holds them; `writable` also proves in-place replacement. Any other base or backing leaves
 /// through `fallback`, with nothing read.
 pub(crate) fn emit_double_array_view(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
-    writable: bool, fallback: ir::Block) -> (ir::Value, ir::Value) {
+    writable: bool, record: quench_runtime::staged::Access, fallback: ir::Block) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, record);
     quench_runtime::staged::elements::double_view(&mut stage, record_base, base, writable, fallback)
         .expect("the emit stage continues past its guards")
 }
 
 /// `emit_dense_array_reload` of a double view (`emit_double_array_view`): the backing read again,
 /// empty once it is no longer double (`staged::elements::reloaded_double_view`).
-pub(crate) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value) -> (ir::Value, ir::Value) {
+pub(crate) fn emit_double_array_reload(builder: &mut FunctionBuilder<'_>, payload: ir::Value, base: ir::Value,
+    at: quench_runtime::staged::Access) -> (ir::Value, ir::Value) {
     let mut stage = object_slots::emit(builder);
-    let record_base = emit_array_record_base(&mut stage, payload);
+    let record_base = emit_array_record_base(&mut stage, payload, at);
     let record = quench_runtime::staged::elements::array_record(&mut stage, record_base, base);
     quench_runtime::staged::elements::reloaded_double_view(&mut stage, record)
 }
@@ -573,7 +562,7 @@ pub(crate) fn emit_dense_element_replace(
     value: ir::Value,
 ) {
     debug_assert!(view.writable, "an in-place replacement needs a writable view");
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None };
+    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
     if view.uncounted {
         quench_runtime::staged::elements::replace_uncounted_element(&mut stage, address, value);
     } else {
@@ -588,226 +577,6 @@ pub(crate) fn emit_dense_element_replace(
 pub(crate) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view: DenseArrayView) {
     debug_assert!(view.writable, "only a writable view's backing is this array's own");
     quench_runtime::staged::elements::uncount_backing(&mut object_slots::emit(builder), view.values);
-}
-
-/// Flat field input bound once for a no-GC, layout-preserving region. Values
-/// may change; the field table, arena and record reservation cannot.
-#[derive(Clone, Copy)]
-struct FieldSlotBinding {
-    receiver: ir::Value,
-    holder: ir::Value,
-    slot: FieldSlot,
-    records: ir::Value,
-    arena: FieldArena,
-    writes: Option<quench_runtime::typed_ir::Type>,
-    /// Whether the run's entry admitted `writes` for the slot (`Lowering::entry_facts`): a
-    /// store through the binding guards it, so an unadmitted slot leaves only its stores.
-    admitted: Option<ir::Value>,
-}
-
-/// A bound slot moves invariant address arithmetic off the receiver-load chain.
-/// The remaining length is zero when the slot lies outside the arena; forming
-/// an integer base grants no permission to dereference it.
-#[derive(Clone, Copy)]
-enum FieldArena {
-    Unbound { values: ir::Value, length: ir::Value },
-    BoundSlot { base: ir::Value, remaining: ir::Value },
-}
-
-impl FieldArena {
-    fn bind(self, builder: &mut FunctionBuilder<'_>, slot: ir::Value) -> Self {
-        let Self::Unbound { values, length } = self else { return self; };
-        let (base, remaining) = quench_runtime::staged::object::bind_arena_slot(&mut object_slots::emit(builder), values, length, slot);
-        Self::BoundSlot { base, remaining }
-    }
-
-    fn address(self, builder: &mut FunctionBuilder<'_>, storage: ir::Value,
-        slot: FieldSlot, fallback: ir::Block) -> ir::Value
-    {
-        let (values, length, position) = match self {
-            Self::Unbound { values, length } => {
-                let slot = slot.read(builder);
-                (values, length, object_slots::emit(builder).add(storage, slot))
-            }
-            Self::BoundSlot { base, remaining } => (base, remaining, storage),
-        };
-        quench_runtime::staged::object::arena_slot_address(&mut object_slots::emit(builder), values, length, position, fallback)
-            .expect("the emit stage continues past its guards")
-    }
-}
-
-/// A region binds its slot once; a single operation decodes it only after
-/// storage admission so failed packed/shape probes do no slot work.
-#[derive(Clone, Copy)]
-enum FieldSlot {
-    Row(ir::Value),
-    Bound(ir::Value),
-}
-
-impl FieldSlot {
-    fn read(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
-        match self {
-            Self::Bound(value) => value,
-            Self::Row(row) => quench_runtime::staged::entry::entry_slot(&mut object_slots::emit(builder), row),
-        }
-    }
-}
-
-fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
-    site: u16, miss: ir::Block, table: Option<object_slots::CheckedObjectTable>) -> FieldSlotBinding
-{
-    use quench_runtime::staged::machine::{Binary, Lane, Relation};
-    use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-    let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.field_entries));
-    let records = table.map(|table| table.base()).unwrap_or_else(||
-        emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base)));
-    let (values, length) = emit_js_property_values(builder, payload);
-    let mut stage = object_slots::emit(builder);
-    // ObjectHeader owns record-base admission, including reused region proofs.
-    for base in [entries, values] {
-        let present = stage.raw_compare_imm(Relation::NotEqual, base, 0);
-        stage.guard(present, miss);
-    }
-    let entry = stage.add_imm(entries, (usize::from(site) * CACHE.entry_size) as u64);
-    let mut word = |offset: usize, complement: u32| {
-        let stored = stage.raw_load(Lane::I32, MemFlagsData::trusted(), entry, offset as i32);
-        let complement = stage.raw_const(Lane::I32, i64::from(complement));
-        stage.raw_binary(Binary::Xor, stored, complement)
-    };
-    let receiver = word(CACHE.receiver_offset, CACHE.receiver_complement);
-    let holder = word(CACHE.holder_offset, CACHE.holder_complement);
-    FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry), records,
-        arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
-}
-
-// `packed_slot`, when requested, receives a proved own-slot address holding a narrow
-// u32. The ordinary return addresses a full tagged Value in arena or holder extras. Neither
-// projection survives an operation that can change storage or collect the object.
-fn emit_js_cached_field_slot(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    receiver: ir::Value,
-    site: u16,
-    allow_holder: bool,
-    fallback: ir::Block,
-    binding: Option<FieldSlotBinding>,
-    header: Option<object_slots::ObjectHeader>,
-    packed_slot: Option<ir::Block>,
-) -> (ir::Value, ir::Value) {
-    use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
-    use quench_runtime::staged::machine::{Binary, Lane, Relation};
-    use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
-    use quench_runtime::staged::region::Region;
-    use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-
-    let base = receiver;
-    let record_id = quench_runtime::staged::value::direct_object_id(&mut object_slots::emit(builder), base);
-
-    let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback, None));
-    let FieldSlotBinding { holder, receiver: receiver_shape, slot, records, arena, .. } = binding;
-    let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
-    if !allow_holder {
-        emit_js_guard(builder, own, fallback);
-    }
-
-    let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header
-        .unwrap_or_else(|| object_slots::ObjectHeader::prove(builder, base, records, None, fallback));
-    // The exact shape includes dictionary storage, which cannot match an own-data row.
-    let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
-    emit_js_guard(builder, same_shape, fallback);
-    // A holder read uses only the receiver's shape and prototype link. Its own
-    // property representation is unrelated to the holder's slot address.
-    let own_storage = |builder: &mut FunctionBuilder<'_>| {
-        if let Some(packed_slot) = packed_slot {
-            let packed = builder.create_block();
-            let arena = builder.create_block();
-            object_slots::emit(builder).branch_if(inline, (packed, &[]), (arena, &[]));
-            builder.switch_to_block(packed);
-            let mut stage = object_slots::emit(builder);
-            let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
-            let plain = plain_payload(&mut stage, storage);
-            stage.guard(plain, fallback);
-            let slot = slot.read(stage.builder);
-            let fits = stage.raw_compare_imm(Relation::UnsignedLess, slot, OBJECT.inline_property_count as i64);
-            stage.guard(fits, fallback);
-            let stride = stage.raw_const(Lane::I64, size_of::<u32>() as i64);
-            let offset = stage.raw_binary(Binary::Mul, slot, stride);
-            let address = record.offset_address(stage.builder, offset);
-            let payload_offset = stage.raw_const(Lane::I64, OBJECT.payload_offset as i64);
-            let address = stage.raw_binary(Binary::Add, address, payload_offset);
-            stage.goto(packed_slot, &[address]);
-            builder.seal_block(packed);
-            builder.seal_block(arena);
-            builder.switch_to_block(arena);
-        }
-        let mut stage = object_slots::emit(builder);
-        if packed_slot.is_none() {
-            let arena_storage = stage.raw_compare_imm(Relation::Equal, inline, 0);
-            stage.guard(arena_storage, fallback);
-        }
-        // Plain storage has the arena start alone in the payload's lower half.
-        let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
-        let half = stage.raw_const(Lane::I64, i64::from(u32::BITS));
-        let upper = stage.raw_binary(Binary::ShiftRightUnsigned, storage, half);
-        let plain = stage.raw_compare_imm(Relation::Equal, upper, 0);
-        stage.guard(plain, fallback);
-        storage
-    };
-    let address = if allow_holder {
-        let own_block = builder.create_block();
-        let holder_block = builder.create_block();
-        let join = builder.create_block();
-        builder.append_block_param(join, types::I64);
-        object_slots::emit(builder).branch_if(own, (own_block, &[]), (holder_block, &[]));
-        builder.switch_to_block(own_block);
-        let storage = own_storage(builder);
-        let address = arena.address(builder, storage, slot, fallback);
-        object_slots::emit(builder).goto(join, &[address]);
-
-        builder.switch_to_block(holder_block);
-        let mut stage = object_slots::emit(builder);
-        let link = proto_link(&mut stage, object);
-        let id = proto_object_record_id(&mut stage, link, fallback).expect("an emitted guard continues");
-        let prototype = object_record_at(&mut stage, records, id);
-        let proto_shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), prototype);
-        let same_holder = stage.raw_compare(Relation::Equal, proto_shape, holder);
-        stage.guard(same_holder, fallback);
-        let inline = inline_storage(&mut stage, prototype);
-        let proto_storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), prototype, OBJECT.payload_offset as i32);
-        let extras = has_extras(&mut stage, proto_storage);
-        stage.guard(extras, fallback);
-        let extras_pointer = extras_pointer(&mut stage, proto_storage);
-        let present = stage.raw_compare_imm(Relation::NotEqual, extras_pointer, 0);
-        stage.guard(present, fallback);
-        let displaced = stage.builder.create_block();
-        let in_arena = stage.builder.create_block();
-        stage.branch_if(inline, (displaced, &[]), (in_arena, &[]));
-        stage.builder.switch_to_block(displaced);
-        let index = slot.read(stage.builder);
-        let fits = stage.raw_compare_imm(Relation::UnsignedLess, index, OBJECT.inline_property_count as i64);
-        stage.guard(fits, fallback);
-        // Exact holder shape admits the data slot. Extras hold full Values;
-        // keep this projection inside the same no-GC access as the live prototype.
-        let stride = stage.raw_const(Lane::I64, OBJECT.property_value_size as i64);
-        let offset = stage.raw_binary(Binary::Mul, index, stride);
-        let address = stage.raw_binary(Binary::Add, extras_pointer, offset);
-        let values_at = stage.raw_const(Lane::I64, OBJECT.extras_inline_values_offset as i64);
-        let address = stage.raw_binary(Binary::Add, address, values_at);
-        stage.goto(join, &[address]);
-        stage.builder.switch_to_block(in_arena);
-        let start = stage.load_u32(Region::Payload.mutable(), extras_pointer, OBJECT.extras_arena_start_offset as i32);
-        let address = arena.address(stage.builder, start, slot, fallback);
-        stage.goto(join, &[address]);
-        builder.seal_block(own_block);
-        builder.seal_block(holder_block);
-        builder.seal_block(join);
-        builder.switch_to_block(join);
-        builder.block_params(join)[0]
-    } else {
-        let storage = own_storage(builder);
-        arena.address(builder, storage, slot, fallback)
-    };
-    (address, record_id)
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
@@ -841,8 +610,8 @@ fn emit_js_payload_fixed_word(builder: &mut FunctionBuilder<'_>, payload: ir::Va
     object_slots::emit(builder).load_u64(Region::Dispatch.readonly(), payload, offset)
 }
 
-/// A record reservation's base in the dispatch payload (`JsStepDispatch::object_record_base`,
-/// `function_record_base`): fixed for a whole native run, so the load merges and hoists.
+/// A record reservation's base in the dispatch payload (`JsStepDispatch::function_record_base`, `array_record_base`):
+/// fixed for a whole native run, so the load merges and hoists.
 fn emit_js_record_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
     use quench_runtime::staged::region::Region;
     let offset = i32::try_from(offset).expect("JS dispatch offset fits i32");
@@ -879,26 +648,31 @@ fn emit_lane_helper_call(
     emit_lane_call(builder, helper, &values)
 }
 
-/// The mark list a store into record space `space` reads its owner's mark blocks from.
+/// The mark list a store into record space `space` reads its owner's mark blocks from. A class cell's
+/// mark is read through `class_mark_lists` instead (`class_mark_table`), and an ordinary object is a class
+/// cell too, so `Class` does not reach here.
 fn store_mark_list(space: quench_runtime::staged::StagedRecordSpace) -> quench_runtime::staged::barrier::MarkList {
     use quench_runtime::staged::barrier::MarkList;
     match space {
-        quench_runtime::staged::StagedRecordSpace::Object => MarkList {
-            blocks: std::mem::offset_of!(JsStepDispatch, head.object_mark_blocks),
-            count: std::mem::offset_of!(JsStepDispatch, head.object_mark_block_count),
-        },
         quench_runtime::staged::StagedRecordSpace::Function => MarkList {
             blocks: std::mem::offset_of!(JsStepDispatch, head.function_mark_blocks),
             count: std::mem::offset_of!(JsStepDispatch, head.function_mark_block_count),
         },
+        quench_runtime::staged::StagedRecordSpace::Class => {
+            unreachable!("a class cell's mark is read through `class_mark_table`; no object record exists")
+        }
     }
 }
 
-/// What a lane body knows of its receiver from entry on: the record, exact shape and
-/// storage mode found at entry, which only an adding store changes, after which the body reads
-/// them again (`Lowering::reload_receiver`); and the property arena's base, which an
-/// allocating helper may move, after which the body reloads it
-/// (`Lowering::reload_property_arena`).
+/// The byte offset of the class cells' mark lists in the dispatch payload (`JsStepHead::class_mark_lists`),
+/// which `barrier::class_unmarked` reads by region.
+fn class_mark_table() -> usize {
+    std::mem::offset_of!(JsStepDispatch, head.class_mark_lists)
+}
+
+/// What a lane body knows of its receiver from entry on: `NO_FIELD_RECEIVER` as its shape, which no folded
+/// field matches (`emit_lane_receiver`); and the property arena's base, which an allocating helper may move,
+/// after which the body reloads it (`Lowering::reload_property_arena`).
 struct LaneReceiver {
     object: Variable,
     shape: Variable,
@@ -929,48 +703,19 @@ fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Glo
     })
 }
 
-/// The narrow decode's upper-word table in a live compile: this process's own table.
-fn process_narrow_table(builder: &mut FunctionBuilder<'_>) -> ir::Value {
-    object_slots::emit(builder).constant(quench_runtime::value::NarrowLayout::upper_words() as u64)
-}
-
-/// The narrow decode's upper-word table of a statically linked image: the object's copy.
-fn linked_narrow_table(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Value {
-    let global = linked_data_symbol(builder, symbol);
-    object_slots::emit(builder).symbol_address(global)
-}
-
-/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow` and the
-/// table `address` it decodes through, passed to `join`.
-fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
-    address: ir::Value, join: ir::Block)
-{
-    use quench_runtime::staged::machine::{Lane, Unary};
-    let table = address;
-    let mut stage = object_slots::emit(builder);
-    let narrow = stage.raw_unary(Unary::ZeroExtend(Lane::I64), narrow);
-    let encoded = quench_runtime::staged::object::decode_narrow_through(&mut stage, narrow, table);
-    stage.goto(join, &[encoded]);
-}
-
-/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
-/// where the receiver is no direct object or the heap bases are absent, which no folded
-/// field matches.
-/// `trusted`: the code holds the lane's `this` trust (`VmFacts::this_trusted`), so `this` is a direct
-/// object the binding checked once, and only the tables are tested.
-fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value, trusted: bool) -> LaneReceiver {
-    use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
-    let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
+/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape and no record, which no folded
+/// field matches. An ordinary receiver is a class cell whose reads take its class word (`IcOp::GuardClass`), so no
+/// receiver record is walked here; a fixed class's receiver is named by its entry record (`fixed_cells`).
+fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> LaneReceiver {
+    use quench_runtime::staged::machine::Lane;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
         inline: builder.declare_var(types::I8),
         properties: builder.declare_var(types::I64),
     };
-    let records = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
-    let (found, done) = (builder.create_block(), builder.create_block());
     let mut stage = object_slots::emit(builder);
     let none = stage.raw_const(Lane::I32, i64::from(quench_runtime::vm::NO_FIELD_RECEIVER));
     let null = stage.raw_const(Lane::I64, 0);
@@ -978,28 +723,6 @@ fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, thi
     stage.builder.def_var(receiver.shape, none);
     stage.builder.def_var(receiver.inline, outside);
     stage.builder.def_var(receiver.object, null);
-    let record_id = stage.raw_unary(Unary::Narrow(Lane::I32), this);
-    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, record_id, layout.record_capacity as i64);
-    let has_records = stage.raw_compare_imm(Relation::NotEqual, records, 0);
-    let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
-    let ok = if trusted { in_range } else {
-        let object = quench_runtime::staged::value::is_direct_object(&mut stage, this);
-        stage.raw_binary(Binary::And, object, in_range)
-    };
-    let ok = stage.raw_binary(Binary::And, ok, has_records);
-    let ok = stage.raw_binary(Binary::And, ok, has_properties);
-    stage.branch_if(ok, (found, &[]), (done, &[]));
-    stage.builder.switch_to_block(found);
-    let record_id = stage.raw_unary(Unary::ZeroExtend(Lane::I64), record_id);
-    let address = quench_runtime::staged::object::object_record_at(&mut stage, records, record_id);
-    // The exact shape carries the dictionary bit, so a dictionary never matches.
-    let shape = object_slots::exact_shape(stage.builder, MemFlagsData::trusted(), address);
-    let inline = quench_runtime::staged::object::inline_storage(&mut stage, address);
-    stage.builder.def_var(receiver.object, address);
-    stage.builder.def_var(receiver.shape, shape);
-    stage.builder.def_var(receiver.inline, inline);
-    stage.goto(done, &[]);
-    builder.switch_to_block(done);
     receiver
 }
 
@@ -1046,7 +769,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\njmp {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1055,7 +780,9 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".pushsection .text.quench_lane_helper_", stringify!($name), ",\"ax\",@progbits\n.globl quench_lane_helper_", stringify!($name), "\n.p2align 4\nquench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}\n.popsection"),)+
+                    ".pushsection .text.quench_lane_helper_ahead_Step,\"ax\",@progbits\n.globl quench_lane_helper_ahead_Step\n.p2align 4\nquench_lane_helper_ahead_Step:\nb {ahead_step}\n.popsection",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1067,8 +794,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 2\n_quench_lane_helper_", stringify!($name), ":\nb {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 2\n_quench_lane_helper_ahead_Step:\nb {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1078,8 +807,10 @@ macro_rules! lane_helper_inventory {
             unsafe {
                 core::arch::asm!(
                     $(concat!(".globl _quench_lane_helper_", stringify!($name), "\n.p2align 4\n_quench_lane_helper_", stringify!($name), ":\njmp {", stringify!($name), "}"),)+
+                    ".globl _quench_lane_helper_ahead_Step\n.p2align 4\n_quench_lane_helper_ahead_Step:\njmp {ahead_step}",
                     ".subsections_via_symbols",
                     $($name = sym $address),+,
+                    ahead_step = sym crate::dispatch_fast::ahead_general_step,
                     options(nomem, nostack, preserves_flags),
                 );
             }
@@ -1087,9 +818,18 @@ macro_rules! lane_helper_inventory {
     };
 }
 
-/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`).
+/// The symbol an ahead image's object names lane helper `index` by (`define_lane_helper_symbols`): the ahead entry of
+/// `Step` (`ahead_general_step`, over the payload), else the helper's own.
 pub(crate) fn lane_helper_symbol(index: usize) -> Option<String> {
-    LaneHelper::NAMES.get(index).map(|name| format!("quench_lane_helper_{name}"))
+    let name = LaneHelper::NAMES.get(index)?;
+    Some(if index == LaneHelper::Step as usize { format!("quench_lane_helper_ahead_{name}") } else { format!("quench_lane_helper_{name}") })
+}
+
+/// The address an ahead image's helper `index` is in this process, as `lane_helper_symbol` names it: `ahead_general_step` for
+/// `Step`, else the helper's own address.
+pub(crate) fn ahead_helper_address(index: usize) -> Option<usize> {
+    if index == LaneHelper::Step as usize { return Some(crate::dispatch_fast::ahead_general_step as *const () as usize); }
+    LaneHelper::addresses().get(index).map(|address| *address as usize)
 }
 lane_helper_inventory! {
     FunctionCapture => function_capture_read_in_lane,
@@ -1130,7 +870,8 @@ lane_helper_inventory! {
     TypeofIndex => typeof_index_in_lane,
     /// A planned construction (`construct_in_lane`).
     Construct => constructions::construct_in_lane,
-    ConstructReceiver => constructions::construct_receiver_in_lane,
+    /// A materialized kept receiver's planned construction, made whatever is due (`materialize_construct_in_lane`).
+    MaterializeConstruct => constructions::materialize_construct_in_lane,
     /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
     ConstructPlanHolds => constructions::construct_plan_holds_in_lane,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::body_construct_helper`).
@@ -1142,6 +883,10 @@ lane_helper_inventory! {
     /// An object literal's and an array literal's allocation.
     NewObject => compiled_new_object,
     NewArray => new_array_in_lane,
+    /// A materialized kept array's allocation, made whatever is due (`lane_allocations::materialize_array_in_lane`).
+    MaterializeArray => materialize_array_in_lane,
+    /// One written element of a hole array a materialized kept array made (`define_kept_element_in_lane`).
+    DefineKeptElement => define_kept_element_in_lane,
     /// An array literal of program constants (`new_const_array_in_lane`).
     NewConstArray => new_const_array_in_lane,
     /// A two-property object literal's allocation (`new_object_pair_in_lane`).
@@ -1167,8 +912,6 @@ lane_helper_inventory! {
     /// `Step` for an instruction the planner decoded (`CallRow::HelperPacked`): a covered family runs it directly
     /// (`dispatch_fast::lane_body_step_packed`).
     StepPacked => crate::dispatch_fast::lane_body_step_packed,
-    /// A loop's interpreter kernel on the loop's entry edge, which the b-jit plans before its head (`base_region::kernel_entries`).
-    KernelStep => base_body::kernel_step_in_lane,
     /// ToBoolean of a value its cell decides (`truthy_in_lane`).
     Truthy => truthy_in_lane,
     /// The array storage proofs a shorter array falsifies (`retire_array_proofs_in_lane`).
@@ -1197,19 +940,17 @@ lane_helper_inventory! {
     /// The runtime's Number remainder leaf (`RuntimeSlowPath::NumberRemainder`), which a body naming
     /// its helpers by symbol calls by this one (`slow_path_symbol`).
     NumberRemainder => quench_runtime::vm::operations::number_remainder,
+    /// The runtime's Number power leaf (`staged::power::number_power`), which a body naming its helpers by symbol calls
+    /// by this one (`slow_path_symbol`), as the remainder leaf.
+    NumberPower => quench_runtime::staged::power::number_power,
     /// A local, capture or name access's step over the running window or frame (`dispatch_fast::owner_step`): the owner
     /// step alone, which a helper row or slow arm of such an instruction makes in place of the general step.
     OwnerStep => crate::dispatch_fast::owner_step,
-    /// A constant's load into its register (`base_body::constant_step`): the running program's materialized constant,
-    /// which an image body cannot fold (a string's address is the run's), in place of the general step.
-    ConstantStep => base_body::constant_step,
     /// An operator or comparison jump over registers and constants (`base_body::value_step`): the VM's operator on their
     /// values, in place of the general step.
     ValueStep => base_body::value_step,
-    ClosureStep => base_body::closure_step,
     AllocationStep => base_body::allocation_step,
     ThrowStep => base_body::throw_step,
-    DefineElementStep => base_body::define_element_step,
     CallOutStep => base_body::call_out_step,
     /// A collection lookup a call runs by its callee's identity (`lane_allocations::collection_lookup_in_lane`).
     CollectionLookup => collection_lookup_in_lane,
@@ -1412,22 +1153,15 @@ pub(crate) struct OnlineFacts<'a> {
     pub(crate) invalidation: usize,
     /// The program's constants as the VM made and roots them (`Vm::active_constant`).
     pub(crate) constants: &'a [Value],
-    /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
-    pub(crate) instanceofs: &'a dyn Fn(Value) -> Option<quench_runtime::code_dependencies::InstanceofFact>,
     /// Whether code may hold an object's exact shape past a call (`Vm::shape_is_stable`).
     pub(crate) shape_stable: &'a dyn Fn(u32) -> bool,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(crate) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
-    /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
-    /// a read of it folds under an identity guard and a dependency on the object's exact shape.
-    pub(crate) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
     /// The root constant a capture read at a PC takes (`FactTables::root_constant`): a written-once root
     /// binding's function, with the program whose root it is; `None` where none may be held.
     pub(crate) root_constant: &'a dyn Fn(usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)>,
 }
-
-pub(crate) use quench_runtime::vm::engine_types::OwnConstant;
 
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
 /// callee, its receiver's exact shape and, per field in slot order, the field's name and where
@@ -1442,20 +1176,11 @@ pub(crate) struct ScalarConstructPlan {
     pub(crate) fields: smallvec::SmallVec<[(Atom, ScalarField); 4]>,
 }
 
-/// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: a closure
-/// the VM made, or in an ahead image the `Symbol::HeapValue` key of the closure the closed world
-/// proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
+/// The callee a `ScalarConstructPlan` constructs by, which its code guards by identity: the `Symbol::HeapValue` key of
+/// the closure the closed world proves the site constructs (`HeapValueRecipe::ClosureOf`), which the loader resolves.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum PlanCallee {
-    Live(Value),
     Image(u32),
-}
-
-impl PlanCallee {
-    /// The closure, where the VM made it.
-    pub(crate) fn live(self) -> Option<Value> {
-        match self { Self::Live(callee) => Some(callee), Self::Image(_) => None }
-    }
 }
 
 /// Where a field of a `ScalarConstructPlan` takes its value.
@@ -1496,18 +1221,12 @@ pub(crate) struct VmFacts<'a> {
     /// Whether the host provides the IsHTMLDDA object (`CapabilityId::IsHTMLDDA`): without
     /// it, loosely only `null` and `undefined` equal `null`.
     pub(crate) html_dda: bool,
-    /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
-    pub(crate) diagnostics: bool,
-    /// The thresholds the compiling VM's tier controllers read: a Static fact of the code it makes.
-    pub(crate) tiers: &'static Tiers,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(crate) online: Option<OnlineFacts<'a>>,
     /// Whether those Stable facts come from a closed whole-program image rather than from a
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
     pub(crate) frozen: bool,
-    /// Whole-program prototype values by atom, each guarded at its read site.
-    pub(crate) frozen_fields: Option<&'a quench_runtime::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(crate) frozen_constants: Option<usize>,
     /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
@@ -1524,16 +1243,17 @@ pub(crate) struct VmFacts<'a> {
     /// Where an ahead lane body's leaves continue, in its base body (`lane_region::AheadLeaves`);
     /// `None` where a leave returns its exit word.
     pub(crate) ahead: Option<lane_region::AheadLeaves<'a>>,
-    /// The whole-program facts of an AOT image (`compile::aot_facts`): its call targets admit the
-    /// callees the unit inlines (`Lowering::closed_call`) and its Number registers are entry
-    /// entry types (`int_inputs::closed_entry_types`), each a dependency on the image's invalidation word.
-    pub(crate) closed: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
+    /// The whole-program facts of the program a lane body lowers (`compile::aot_facts`, the program
+    /// store's one solve): its call targets admit the callees the unit inlines (`Lowering::plan_call`),
+    /// its Number registers are entry types (`int_inputs::solved_entry_types`), and its register cells
+    /// narrow the lowering's facts (`lane_region::narrow_to_cells`).
+    pub(crate) facts: Option<&'a quench_runtime::compile::aot_facts::AotFacts>,
+    /// The call graph of the program a lane body lowers (`ProgramStore::call_graph`), which the inlining rule
+    /// (`tier_policy::inlines`) reads to decide the callees a call plan's arms inline; None where no program is.
+    pub(crate) graph: Option<&'a quench_runtime::compile::call_graph::CallGraph>,
     /// Whether a lane body's entry is its proven entry (`lane_region::LoweredLane::proven`): its parameters' entry guards
     /// are taken as proved by the caller, so the lowering states them as held rather than testing them.
     pub(crate) proven_entry: bool,
-    /// Whether the lane trusts every activation's `this` as a direct object (`Vm::this_trust`): code that
-    /// holds the trust (`StableFacts::this_trust`) takes its receiver as one, and retires with the trust.
-    pub(crate) this_trusted: bool,
 }
 
 /// What offline code holds of the atoms it stores (`VmFacts::held_atoms`): the names method caches
@@ -1547,40 +1267,18 @@ pub(crate) struct HeldAtoms<'a> {
 
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
-    /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false, this_trusted: false };
+    /// an IsHTMLDDA object possible, no known `call`, and no Stable facts.
+    pub(crate) const STATIC: Self = Self { html_dda: true, online: None, frozen: false,
+        frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
 impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: self.programs.js_jit_diagnostics_enabled(), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, closed: None, proven_entry: false,
-            this_trusted: self.this_trust.get() == 1 }
+        VmFacts { html_dda, online: None, frozen: false,
+            frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
     }
-}
-
-/// `function_id` lowered as an ahead lane body (`Coverage::Prefix`, the lane body ABI) under
-/// `helpers` and `facts`: it runs from the first record and leaves at the first instruction
-/// it does not lower. `None` for the root and where nothing lowers.
-fn lowered_lane_body(program: &ResidualProgram, function_id: u32, isa: &dyn cranelift_codegen::isa::TargetIsa,
-    helpers: LaneHelpers, facts: VmFacts<'_>, global_reads: &quench_runtime::vm::global_facts::GlobalReads,
-) -> Option<lane_region::LoweredRegion> {
-    use quench_runtime::vm::specializer::Specializer;
-    if function_id == 0 { return None; }
-    let function = program.function_get(function_id as usize)?;
-    let unit = lane_unit::with_budget(program, function_id, function, 0, &|_, _| Vec::new(),
-        &|callee| program.function_get(callee as usize))?;
-    let admitted = admission::ahead_unit(function_id)?;
-    lane_region::RegionSpecializer { function_id, unit: &unit, helpers,
-        fields: &[], global_reads, facts, generic: &[], admitted,
-        direct: &std::collections::BTreeMap::new(), frame_captures: &[], isa,
-        entry_fields: &lane_region::NO_ENTRY_FIELDS, number_reads: &[], int_entries: &[], number_entries: &[], string_entries: &[], typed_captures: &[], int_captures: &[], typed_kinds: &[],
-        plan: lane_region::RegionPlan { entry_bounds: true, coverage: lane_region::Coverage::Prefix,
-            completion: lane_region::Completion::Body, views: lane_region::ElementViews::Dense } }
-        .specialize(program).ok().filter(|region| region.native != 0)
 }
 
 pub use quench_runtime::vm::engine_types::ExecutionMode;
@@ -1737,7 +1435,7 @@ impl Slot {
 /// default i32 representation, so retaining a full `registers`-sized vector
 /// at every reachable instruction wastes memory. This stores only deviations
 /// from that default; joins apply the same `Slot` lattice to every register.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct AnalysisState {
     slots: Vec<(u16, Slot)>,
 }
@@ -1820,125 +1518,7 @@ impl AnalysisState {
 /// normal return.
 use quench_runtime::wasm::trap::COMPILED_TRAPS as TRAPS;
 
-use quench_runtime::vm::engine_types::JIT_NATIVE_ENTRY_SAMPLE_INTERVAL;
-use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
-
-fn jit_root_override() -> Result<Option<usize>, ()> {
-    #[cfg(test)]
-    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return Ok(mode.root);
-    }
-    quench_runtime::trace::Dev::WasmRoot.value().map(|root| root.parse::<usize>().map_err(|_| ())).transpose()
-}
-
-/// Whether Wasm modules stay selective for good, compiling only their hot roots
-/// (`WasmModuleCompile::NEVER`): an A/B arm against the default, which compiles a long runner
-/// whole.
-pub(crate) fn jit_wasm_selective_enabled() -> bool {
-    quench_runtime::trace::Dev::WasmSelective.on()
-}
-
-fn jit_wasm_root_only_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return mode.root_only;
-    }
-    quench_runtime::trace::Dev::WasmRootOnly.on()
-}
-
-fn jit_wasm_root_first_enabled() -> bool {
-    #[cfg(test)]
-    if let Some(mode) = WASM_JIT_MODE_TEST_OVERRIDE.with(std::cell::Cell::get) {
-        return mode.root_first;
-    }
-    quench_runtime::trace::Dev::WasmRootFirst.on()
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Default)]
-struct WasmJitModeTestOverride {
-    root_only: bool,
-    root_first: bool,
-    root: Option<usize>,
-}
-
-#[cfg(test)]
-thread_local! {
-    static WASM_JIT_MODE_TEST_OVERRIDE: std::cell::Cell<Option<WasmJitModeTestOverride>> =
-        const { std::cell::Cell::new(None) };
-    static WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(false) };
-}
-
-/// Whether the eager artifact compiles functions holding `unreachable` (C asserts and aborts,
-/// which most Emscripten functions hold): the trap lowers to a return of the trap status. A test
-/// may reject them to keep such a function for the tier.
-fn eager_unreachable_admitted() -> bool {
-    #[cfg(test)]
-    if WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(std::cell::Cell::get) {
-        return false;
-    }
-    true
-}
-
-#[cfg(test)]
-pub(crate) fn with_eager_unreachable_rejected_for_test<R>(run: impl FnOnce() -> R) -> R {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.set(self.0));
-        }
-    }
-    let previous =
-        WASM_JIT_EAGER_UNREACHABLE_REJECTED_FOR_TEST.with(|rejected| rejected.replace(true));
-    let _restore = Restore(previous);
-    run()
-}
-
-#[cfg(test)]
-pub(crate) fn with_wasm_jit_mode_for_test<R>(
-    root_only: bool,
-    root_first: bool,
-    root: Option<usize>,
-    run: impl FnOnce() -> R,
-) -> R {
-    struct Restore(Option<WasmJitModeTestOverride>);
-
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WASM_JIT_MODE_TEST_OVERRIDE.with(|override_mode| override_mode.set(self.0));
-        }
-    }
-
-    let previous = WASM_JIT_MODE_TEST_OVERRIDE.with(|override_mode| {
-        override_mode.replace(Some(WasmJitModeTestOverride {
-            root_only,
-            root_first,
-            root,
-        }))
-    });
-    let _restore = Restore(previous);
-    run()
-}
-
-fn jit_root_opt_level(root: Option<usize>, root_only: bool) -> Result<&'static str, ()> {
-    if root.is_none() {
-        return Ok("speed");
-    }
-    parse_jit_root_opt_level(root_only, quench_runtime::trace::Dev::WasmRootOptLevel.value())
-}
-
-fn parse_jit_root_opt_level(root_only: bool, level: Option<&str>) -> Result<&'static str, ()> {
-    let Some(level) = level else {
-        return Ok(if root_only { "none" } else { "speed" });
-    };
-    match level {
-        "none" => Ok("none"),
-        "speed" => Ok("speed"),
-        "speed_and_size" => Ok("speed_and_size"),
-        _ => Err(()),
-    }
-}
+use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT};
 
 /// Linux process RSS and high-water mark, in KiB, for opt-in JIT diagnostics.
 #[cfg(target_os = "linux")]
@@ -2008,21 +1588,13 @@ impl CallContext {
                 call_reference: 0,
                 compiled: std::ptr::null(),
                 program: ProgramId::MAIN,
-                import_callouts: std::ptr::null_mut(),
-                known_callouts: std::ptr::null_mut(),
-                reference_callouts: std::ptr::null_mut(),
                 memory: Value::NULL,
                 memory_length: 0,
                 raised: None,
-                call_reference_diagnostic: 0,
-                reference_call_sites: std::ptr::null(),
-                reference_call_site_count: 0,
                 poll_start: 0,
                 poll_end: 0,
-                emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-                import_callout_counts: std::ptr::null(),
-                import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
+                body_shim: lane_body_abi::body_shim(),
             },
             interrupt_owner: std::ptr::null(),
             instance: std::ptr::null(),
@@ -2071,21 +1643,13 @@ impl CallContext {
                 call_reference: 0,
                 compiled: std::ptr::null(),
                 program: ProgramId::MAIN,
-                import_callouts: std::ptr::null_mut(),
-                known_callouts: std::ptr::null_mut(),
-                reference_callouts: std::ptr::null_mut(),
                 memory: Value::NULL,
                 memory_length: 0,
                 raised: None,
-                call_reference_diagnostic: 0,
-                reference_call_sites: std::ptr::null(),
-                reference_call_site_count: 0,
                 poll_start: poll.map_or(0, |(start, _)| start),
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-                import_callout_counts: std::ptr::null(),
-                import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
+                body_shim: lane_body_abi::body_shim(),
             },
             interrupt_owner: interrupt,
             instance: std::ptr::null(),
@@ -2122,21 +1686,13 @@ impl CallContext {
                 call_reference: self.call_reference,
                 compiled: self.compiled,
                 program: self.program,
-                import_callouts: self.import_callouts,
-                known_callouts: self.known_callouts,
-                reference_callouts: self.reference_callouts,
                 memory: self.memory,
                 memory_length: self.memory_length,
                 raised: None,
-                call_reference_diagnostic: self.call_reference_diagnostic,
-                reference_call_sites: self.reference_call_sites,
-                reference_call_site_count: self.reference_call_site_count,
                 poll_start: self.poll_start,
                 poll_end: self.poll_end,
-                emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
-                import_callout_counts: self.import_callout_counts,
-                import_callout_count: self.import_callout_count,
                 adapter_payload: std::ptr::null_mut(),
+                body_shim: self.body_shim,
             },
             interrupt_owner: self.interrupt_owner,
             instance: self.instance,
@@ -2160,16 +1716,16 @@ const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, head.callout) as 
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, head.call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, head.memory_length) as i32;
 const CONTEXT_MEMORY_GROW: i32 = std::mem::offset_of!(CallContext, memory_grow) as i32;
-const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
-    std::mem::offset_of!(CallContext, head.call_reference_diagnostic) as i32;
 const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
 const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots) as i32;
+// The stencils read the call context through the stand-in head (`CallContextWords`): its offsets are the context's.
+const _: () = assert!(quench_runtime::staged::layout_offsets::CALL_CONTEXT_BODY_SHIM == std::mem::offset_of!(CallContext, head.body_shim));
+const _: () = assert!(quench_runtime::staged::layout_offsets::CALL_CONTEXT_ADAPTER_PAYLOAD == std::mem::offset_of!(CallContext, head.adapter_payload));
 /// The callout's signature: (context, function index, arguments, result) ->
 /// status; arguments and result are Wasm bits, one word each.
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
 type ReferenceCallout =
     unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
-type DiagnosticReferenceCallout = ReferenceCallout;
 
 /// Fill an already bounds-checked range in the instance's direct memory.
 /// The compiler checks against the exact current length before calling this
@@ -2222,99 +1778,6 @@ unsafe extern "C" fn compiled_memory_copy(destination: u64, source: u64, length:
     0
 }
 
-fn note_compiled_callout(counter: *mut u64) {
-    if !counter.is_null() {
-        // SAFETY: only diagnostic-enabled calls provide this pointer, and it
-        // points to a counter owned by the suspended native invocation.
-        unsafe {
-            *counter = (*counter).saturating_add(1);
-        }
-    }
-}
-
-fn native_entry_sample_due(entry_count: u64) -> bool {
-    entry_count > 0 && entry_count.is_multiple_of(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL)
-}
-
-unsafe fn note_import_callout_target(
-    counters: *const std::cell::Cell<u64>,
-    counter_count: usize,
-    function: u64,
-) {
-    let Ok(index) = usize::try_from(function) else {
-        return;
-    };
-    if counters.is_null() || index >= counter_count {
-        return;
-    }
-    // SAFETY: diagnostic contexts point at `counter_count` initialized Cells
-    // owned by their CompiledProgram, which remains live across the callout.
-    let counter = unsafe { &*counters.add(index) };
-    counter.set(counter.get().saturating_add(1));
-}
-
-
-
-use quench_runtime::vm::engine_types::ReferenceCallSiteCounts;
-
-use quench_runtime::vm::engine_types::ReferenceCallTargetCounts;
-
-pub(crate) use quench_runtime::vm::engine_types::ReferenceCallSiteDiagnostics;
-
-fn note_reference_call_site(
-    context: &CallContext,
-    site: u64,
-    native: bool,
-    same_artifact_direct: bool,
-    target_function: Option<usize>,
-    target_same_artifact_native: bool,
-) {
-    let Ok(site) = usize::try_from(site) else {
-        return;
-    };
-    if context.reference_call_sites.is_null() || site >= context.reference_call_site_count {
-        return;
-    }
-    // SAFETY: diagnostic call sites are a stable vector owned by the compiled
-    // program for the full native invocation, and generated ids are assigned
-    // from that vector at compile time.
-    let counts = unsafe { &*context.reference_call_sites.add(site) };
-    let mut updated = counts.counts.get();
-    updated.total = updated.total.saturating_add(1);
-    if native {
-        updated.native = updated.native.saturating_add(1);
-    } else {
-        updated.fallback = updated.fallback.saturating_add(1);
-    }
-    if same_artifact_direct {
-        updated.same_artifact_direct = updated.same_artifact_direct.saturating_add(1);
-    }
-    counts.counts.set(updated);
-    if let Some(function) = target_function {
-        let mut targets = counts.targets.borrow_mut();
-        let target_index = if let Some(target_index) = targets
-            .iter()
-            .position(|target| target.function == function)
-        {
-            target_index
-        } else {
-            targets.push(ReferenceCallTargetCounts {
-                function,
-                ..ReferenceCallTargetCounts::default()
-            });
-            targets.len() - 1
-        };
-        let target = &mut targets[target_index];
-        target.total = target.total.saturating_add(1);
-        if native {
-            target.native = target.native.saturating_add(1);
-        }
-        if native && target_same_artifact_native {
-            target.same_artifact_native = target.same_artifact_native.saturating_add(1);
-        }
-    }
-}
-
 fn refresh_memory_length(context: &mut CallContext, vm: &Vm) {
     if context.memory != Value::UNDEFINED
         && let Some((_, length)) = crate::dispatch_fast::direct_memory(vm, context.memory)
@@ -2352,47 +1815,12 @@ unsafe extern "C" fn reference_callout(
     table_slot: u64,
     index: u64,
     signature_index: u64,
-    site: u64,
+    // The emitted call's site id (`reference_site_ids`), part of the call ABI.
+    _site: u64,
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
-    // A stable call-site id is present even without diagnostics so the VM can
-    // find the per-site monomorphic cache without a hash lookup.
-    unsafe {
-        reference_callout_inner::<false>(
-            context,
-            table_slot,
-            index,
-            signature_index,
-            site,
-            args,
-            out,
-        )
-    }
-}
-
-/// Diagnostic-only reference callout. Its extra site id is emitted only when
-/// Wasm JIT diagnostics were enabled at compilation time.
-unsafe extern "C" fn diagnostic_reference_callout(
-    context: *mut CallContext,
-    table_slot: u64,
-    index: u64,
-    signature_index: u64,
-    site: u64,
-    args: *const u64,
-    out: *mut u64,
-) -> i64 {
-    unsafe {
-        reference_callout_inner::<true>(
-            context,
-            table_slot,
-            index,
-            signature_index,
-            site,
-            args,
-            out,
-        )
-    }
+    unsafe { reference_callout_inner(context, table_slot, index, signature_index, args, out) }
 }
 
 /// Builds the validation error of a failed Wasm callout check, out of line.
@@ -2405,19 +1833,15 @@ fn wasm_callout_error(message: &'static str) -> JsError {
 /// Calls an indirect target with no direct native entry and stores its scalar result at `out`.
 #[cold]
 #[inline(never)]
-unsafe fn reference_callout_fallback<const DIAGNOSTICS: bool>(
+unsafe fn reference_callout_fallback(
     vm: &mut Vm,
     program: ProgramId,
-    caller: *const CompiledProgram,
     callee: Value,
     same_program_function: Option<(ProgramId, u32, Value)>,
     params: &[quench_runtime::WasmType],
     result_type: Option<quench_runtime::WasmType>,
-    reference_target_function: Option<usize>,
     args: *const u64,
     out: *mut u64,
-    native_target_hit: &mut bool,
-    target_same_artifact_native: &mut bool,
 ) -> Result<(), JsError> {
     let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
     for (offset, ty) in params.iter().enumerate() {
@@ -2429,17 +1853,6 @@ unsafe fn reference_callout_fallback<const DIAGNOSTICS: bool>(
     let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
         vm.run_compiled(target_program, env, function, &values)
     });
-    *native_target_hit = compiled_result.is_some();
-    if DIAGNOSTICS
-        && *native_target_hit
-        && let Some(function) = reference_target_function
-    {
-        let target_compiled = compiled_reference_target(vm, program, function, caller);
-        *target_same_artifact_native = !caller.is_null()
-            && target_compiled
-                .as_ref()
-                .is_some_and(|compiled| std::ptr::eq(caller, Rc::as_ptr(compiled)));
-    }
     let result = match compiled_result {
         Some(result) => result?,
         None => {
@@ -2460,28 +1873,21 @@ unsafe fn reference_callout_fallback<const DIAGNOSTICS: bool>(
     Ok(())
 }
 
-/// Shared implementation, monomorphized so ordinary callouts have no
-/// diagnostic counter branch or extra site lookup.
-unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
+/// The reference callout's implementation.
+unsafe fn reference_callout_inner(
     context: *mut CallContext,
     table_slot: u64,
     index: u64,
     signature_index: u64,
-    site: u64,
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
     let context = unsafe { &mut *context };
-    note_compiled_callout(context.reference_callouts);
     let vm_pointer = context.vm.cast::<Vm>();
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
-    let mut native_target_hit = false;
-    let mut same_artifact_direct_hit = false;
-    let mut target_same_artifact_native = false;
-    let mut reference_target_function = None;
     let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2525,13 +1931,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             let same_instance_function = same_program_function
                 .filter(|(_, _, target_env)| *target_env == context.env)
                 .map(|(_, function, _)| function);
-            if let Some(function) = same_instance_function
-                && !context.compiled.is_null()
-                && let Ok(site) = usize::try_from(site)
-            {
-                // SAFETY: the running artifact outlives its own call.
-                unsafe { &*context.compiled }.note_indirect_target(site, function);
-            }
             let direct_entry = same_instance_function.and_then(|function| {
                 let compiled =
                     compiled_reference_target(vm, program, function as usize, context.compiled)?;
@@ -2546,16 +1945,10 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             });
             (callee, params, result_type, same_program_function, direct_entry)
         };
-        if DIAGNOSTICS {
-            reference_target_function = direct_entry.as_ref().map(|entry| entry.1).or_else(|| {
-                same_program_function
-                    .as_ref()
-                    .map(|(_, function, _)| *function as usize)
-            });
-        }
         if let Some((
-            compiled,
-            function,
+            // Held to the call's end: the entry's executable mapping lives in it.
+            _compiled,
+            _function,
             entry,
             (base, length),
             record,
@@ -2566,7 +1959,8 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // returns.
             let callee_root = unsafe { &mut *vm_pointer }.hold_root(callee);
             direct_target_root = Some(callee_root);
-            let native_entry_should_sample = compiled.note_direct_reference_entry(function);
+            #[cfg(test)]
+            _compiled.note_direct_reference_entry(_function);
             let mut nested = context.nested_entry();
             // SAFETY: the record belongs to the environment the target runs in.
             nested.enter(unsafe { &*record });
@@ -2575,14 +1969,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // checked above. The caller's raw argument/result buffers have
             // the Wasm ABI shape expected by this compiled entry, and `compiled`
             // keeps its executable mapping alive for the duration of the call.
-            native_target_hit = true;
-            if DIAGNOSTICS {
-                same_artifact_direct_hit = !context.compiled.is_null()
-                    && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
-                target_same_artifact_native = same_artifact_direct_hit;
-            }
-            let native_entry_sample_started =
-                native_entry_should_sample.then(std::time::Instant::now);
             // SAFETY: as the direct path's call; the nested context outlives the call.
             let status = unsafe {
                 enter_wasm(
@@ -2594,9 +1980,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
                     entry,
                 )
             };
-            if let Some(started) = native_entry_sample_started {
-                compiled.finish_native_entry_sample(function, started);
-            }
             if status == RAISED_STATUS as u32 {
                 match nested.raised.take() {
                     Some(Raised::Error(error)) => return Err(error),
@@ -2614,19 +1997,15 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
         // SAFETY: the generated call passes one argument word per parameter of `params` and
         // a result word for `result_type`, the shape the fallback reads and writes.
         unsafe {
-            reference_callout_fallback::<DIAGNOSTICS>(
+            reference_callout_fallback(
                 vm,
                 program,
-                context.compiled,
                 callee,
                 same_program_function,
                 &params,
                 result_type,
-                reference_target_function,
                 args,
                 out,
-                &mut native_target_hit,
-                &mut target_same_artifact_native,
             )
         }?;
         Ok(())
@@ -2635,16 +2014,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
     let vm = unsafe { &mut *vm_pointer };
     if let Some(root) = direct_target_root {
         vm.drop_root(root);
-    }
-    if DIAGNOSTICS {
-        note_reference_call_site(
-            context,
-            site,
-            native_target_hit,
-            same_artifact_direct_hit,
-            reference_target_function,
-            target_same_artifact_native,
-        );
     }
     refresh_memory_length(context, vm);
     refresh_wasm_gc_records(context, vm);
@@ -2663,33 +2032,11 @@ unsafe extern "C" fn import_callout(
     // VM is suspended in that call.
     let context = unsafe { &mut *context };
     let vm = unsafe { &mut *context.vm.cast::<Vm>() };
-    let defined = vm
-        .programs
-        .wasm_signatures(context.program)
-        .and_then(|signatures| signatures.defined_index(function as u32))
-        .is_some();
-    note_compiled_callout(if defined {
-        context.known_callouts
-    } else {
-        context.import_callouts
-    });
-    if !defined && !context.import_callout_counts.is_null() {
-        // SAFETY: this pointer is non-null only when the owning compiled
-        // program enabled diagnostic counters for the full native call.
-        unsafe {
-            note_import_callout_target(
-                context.import_callout_counts,
-                context.import_callout_count,
-                function,
-            );
-        }
-    }
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
     let env = context.env;
     let current_memory = context.memory;
-    let memcpy_fast_path_hits = context.emscripten_memcpy_fast_path_hits;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: compiled code passes one word per parameter and a result
         // word.
@@ -2699,7 +2046,6 @@ unsafe extern "C" fn import_callout(
                 env,
                 function as u32,
                 current_memory,
-                memcpy_fast_path_hits,
                 args,
                 out,
             )
@@ -2731,47 +2077,6 @@ enum CompiledArgs<'a> {
         base: usize,
         count: usize,
     },
-}
-
-/// Function `index`'s entry stitched from the b-jit's rows, under `--b-jit` where it has rows
-/// for every instruction: the `WasmEntry` ABI the compiled entry has. Its World is the shared one
-/// (`Analysis::with_world`), naming this process's cells and callouts.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn stitched_entry(
-    analysis: &Analysis<'_>,
-    index: usize,
-    (plans, cells, callable): (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]),
-    memory_slot: Option<u32>,
-    (full_plan, sites): (&Plan, &[(usize, usize)]),
-) -> Option<Vec<u8>> {
-    let (vm, program, env) = (analysis.vm, analysis.program, analysis.env);
-    // The indirect call row calls the non-diagnostic reference callout.
-    if !crate::compiled::admission::stencil_only() || vm.programs.js_jit_diagnostics_enabled() {
-        return None;
-    }
-    // The program's image may hold the rows already (`wasm_image::linked`).
-    if let Some(rows) = wasm_image::linked(analysis, index, memory_slot, (cells, callable)) {
-        return Some(rows);
-    }
-    let function = analysis.code.function_get(index)?;
-    // A callee has an entry cell while it is `callable` (it has a plan and its stitch succeeded);
-    // the cell holds the entry once placed. A callee that is not callable is called through the
-    // VM (`CALL_VM`), so its callers stitch all the same.
-    let callee = |callee: usize| callable.get(callee).copied()?.then(|| cells[callee].as_ptr() as u64);
-    let canonical = |index: u32| vm.programs.wasm_signatures(program)?.type_canonical(index).map(|canonical| canonical.word());
-    let indirect = |pc: usize| wasm_stitch::indirect::site(full_plan, sites, &canonical, pc);
-    // A growth leaves the base in place only for a reserved (guarded) memory.
-    let memory_stable = memory_slot.is_none_or(|slot| {
-        vm.heap_reads().environment_slot(env, slot as usize).and_then(|binding| guarded_memory(vm, binding)).is_some()
-    });
-    let naming = wasm_world::Naming { constant: &|_| true, callee: &callee, indirect: &indirect, memory_stable, callouts: wasm_world::Callouts::live() };
-    let returns = plans[index].as_ref()?.result.is_some();
-    analysis.with_world(function, full_plan, memory_slot, naming, |world| wasm_stitch::stitch(function, usize::from(function.params), returns, world))
-}
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn stitched_entry(_: &Analysis<'_>, _: usize, _: (&[Option<Plan>], &[std::cell::Cell<usize>], &[bool]), _: Option<u32>, _: (&Plan, &[(usize, usize)])) -> Option<Vec<u8>> {
-    None
 }
 
 /// The `CompiledProgram::positions` entry of a function an artifact does not hold.
@@ -2815,8 +2120,7 @@ fn direct_reference_entry(
 }
 
 /// Pick a compiled artifact for an indirect target, preferring the artifact
-/// that is already executing when it contains the target. This is the case
-/// after profile-guided selective promotion closes over a hot indirect callee.
+/// that is already executing when it contains the target.
 fn compiled_reference_target(
     vm: &Vm,
     program: ProgramId,
@@ -2826,162 +2130,44 @@ fn compiled_reference_target(
     let current_artifact = if caller.is_null() {
         None
     } else {
-        vm.programs
-            .compiled(program)
-            .flatten()
-            .filter(|compiled| std::ptr::eq(Rc::as_ptr(compiled), caller))
-            .filter(|compiled| compiled.has_function(function))
-            .or_else(|| {
-                u32::try_from(function).ok().and_then(|function| {
-                    vm.programs.wasm_tier_for_artifact_containing(
-                        program,
-                        function as usize,
-                        caller,
-                    )
-                })
-            })
-    };
-    current_artifact
-        .or_else(|| {
+        u32::try_from(function).ok().and_then(|function| {
             vm.programs
-                .compiled(program)
-                .flatten()
-                .filter(|compiled| compiled.has_function(function))
+                .wasm_tier_for_artifact_containing(program, function as usize, caller)
         })
-        .or_else(|| {
-            u32::try_from(function)
-                .ok()
-                .and_then(|function| vm.programs.wasm_tier_containing(program, function))
-        })
+    };
+    current_artifact.or_else(|| {
+        u32::try_from(function)
+            .ok()
+            .and_then(|function| vm.programs.wasm_tier_containing(program, function))
+    })
 }
 
 /// A Wasm program's compile (`compile_wasm_program`), the route `jit_routes` installs.
-pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, Option<usize>, bool, admission::CompiledUnit) -> Option<CompiledProgram>;
+pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, usize, admission::CompiledUnit) -> Option<CompiledProgram>;
 pub(crate) use quench_runtime::vm::engine_types::CompiledProgram;
 
-use quench_runtime::vm::engine_types::WasmJitDiagnostics;
 
 
-
-fn jit_diagnostics_enabled() -> bool {
-    quench_runtime::trace::Channel::WasmJit.on()
-}
 
 #[quench_macros::ext(CompiledProgramOps1)]
 impl CompiledProgram {
     #[cfg(test)]
-    pub(crate) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
-        self.diagnostics
-            .as_ref()
-            .map_or(0, |stats| stats.emscripten_memcpy_fast_path_hits.get())
-    }
-
-    fn note_direct_reference_entry(&self, function: usize) -> bool {
-        let native_entry_should_sample = self.note_native_entry(function);
-        #[cfg(test)]
+    fn note_direct_reference_entry(&self, function: usize) {
+        self.note_native_entry(function);
         if let Some(function) = self.function(function) {
             function
                 .direct_reference_entries
                 .set(function.direct_reference_entries.get().saturating_add(1));
         }
-        native_entry_should_sample
     }
 
-    fn note_native_entry(&self, function: usize) -> bool {
-        let native_entry_should_sample = if let Some(stats) = &self.diagnostics
-            && let Some(entries) = stats.native_entry_requests.get(function)
-        {
-            let entry_count = entries.get().saturating_add(1);
-            entries.set(entry_count);
-            native_entry_sample_due(entry_count)
-        } else {
-            false
-        };
-        #[cfg(test)]
+    #[cfg(test)]
+    fn note_native_entry(&self, function: usize) {
         if let Some(function) = self.function(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
         }
-        native_entry_should_sample
-    }
-
-    fn finish_native_entry_sample(&self, function: usize, started: std::time::Instant) {
-        let stats = self
-            .diagnostics
-            .as_ref()
-            .expect("sampled entries require JIT diagnostics");
-        let (Some(samples), Some(sampled_ns)) = (
-            stats.native_entry_samples.get(function),
-            stats.native_entry_sampled_ns.get(function),
-        ) else {
-            unreachable!("sampled function is present in diagnostic function tables");
-        };
-        let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
-        samples.set(samples.get().saturating_add(1));
-        sampled_ns.set(sampled_ns.get().saturating_add(elapsed_ns));
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reference_call_site_counts(&self) -> Option<Vec<(usize, usize, u64, u64, u64)>> {
-        Some(
-            self.diagnostics
-                .as_ref()?
-                .reference_call_sites
-                .iter()
-                .map(|site| {
-                    let counts = site.counts.get();
-                    (
-                        site.function,
-                        site.pc,
-                        counts.total,
-                        counts.native,
-                        counts.fallback,
-                    )
-                })
-                .collect(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reference_call_target_counts(
-        &self,
-    ) -> Option<Vec<(usize, usize, usize, u64, u64, u64)>> {
-        Some(
-            self.diagnostics
-                .as_ref()?
-                .reference_call_sites
-                .iter()
-                .flat_map(|site| {
-                    site.targets
-                        .borrow()
-                        .iter()
-                        .map(|target| {
-                            (
-                                site.function,
-                                site.pc,
-                                target.function,
-                                target.total,
-                                target.native,
-                                target.same_artifact_native,
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn same_artifact_direct_reference_hits(&self) -> Option<u64> {
-        Some(
-            self.diagnostics
-                .as_ref()?
-                .reference_call_sites
-                .iter()
-                .map(|site| site.counts.get().same_artifact_direct)
-                .fold(0u64, u64::saturating_add),
-        )
     }
 
     #[cfg(test)]
@@ -3015,15 +2201,6 @@ fn write_perf_map(kind: &str, base: usize, bytes: &[u8], spans: &[(usize, usize,
     let _ = std::fs::write(format!("/tmp/quench-jit-{pid}-{base:x}.bin"), bytes);
 }
 
-/// Counts a lane-ABI region's run of `region` that ended in `run`, `lent` the payload, in the VM's tier events.
-fn note_osr_run(events: &quench_runtime::vm::tier_events::TierEvents, run: &RegionRun, region: &LoopRegion, lent: bool) {
-    use quench_runtime::vm::tier_events::Event;
-    let inlined = !run.nested && matches!(run.exit, LaneExit::Inlined { .. });
-    for (event, happened) in [(Event::OsrLent, lent), (Event::OsrExited, run.left(region)), (Event::OsrInlined, inlined)] {
-        if happened { events.record(event); }
-    }
-}
-
 pub(crate) use quench_runtime::vm::engine_types::CompiledOsrRegion;
 
 pub(crate) use quench_runtime::vm::engine_types::EntryStamp;
@@ -3031,12 +2208,11 @@ pub(crate) use quench_runtime::vm::engine_types::EntryStamp;
 #[quench_macros::ext(EntryStampOps1)]
 impl EntryStamp {
     /// The stamp of the activation an entry runs, its capture view not yet bound (`captures`).
-    fn of(vm: &Vm, (program, function, frame): (ProgramId, u32, usize), lane_context: usize, registers: *mut Value,
-        specialized: bool) -> Self {
+    fn of(vm: &Vm, (program, function, frame): (ProgramId, u32, usize), lane_context: usize, registers: *mut Value) -> Self {
         let (frame_record, locals) = vm.frames.get(frame)
             .map_or((0, 0), |record| (std::ptr::from_ref(record).addr(), record.locals.as_ptr().addr()));
         Self { vm: std::ptr::from_ref(vm).addr(), program, function, frame, frame_record, locals, lane_context,
-            registers: registers.addr(), specialized, captures: (0, 0) }
+            registers: registers.addr(), captures: (0, 0) }
     }
 
     /// Whether `other` is the activation `self` was bound for: the same VM, program and function,
@@ -3103,7 +2279,6 @@ impl CompiledOsrRegion {
     ) -> RegionRun {
         let start = self.start_at(region, from);
         // SAFETY: the caller's contract covers `vm`.
-        unsafe { (*vm).programs.tier_events().record(quench_runtime::vm::tier_events::Event::OsrRun) };
         // SAFETY: the caller's contract; the region runs the same lane entry ABI.
         unsafe { if self.crossing == Crossing::Bare { stencil_run::run_bare(start, registers, entry, interrupt) }
             else { self.run_lane(start, registers, entry, region, vm, program, function, frame, interrupt, lane) } }
@@ -3134,9 +2309,6 @@ impl CompiledOsrRegion {
         // (`dense`), so an entry refills it in place.
         let mut captures = self.dense.take();
         let parked = self.parked.take().filter(|_| self.crossing == Crossing::General);
-        // The region's calls, named to the lane's helpers for the run (`rebind_region_call`).
-        // SAFETY: `lane_context` is the running lane's.
-        let outer_calls = unsafe { std::mem::replace(&mut (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls, std::ptr::from_ref(&self.calls).addr()) };
         // SAFETY: the caller's contract covers `vm`, `registers`, `interrupt` and the context.
         let outcome = unsafe {
             match parked {
@@ -3145,21 +2317,21 @@ impl CompiledOsrRegion {
                 Some(mut dispatch) => {
                     let vm = &mut *vm;
                     let bound = match self.stamp.get() {
-                        Some(stamp) if stamp.binds(&EntryStamp::of(&*vm, (program, function, frame), lane_context, registers, stamp.specialized)) => Some(stamp),
+                        Some(stamp) if stamp.binds(&EntryStamp::of(&*vm, (program, function, frame), lane_context, registers)) => Some(stamp),
                         _ => None,
                     };
                     let stamp = match bound {
                         Some(stamp) => {
-                            dispatch.rewarm_region(vm, stamp.specialized);
+                            dispatch.rewarm_region(vm);
                             let view = captures_key(vm, frame);
                             if view != stamp.captures { dispatch.refresh_capture_view(vm); }
                             EntryStamp { captures: view, ..stamp }
                         }
                         None => {
                             let Some(residual) = vm.programs.get(program) else { return RegionRun::own(LaneExit::Terminated) };
-                            dispatch.rebind_region(vm, program, &residual, frame, registers);
+                            dispatch.rebind_region(vm, program, frame, registers);
                             osr_lane::bind_frame(&mut dispatch, &residual, vm, (program, function, lane_context), registers, true);
-                            EntryStamp { captures: captures_key(vm, frame), ..EntryStamp::of(vm, (program, function, frame), lane_context, registers, residual.specialized) }
+                            EntryStamp { captures: captures_key(vm, frame), ..EntryStamp::of(vm, (program, function, frame), lane_context, registers) }
                         }
                     };
                     osr_lane::bind_loop(&mut dispatch, region, entry, lane_context);
@@ -3188,10 +2360,6 @@ impl CompiledOsrRegion {
             }
         };
         self.dense.set(captures);
-        // SAFETY: as above.
-        unsafe { (*(lane_context as *mut quench_runtime::vm::engine_types::LaneContext)).region_calls = outer_calls };
-        // SAFETY: as above; the activation that held `vm` has returned.
-        note_osr_run(unsafe { (*vm).programs.tier_events() }, &outcome, region, self.calls.enters_callees());
         outcome
     }
 
@@ -3230,9 +2398,10 @@ pub(crate) fn analyze_osr_region_detailed(
 }
 
 
-/// Whether the loop tier compiles regions under `policy`: `admission::may_compile` for a region.
+/// Whether the loop tier compiles regions under `policy` (`admission::region_unit_under`), for the tests that probe it.
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn loop_tier_compiles(policy: quench_runtime::MemoryPolicy) -> bool {
-    admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Region(policy), facts: Default::default() }).compiled().is_some()
+    admission::region_unit_under(policy).is_some()
 }
 
 /// Compile one admitted OSR region and publish it through the shared executable-memory path.
@@ -3377,13 +2546,6 @@ impl LaneMethod {
         self.proven.as_ref().map(|(_, params)| &params[..])
     }
 
-    /// Whether an entry, which costs a few hundred instructions the lane's own run of a
-    /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`Tiers::amortizing_instructions`). A short leaf runs in the lane, or inlined.
-    pub(crate) fn amortizes_entry(&self) -> bool {
-        self.amortizes
-    }
-
     /// Whether a direct caller may call it (`LaneMethod::closed`).
     pub(crate) fn calls_only_natively(&self) -> bool {
         self.closed
@@ -3456,27 +2618,27 @@ unsafe extern "C" fn field_get_in_lane(vm: u64, residual: u64, receiver: Value, 
 ///
 /// # Safety
 /// `vm` and `residual` are the running VM and residual, live and unborrowed for the call.
-unsafe fn cached_field_read(vm: u64, residual: u64, receiver: Value, read: u64) -> u64 {
+unsafe fn cached_field_read(vm: u64, _residual: u64, receiver: Value, read: u64) -> u64 {
     let (atom, site) = ((read >> u16::BITS) as Atom, read as u16);
     // SAFETY: as the caller promises; the probe reads caches and never allocates.
-    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
+    let vm = unsafe { &mut *(vm as *mut Vm) };
     // An array's `length`, an own data property no shape holds, answers first: a loop's
     // condition reads it every iteration (`Vm::array_length_field`).
     if let Some(length) = vm.array_length_field(receiver, atom) {
         return length.to_bits();
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
-    if let Some(value) = vm.cached_string_field_hit(residual, receiver, atom, site) { return value.to_bits(); }
+    if let Some(value) = vm.cached_string_field_hit(receiver, atom, site) { return value.to_bits(); }
     // A typed array's geometry, which no field cache records, as the lane's (`LaneFrame::cached_read`).
     if vm.atom_class(atom).contains(quench_runtime::vm::object::AtomClass::VIRTUAL_FIELD)
         && let Some(value) = vm.typed_array_geometry_read(receiver, atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
-    if let Some(value) = vm.proved_inherited_field_hit(residual, receiver, site) {
+    if let Some(value) = vm.proved_inherited_field_hit(receiver, site) {
         return value.to_bits();
     }
     // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
-    match vm.compiled_field_hit(residual, receiver, site) {
+    match vm.compiled_field_hit(receiver, site) {
         quench_runtime::vm::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         quench_runtime::vm::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
@@ -3493,47 +2655,26 @@ unsafe extern "C" fn truthy_in_lane(vm: u64, _residual: u64, bits: Value) -> u64
 /// Admit a bound slot's write domain before any guest effect or raw store.
 unsafe extern "C" fn field_write_admission_in_lane(vm: u64, _residual: u64, shape: u64, slot: u64, domain: u64) -> u64 {
     #[cfg(test)] FIELD_WRITE_ADMISSIONS.with(|count| count.set(count.get() + 1));
-    let raw_double = domain & RAW_DOUBLE_WRITES != 0;
-    let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get((domain & !RAW_DOUBLE_WRITES) as usize) else { return 0; };
+    let Some(domain) = quench_runtime::typed_ir::SlotType::ALL.get(domain as usize) else { return 0; };
     // SAFETY: the shared native entry owns the VM; admission neither allocates nor reenters.
     let vm = unsafe { &mut *(vm as *mut Vm) };
-    u64::from(vm.admit_slot_writes_as(shape as u32, slot as usize, domain.ty(), raw_double))
+    u64::from(vm.admit_slot_writes(shape as u32, slot as usize, domain.ty()))
 }
-
-/// The bit of a write admission's domain word (`field_write_admission_in_lane`) that says the
-/// writer stores a slot of raw doubles as raw doubles (`StoreArm::raw_double`).
-pub(crate) const RAW_DOUBLE_WRITES: u64 = 1 << 16;
 
 /// A logged own-field store that preserves every native storage projection.
 /// Migration or observed type widening declines before writing, leaving the full
 /// store to the lane at its original PC after retiring dependent native entries.
-unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, atom: u64, site: u64, value: Value) -> u64 {
+unsafe extern "C" fn field_set_in_lane(vm: u64, _residual: u64, receiver: Value, atom: u64, site: u64, value: Value) -> u64 {
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
-    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
+    let vm = unsafe { &mut *(vm as *mut Vm) };
+    // Only the primary entry's hit proves its slot's representation (`general_store`). A site past one shape
+    // stores through the VM's polymorphic entries, which were record-tier and are gone (S7g): it leaves.
+    let layout = quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative;
+    let hit = vm.primary_own_field_store_hit::<true>(receiver, atom as Atom, value, site as u16, layout);
+    if hit { general_store::record_store_class(vm, site as u16, value); }
     #[cfg(feature = "profile-native-ops")]
-    let storage = {
-        use quench_runtime::vm::native_op_profile::StoreStorage;
-        match receiver.direct_object_index() {
-            None => StoreStorage::NonRecord,
-            Some(id) => {
-                let object = vm.heap_reads().object_record_by_id(id);
-                if object.plain_storage_start().is_some() { StoreStorage::Arena }
-                else if object.properties().has_inline_property_storage() { StoreStorage::Inline }
-                else { StoreStorage::OtherRecord }
-            }
-        }
-    };
-    // A receiver of another shape the site met stores through its polymorphic entries, as
-    // long as the store keeps the record's layout, which the caller's proofs rely on.
-    let (receiver, value, layout) = (receiver, value, quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative);
-    // Only the primary entry's hit proves its slot's representation (`general_store`).
-    let primary = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
-    if primary { general_store::record_store_class(vm, site as u16, value); }
-    let hit = primary
-        || vm.polymorphic_own_field_store_hit(residual, receiver, atom as Atom, value, site as u16, layout).is_some();
-    #[cfg(feature = "profile-native-ops")]
-    quench_runtime::vm::native_op_profile::record_store(storage, hit);
+    quench_runtime::vm::native_op_profile::record_store(hit);
     u64::from(hit)
 }
 
@@ -3577,10 +2718,10 @@ unsafe extern "C" fn take_raised_in_lane(vm: u64, _residual: u64) -> u64 {
 }
 
 /// A lane body's global name read (`Vm::global_read_in_lane`): its value, or `Value::DELETED` for one the lane's own read would not take.
-unsafe extern "C" fn global_get_in_lane(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
+unsafe extern "C" fn global_get_in_lane(vm: u64, _residual: u64, atom: u64, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the read runs no guest code and allocates nothing.
-    let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
-    vm.global_read_in_lane(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
+    let vm = unsafe { &mut *(vm as *mut Vm) };
+    vm.global_read_in_lane(atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
 }
 
 /// A lane body's strict equality of two distinct heap values of one content-compared family
@@ -3629,27 +2770,24 @@ unsafe extern "C" fn typeof_index_in_lane(vm: u64, _residual: u64, value: Value)
 
 /// A lane body's store of `value` to the field the packed `write` names (its atom above its
 /// cache site) of `receiver`, as the lane's own store at an adding site: into a slot the
-/// object has (`Vm::primary_own_field_store_hit`, or a polymorphic site's
-/// `Vm::polymorphic_own_field_store_hit`), else the cached add of the property
+/// object has (`Vm::primary_own_field_store_hit`), else the cached add of the property
 /// (`Vm::primary_field_add_hit`), which may change the object's shape and move the
 /// property arena, whose base and length the dispatch reads again. Zero where neither hits,
 /// or a collection is due, which the body leaves for.
-unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, receiver: Value, write: u64, value: Value) -> u64 {
+unsafe extern "C" fn field_add_in_lane(vm: u64, _residual: u64, payload: u64, receiver: Value, write: u64, value: Value) -> u64 {
     // SAFETY: as `compiled_new_object`; the residual is the running one.
-    let (vm, residual, dispatch) = unsafe {
-        (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
+    let (vm, dispatch) = unsafe {
+        (&mut *(vm as *mut Vm), &mut *(payload as *mut JsStepDispatch))
     };
     let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
-    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {
+    if vm.primary_own_field_store_hit::<true>(receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {
         return 1;
     }
     if vm.collection_due() {
         return 0;
     }
-    // A site past one shape stores through its megamorphic own entries, which may widen the
-    // object's storage; the body retires its proofs after this store either way.
-    if vm.polymorphic_own_field_store_hit(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden).is_none()
-        && !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
+    // The cached add of the property (the polymorphic own entries it used to try were record-tier, S7g): a miss leaves.
+    if !vm.primary_field_add_hit(receiver, atom, value, site) {
         return 0;
     }
     crate::dispatch_fast::note_allocation(vm);
@@ -3763,12 +2901,11 @@ unsafe extern "C" fn function_capture_read_in_lane(vm: u64, callee: Value, slot:
 
 #[quench_macros::ext(CompiledVm3)]
 impl Vm {
-    /// The value a global read of `atom` through cache `site` takes as the lane's own read
-    /// does (`dispatch_fast::global_name_refresh_miss`): its global lexical binding's, else
-    /// the global object's own data property or cached field; none for a binding in its TDZ or a miss.
-    pub(crate) fn global_read_in_lane(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
-        match self.global_name_read(code, atom, site) {
-            quench_runtime::vm::field_cache::GlobalNameRead::Value(value, _) => Some(value),
+    /// The value a global read of `atom` through cache `site` takes: its global lexical binding's, else
+    /// the global object's cached field; none for a binding in its TDZ or a miss.
+    pub(crate) fn global_read_in_lane(&mut self, atom: Atom, site: u16) -> Option<Value> {
+        match self.global_name_read(atom, site) {
+            quench_runtime::vm::field_cache::GlobalNameRead::Value(value) => Some(value),
             quench_runtime::vm::field_cache::GlobalNameRead::Uninitialized | quench_runtime::vm::field_cache::GlobalNameRead::Miss => None,
         }
     }
@@ -3778,49 +2915,50 @@ impl Vm {
     /// a store's own (`Vm::native_field_load_descriptors`); a nested lookup names one site
     /// per read of its chain, and its sink's store.
     /// The field cache sites `instruction` reads (`true`) or stores through (`false`).
-    /// Counts a run of a lane body that left at the instruction `pc` of `function`, on each
-    /// field site it has: the leave path's one write of a site's instability.
-    pub(crate) fn note_field_leave(&mut self, program: &ResidualProgram, function: u32, pc: usize) {
-        let Some(instruction) = program.function_get(function as usize).and_then(|body| body.instructions().nth(pc)) else { return };
-        for (site, _) in Self::instruction_field_sites(program, &instruction) {
-            self.record_field_leave(self.field_cache_index(site));
-        }
-    }
-
     fn instruction_field_sites(program: &ResidualProgram, instruction: &WideInstruction) -> Vec<(u16, bool)> {
         quench_runtime::staged::Operation::<u64, ()>::field_cache_sites(*instruction, &program.field_sites)
     }
 
     /// The proved shapes and slots of `unit`'s field sites, but those of the instructions at
-    /// `generic`, where a previous body left on its runs: their proofs did not hold for the
-    /// values they met (a function's own field, read through a plain object's proof), so
-    /// they take the VM's cached read, which answers them (`lane_region::field_probe`).
     /// `view` is the lane view of `function`, whose own instructions' records hold the own-field
     /// hints (`LaneView::own_field_hint`); each own read's hint becomes its loads' `formed` layout
     /// id, which a load names only where it is the load's shape (`lane_region::field_plans`). An
     /// inlined instruction's record belongs to another body's view, so it takes no hint.
-    fn unit_fields_in_lane(&self, program: &ResidualProgram, unit: &lane_unit::Unit, generic: &[usize],
+    fn unit_fields_in_lane(&self, program: &ResidualProgram, unit: &lane_unit::Unit, function: u32,
         view: Option<&crate::dispatch_fast::LaneView>) -> Vec<Option<Vec<NativeFieldLoad>>> {
-        let (generic, functions): (Vec<u16>, _) = (generic.iter().flat_map(|pc| Self::instruction_field_sites(program, &unit.instructions[*pc]))
-            .map(|(site, _)| site).collect(), self.heap_reads().function_shapes());
-        // Base regions read the live cache, whose entries name no form (`loop_tier::native_field_loads`).
-        let view = view.filter(|_| !crate::compiled::admission::stencil_regions());
+        let functions = self.heap_reads().function_shapes();
         let sites = unit.instructions
             .iter()
             .enumerate()
             .flat_map(|(pc, instruction)| Self::instruction_field_sites(program, instruction).into_iter().map(move |(site, read)| (pc, site, read)))
-            .filter(|(_, site, _)| !generic.contains(site))
             .map(|(pc, site, read)| {
                 let formed = match (read, view, unit.origins.get(pc)) {
                     (true, Some(view), Some(lane_unit::Origin::Caller(caller))) => view.own_field_hint(*caller as usize),
                     _ => None,
                 };
                 let loads = if read { self.native_field_read_descriptors(site) } else { self.native_field_load_descriptors(site) };
-                (site, loads.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), formed, ..load }).collect::<Vec<_>>())
+                (pc, site, loads.into_iter().map(|load| NativeFieldLoad { function_shape: functions.contains(load.shape as usize), formed, ..load }).collect::<Vec<_>>())
             })
-            .filter(|(site, shapes)| !shapes.is_empty() && site_posterior::SiteEvidence::of(self.programs.tiers(), self.field_site_leaves(self.field_cache_index(*site)), shapes.len()).speculates())
-            .map(|(site, shapes)| (usize::from(site), shapes));
+            .filter(|(pc, _, shapes)| !shapes.is_empty() && self.guards_at(program, unit, function, *pc))
+            .map(|(_, site, shapes)| (usize::from(site), shapes));
         lane_region::flat_table(sites)
+    }
+
+    /// Whether the field site at unit PC `pc` guards its shapes and exits on a miss (`lane_facts::speculates`), from the
+    /// solver's class set of the access in the running program's facts. A program not running, or one whose access the
+    /// solver does not close, reads in place through the VM's cache (`lane_region::field_probe`).
+    fn guards_at(&self, program: &ResidualProgram, unit: &lane_unit::Unit, function: u32, pc: usize) -> bool {
+        let running = self.programs.residual(self.active_program).is_some_and(|running| std::ptr::eq(running, program));
+        let Some(facts) = self.programs.aot_facts(self.active_program).filter(|_| running) else { return false };
+        let (function, pc) = match unit.origins.get(pc) {
+            Some(lane_unit::Origin::Caller(pc)) => (function, *pc),
+            Some(lane_unit::Origin::Inlined { frame, pc }) => match unit.frames.get(*frame) {
+                Some(frame) => (frame.target.function, *pc),
+                None => return false,
+            },
+            None => return false,
+        };
+        lane_facts::speculates(facts.function_facts(function).access_classes(pc))
     }
 
     /// Run a lane body on an activation's `registers`; the PC the lane continues at. A
@@ -3960,7 +3098,7 @@ impl Vm {
     /// every one below it (`region_lend::lend`), so a plain frame here is a direct call's still running (a
     /// stencil call row's push, whose pop restores the plain depth, window and body top it found). Binding
     /// spills it into a record that pop never removes: each such call that allocated left one record more,
-    /// until the walk over them outgrew the activation limit (ai-astar under `--b-jit`).
+    /// until the walk over them outgrew the activation limit (ai-astar under the b-jit tier alone).
     pub(crate) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
         // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
         if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
@@ -4085,9 +3223,8 @@ impl BodyRunContext {
     /// own, and the nested entries of one run (`Vm::run_nested_lane_method`) spend the run's budget. The interrupt and the
     /// payload, whose address is the frame's, bind once per interrupt owner. The lane stack's storage addresses (`storage`)
     /// bind with the run: no reallocation moves them.
-    /// Whether the entry bound a different run than the last one's.
     #[inline(always)]
-    fn bind_run(&mut self, run: LaneRun, interrupt: &quench_runtime::ExecutionInterrupt, field_entries: impl FnOnce() -> usize, storage: impl FnOnce() -> crate::dispatch_fast::LaneStackStorage) -> bool {
+    fn bind_run(&mut self, run: LaneRun, interrupt: &quench_runtime::ExecutionInterrupt, field_entries: impl FnOnce() -> usize, storage: impl FnOnce() -> crate::dispatch_fast::LaneStackStorage) {
         let owner = std::ptr::from_ref(interrupt);
         // The lane context is the entry's own activation, written by every entry; the other
         // words stand for the whole run.
@@ -4106,7 +3243,6 @@ impl BodyRunContext {
             self.context.interrupt_owner = owner;
             self.context.adapter_payload = (&raw mut self.dispatch).cast();
         }
-        rebound
     }
 
     fn new() -> Self {
@@ -4123,14 +3259,6 @@ impl BodyRunContext {
 
 thread_local! {
     static LANE_FRAME: std::cell::UnsafeCell<Option<BodyRunContext>> = const { std::cell::UnsafeCell::new(None) };
-}
-
-/// This thread's lane frame, made at its first lane body run.
-/// The lowering line of the guard the lane body that just ran left at, reset; zero where it
-/// recorded none (`VmFacts::diagnostics`).
-pub(crate) fn take_lane_exit_line() -> u64 {
-    // SAFETY: as `lane_frame`.
-    unsafe { std::mem::take(&mut (*frame_in_lane()).dispatch.exit_line) }
 }
 
 #[inline]
@@ -4194,7 +3322,7 @@ impl JsStepDispatch {
         let this = if frame.fixed_this { frame.this } else { Value::DELETED };
         // SAFETY: the activation's register file is live for this run, and its header is its own.
         unsafe { set_frame_word(dispatch.native_registers, CONTEXT_THIS, this.to_bits()) };
-        if views { dispatch.refresh_heap_bases(vm, &program); }
+        if views { dispatch.refresh_heap_bases(vm); }
         Some(run(&mut dispatch, vm))
     }
 
@@ -4203,17 +3331,18 @@ impl JsStepDispatch {
         Self {
             head: JsStepHead {
                 loop_entry: 0,
-                array_record_base: 0, collection_record_base: 0, string_record_base: 0, object_record_base: 0, function_record_base: 0,
-                object_mark_blocks: 0, object_mark_block_count: 0, function_mark_blocks: 0, function_mark_block_count: 0,
+                array_record_base: 0, collection_record_base: 0, string_record_base: 0, function_record_base: 0,
+                class_base: 0,
+                function_mark_blocks: 0, function_mark_block_count: 0,
                 property_buffer: 0, field_entries: 0, native_locals: std::ptr::null_mut(), local_count: 0,
                 epoch: 0, method_cache_atoms: 0, method_cache_atom_words: 0, stores_specialized: 0, store_watch: 0,
                 empty_string: Value::DELETED.to_bits(),
                 environment_storage: quench_runtime::tier_surface::absent_environment_storage(),
-                array_mark_blocks: 0, array_mark_block_count: 0,
+                array_mark_blocks: 0, array_mark_block_count: 0, class_mark_lists: [0; 12], spill_base: 0,
                 typed_view_directory: 0, typed_view_pages: 0, buffer_relocations: 0,
                 vm: 0, residual: 0, lane_context: 0, returned_pc: 0,
                 lane_values_top: 0, lane_values_end: 0, lane_activations_top: 0, lane_frames_end: 0,
-                object_cursor: 0, empty_object_layout: 0, empty_object_payload: 0, empty_object_proto: 0,
+                empty_object_cursor: 0, empty_object_class: 0, empty_object_proto: 0,
                 array_cursor: 0, empty_array_layout: 0, empty_array_payload: 0, empty_array_proto: 0,
                 ascii_unit_strings: 0,
                 armed_array_proofs: quench_runtime::tier_surface::armed_proofs_address(),
@@ -4226,8 +3355,8 @@ impl JsStepDispatch {
             stop_pc: JS_NO_STOP_PC,
             native_registers: std::ptr::null_mut(), register_count: 0,
             fixed_this_slot: std::ptr::null(),
-            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, proper_tail_calls: 0, element_get: 0,
-            body: std::ptr::null(), inlined: 0, exit_line: 0,
+            call_cache: 0, layout_seen: u64::MAX, bases_vm: 0, frameless: 0, call_targets: 0, element_get: 0,
+            body: std::ptr::null(), inlined: 0,
             outcome: None,
         }
     }
@@ -4254,7 +3383,7 @@ impl JsStepDispatch {
     /// lazily made empty string and unit strings exist: then one pass of compares replaces the
     /// rereads every allocating, call or step helper ends with.
     #[inline]
-    fn refresh_object_bases(&mut self, vm: &Vm) {
+    pub(crate) fn refresh_object_bases(&mut self, vm: &Vm) {
         let layout = vm.heap_reads().native_layout_epoch();
         let atoms = vm.method_cache_atoms.words();
         let (directory, pages) = vm.heap_reads().typed_view_directory();
@@ -4276,16 +3405,16 @@ impl JsStepDispatch {
     #[cold]
     #[inline(never)]
     fn reread_object_bases(&mut self, vm: &Vm) {
-        // The empty object's template is dropped with the bases: the next empty allocation's helper
-        // makes an object again, which captures the template anew (`capture_empty_object`).
+        // The empty object's captured class is dropped with the bases: the next empty allocation's helper
+        // makes an object again, which captures the class anew (`capture_empty_object`).
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
-        (self.empty_object_layout, self.empty_object_payload) = (0, 0);
-        self.object_cursor = vm.heap_reads().native_object_cursor();
+        self.empty_object_class = 0;
+        self.empty_object_cursor = vm.heap_reads().native_cell_cursor(1);
         // The empty array's template is dropped with the bases, as the object's is (`capture_empty_array`).
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_layout, self.empty_array_payload) = (0, 0);
         self.array_cursor = vm.heap_reads().native_array_cursor();
-        self.object_record_base = vm.heap_reads().object_record_base().map_or(0, |base| base as usize);
+        self.class_base = vm.heap_reads().class_space_base();
         self.function_record_base = vm.heap_reads().function_record_base().map_or(0, |base| base as usize);
         self.array_record_base = vm.heap_reads().array_record_base().map_or(0, |base| base as usize);
         self.collection_record_base = vm.heap_reads().collection_record_base().map_or(0, |base| base as usize);
@@ -4295,30 +3424,35 @@ impl JsStepDispatch {
         (self.typed_view_directory, self.typed_view_pages) = (directory.addr(), pages);
         self.buffer_relocations = quench_runtime::tier_surface::buffer_relocations_address().addr();
         self.epoch = vm.heap_reads().collection_epoch();
-        let (blocks, count) = vm.heap_reads().native_object_mark_blocks();
-        (self.object_mark_blocks, self.object_mark_block_count) = (blocks as usize, count);
         let (blocks, count) = vm.heap_reads().native_function_mark_blocks();
         (self.function_mark_blocks, self.function_mark_block_count) = (blocks as usize, count);
         let (blocks, count) = vm.heap_reads().native_array_mark_blocks();
         (self.array_mark_blocks, self.array_mark_block_count) = (blocks as usize, count);
+        // The class cell regions 1 to 5 (region 0, the stubs, keeps its entry zero).
+        for region in 1..=5_u32 {
+            let (blocks, count) = vm.heap_reads().native_class_mark_blocks(region);
+            let slot = 2 * region as usize;
+            (self.class_mark_lists[slot], self.class_mark_lists[slot + 1]) = (blocks as usize, count);
+        }
+        self.spill_base = vm.heap_reads().native_spill_base();
         self.empty_string = vm.empty_string_word().to_bits();
         self.store_watch = vm.heap_reads().store_watch_word();
         let atoms = vm.method_cache_atoms.words();
         (self.method_cache_atoms, self.method_cache_atom_words) = (atoms.as_ptr() as usize, atoms.len());
     }
 
-    /// Records `object`, the empty object `Vm::object` just made for the current realm's prototype,
-    /// as the template an inline empty allocation copies: its two record words and the prototype
-    /// they were made for. The words depend on the prototype only (`Object::new`). Nothing is
-    /// captured where allocation is profiled per record, which the inline path would skip.
+    /// Records `object`, the empty object `Vm::object` just made for the current realm's prototype, as the
+    /// class an inline empty allocation claims its cell with: the class cell's header word (the class names
+    /// the shape and prototype link, which depend on the prototype only) and the prototype it was made for.
+    /// Nothing is captured where the object is not a live class cell, or where allocation is profiled per
+    /// record, which the inline path would skip.
     fn capture_empty_object(&mut self, vm: &Vm, object: Value) {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object_record(object) else { return };
-        let (payload, layout) = record.stored_words();
+        let Some(class) = vm.heap_reads().live_class_header(object) else { return };
         self.empty_object_proto = vm.realm_object_prototype(vm.realm.globals).to_bits();
-        (self.empty_object_payload, self.empty_object_layout) = (payload, u64::from(layout));
+        self.empty_object_class = class;
     }
 
     /// Records `array`, the zero-length array `Vm::hole_array(0)` just made for the current realm's
@@ -4329,7 +3463,7 @@ impl JsStepDispatch {
         if cfg!(any(feature = "profile-memory", feature = "profile-aggregate")) {
             return;
         }
-        let Some(record) = vm.heap_reads().object(array) else { return };
+        let Some(record) = vm.heap_reads().object(array).and_then(|object| object.record_only()) else { return };
         let (payload, layout) = record.stored_words();
         self.empty_array_proto = vm.array_prototype_for_realm(vm.realm.globals).to_bits();
         (self.empty_array_payload, self.empty_array_layout) = (payload, u64::from(layout));
@@ -4340,21 +3474,21 @@ impl JsStepDispatch {
     /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
     /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
     /// The words the run's binds set (`osr_lane`) are theirs.
-    fn rebind_region(&mut self, vm: &mut Vm, program_id: ProgramId, program: &ResidualProgram, frame: usize, registers: *mut Value) {
+    fn rebind_region(&mut self, vm: &mut Vm, program_id: ProgramId, frame: usize, registers: *mut Value) {
         self.bind_lane_storage(std::ptr::from_mut(vm));
         (self.program_id, self.frame) = (program_id, frame);
         // The window the capture view reads and writes is the run's own, which the parked dispatch
         // last ran in only where the activation is the same; set before the bases are refreshed.
         self.native_registers = registers;
         self.reset_region_run();
-        self.refresh_heap_bases(vm, program);
+        self.refresh_heap_bases(vm);
     }
 
     /// The run state a region's run leaves, reset to `idle`'s.
     #[inline(always)]
     fn reset_region_run(&mut self) {
         self.set_captures_word(0);
-        (self.inlined, self.exit_line, self.returned_pc) = (0, 0, 0);
+        (self.inlined, self.returned_pc) = (0, 0);
         (self.lane_values_top, self.lane_values_end, self.lane_activations_top, self.lane_frames_end) = (0, 0, 0, 0);
         self.environment_storage = quench_runtime::tier_surface::absent_environment_storage();
         self.outcome = None;
@@ -4367,17 +3501,17 @@ impl JsStepDispatch {
     /// bases (a compare-only pass while nothing moved), the program's
     /// field entries (a moved cache table moves them) and the store specialization.
     #[inline]
-    fn rewarm_region(&mut self, vm: &mut Vm, program_specialized: bool) {
+    fn rewarm_region(&mut self, vm: &mut Vm) {
         self.bind_run_storage(vm);
         self.reset_region_run();
         self.refresh_object_bases(vm);
         vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
-        self.stores_specialized = usize::from(vm.specialized && program_specialized);
+        self.stores_specialized = 1;
     }
 
     /// Refresh the additional frame and array views read by native code.
-    fn refresh_heap_bases(&mut self, vm: &Vm, program: &ResidualProgram) {
+    fn refresh_heap_bases(&mut self, vm: &Vm) {
         self.refresh_object_bases(vm);
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
@@ -4385,7 +3519,7 @@ impl JsStepDispatch {
         self.refresh_capture_view(vm);
         vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
-        self.stores_specialized = usize::from(vm.specialized && program.specialized);
+        self.stores_specialized = 1;
     }
 
     /// The window's captures word (`CONTEXT_BODY`): the frame's dense capture slots, which generated reads
@@ -4561,9 +3695,9 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         return "non-direct-object";
     }
     let Some(object) = vm.heap_reads().object(receiver) else { return "missing-object"; };
-    if object.inline_properties().is_some() {
+    if object.record_only().and_then(|record| record.inline_properties()).is_some() {
         "inline-storage"
-    } else if object.plain_storage_start().is_none() {
+    } else if object.record_only().and_then(|record| record.plain_storage_start()).is_none() {
         "extras-storage"
     } else {
         if vm.active_program != vm.frames[frame].program {
@@ -4571,24 +3705,8 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         }
         let cache = vm.field_cache_entry(cache_site);
         if cache.holder != NO_FIELD_HOLDER {
-            if cache.receiver != object.exact_shape() {
-                "prototype-receiver-shape-miss"
-            } else if let Some(record) = object.proto_link().object_record_id() {
-                let holder = vm.heap_reads().object_record_by_id(record);
-                if holder.exact_shape() != cache.holder {
-                    "prototype-holder-shape-miss"
-                } else if holder.inline_properties().is_some() {
-                    "prototype-holder-inline"
-                } else if holder.extras_storage_start().is_some() {
-                    "prototype-holder-extras"
-                } else if holder.plain_storage_start().is_some() {
-                    "prototype-holder-plain"
-                } else {
-                    "prototype-holder-other-storage"
-                }
-            } else {
-                "prototype-non-record"
-            }
+            // A prototype's slot is read through the holder's class cell, which the native shape path does not read.
+            "prototype-holder"
         } else if cache.receiver != object.exact_shape() {
             "own-shape-miss"
         } else {
@@ -4770,15 +3888,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 .get(usize::from(receiver_register))
                 .copied()
         {
-            let probe = vm.cached_field_hit(program, receiver, cache_site);
-            if vm.programs.js_jit_diagnostics_enabled() {
-                vm.programs.record_js_jit_field_cache_probe(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    cache_site,
-                    matches!(&probe, quench_runtime::vm::object::FieldCacheProbe::Hit(_)),
-                );
-            }
+            let probe = vm.cached_field_hit(receiver, cache_site);
             if let quench_runtime::vm::object::FieldCacheProbe::Hit(value) = probe {
                 let frame = &mut vm.frames[dispatch.frame];
                 if instruction.returns_from_frame() {
@@ -4821,19 +3931,11 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
             )
         {
             let hit = vm.cached_field_store_hit(
-                program,
                 receiver,
                 instruction.atom_index(),
                 value,
                 instruction.cache_site_index(),
             );
-            if vm.programs.js_jit_diagnostics_enabled() {
-                vm.programs.record_js_jit_field_store_cache_probe(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    hit,
-                );
-            }
             if hit {
                 let frame = &mut vm.frames[dispatch.frame];
                 frame.pc = next_pc;
@@ -4850,31 +3952,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
         loop {
             let layout = current_instruction.op().control_flow_layout();
             let is_call = meaning_compiled::is_ordinary_call(current_instruction);
-            let diagnostics_enabled = is_call && vm.programs.js_jit_diagnostics_enabled();
-            let direct_call_target = if diagnostics_enabled && is_call {
-                vm.frames[dispatch.frame]
-                    .registers
-                    .get(usize::from(current_instruction.register_b()))
-                    .copied()
-                    .and_then(|callee| vm.function_record(callee))
-                    .and_then(|record| match &record.kind {
-                        quench_runtime::tier_surface::FunctionKind::User(program, function) => {
-                            Some((program.raw(), *function))
-                        }
-                        _ => None,
-                    })
-            } else {
-                None
-            };
-            let sample_call = diagnostics_enabled
-                && is_call
-                && vm.programs.should_sample_js_jit_call_site(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    current_pc,
-                    current_instruction.op(),
-                );
-            let call_sample_started = sample_call.then(std::time::Instant::now);
             let capture = if matches!(quench_runtime::staged::Operation::<u64, ()>::of(current_instruction),
                 Some(quench_runtime::staged::Operation::LoadCapture { .. })) {
                 vm.cached_direct_capture(
@@ -4893,7 +3970,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 None
             };
             // A pushed call is the shared frame transition however it then completes.
-            let pushed = diagnostics_enabled && matches!(in_loop_call, Some(Ok(quench_runtime::vm::StepResult::PushFrame { .. })));
             let in_loop_call = in_loop_call.map(|step| vm.complete_pushed_call(program, dispatch.frame, current_instruction, step));
             let step = if let Some(value) = capture {
                 let destination = vm.frames[dispatch.frame]
@@ -4925,41 +4001,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
             let step = if meaning_compiled::is_construct(current_instruction) && dispatch.allow_inline_calls {
                 vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
             } else { step };
-            if is_call && diagnostics_enabled {
-                let outcome = match &step {
-                    _ if pushed => quench_runtime::vm::program_store::JsJitCallOutcome::PushFrame,
-                    Ok(quench_runtime::vm::StepResult::Continue) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Continue
-                    }
-                    Ok(quench_runtime::vm::StepResult::TailCall) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::TailCall
-                    }
-                    Ok(quench_runtime::vm::StepResult::PushFrame { .. } | quench_runtime::vm::StepResult::ResumeFrames(_)) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::PushFrame
-                    }
-                    Ok(quench_runtime::vm::StepResult::Return(_)) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Return
-                    }
-                    Ok(quench_runtime::vm::StepResult::Suspend(quench_runtime::vm::Suspended::Await { .. })) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Await
-                    }
-                    Ok(quench_runtime::vm::StepResult::Suspend(quench_runtime::vm::Suspended::Yield { .. })) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Yield
-                    }
-                    Err(_) => quench_runtime::vm::program_store::JsJitCallOutcome::Error,
-                };
-                vm.programs.record_js_jit_call_site(
-                    dispatch.program_id,
-                    frame_function,
-                    current_pc,
-                    current_instruction.op(),
-                    direct_call_target,
-                    outcome,
-                    call_sample_started.map(|started| {
-                        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
-                    }),
-                );
-            }
             match step {
                 Ok(quench_runtime::vm::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -5005,7 +4046,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                         // Only generated code consumes these raw views. A stopped
                         // dispatch discards them, and a batched VM operation will
                         // refresh once at the boundary before native execution.
-                        dispatch.refresh_heap_bases(vm, program);
+                        dispatch.refresh_heap_bases(vm);
                         return Ok(JsCalloutStep::Continue(next));
                     }
 
@@ -5188,14 +4229,99 @@ impl Plan {
     }
 }
 
-fn successors(function: &Function, pc: usize, instruction: WideInstruction) -> Vec<usize> {
-    let mut successors = Vec::with_capacity(2);
-    quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
-        if successor < function.code.len() {
-            successors.push(successor);
+/// The plan's register-state analysis: one block per instruction, whose input is the state before
+/// it. A raise at a pc with a catch also flows into the catch's target, in the entry state
+/// `wasm_catch::raise_entry` gives. A rejection records its reason and fails the plan.
+struct PlanFlow<'a, 'b> {
+    analysis: &'a Analysis<'b>,
+    index: usize,
+    function: &'a Function,
+    instructions: &'a [WideInstruction],
+    callable: &'a quench_runtime::bitset::BitSet,
+    memory_register: Option<u16>,
+    memory_slot: &'a mut Option<u32>,
+    result: Option<quench_runtime::WasmType>,
+    entry: AnalysisState,
+    catches: &'a [Option<wasm_catch::Catch>],
+    bound: u16,
+    /// Per pc, the entry state of its catch, set by the pc's transfer.
+    raised: Vec<Option<AnalysisState>>,
+    /// The edges of pc `p` are `edge_targets[edge_starts[p]..edge_starts[p + 1]]`: its ordinary
+    /// successors in range, then its catch target.
+    edge_starts: Vec<usize>,
+    edge_targets: Vec<usize>,
+    /// Whether a rejection or an unsupported raise stopped the analysis.
+    failed: bool,
+}
+
+impl PlanFlow<'_, '_> {
+    /// Records the rejection `reason` of this function and fails the plan.
+    fn fail(&mut self, reason: impl FnOnce() -> String) {
+        self.analysis.reject(self.index, reason);
+        self.failed = true;
+    }
+}
+
+impl quench_runtime::dataflow::Dataflow for PlanFlow<'_, '_> {
+    type State = AnalysisState;
+
+    fn blocks(&self) -> usize {
+        self.instructions.len()
+    }
+
+    fn edges(&self, block: usize) -> &[usize] {
+        &self.edge_targets[self.edge_starts[block]..self.edge_starts[block + 1]]
+    }
+
+    fn entry_state(&self, block: usize) -> Option<AnalysisState> {
+        (block == 0).then(|| self.entry.clone())
+    }
+
+    fn join(&self, into: &mut AnalysisState, incoming: &AnalysisState) -> bool {
+        into.join_from(incoming)
+    }
+
+    fn transfer(&mut self, block: usize, state: &AnalysisState) -> AnalysisState {
+        let mut out = state.clone();
+        if self.failed {
+            return out;
         }
-    });
-    successors
+        let instruction = self.instructions[block];
+        if let Some(catch) = self.catches[block] {
+            match wasm_catch::raise_entry(catch, state, self.bound) {
+                Some(entered) => self.raised[block] = Some(entered),
+                None => {
+                    self.failed = true;
+                    return out;
+                }
+            }
+        }
+        let op = instruction.op();
+        if self
+            .analysis
+            .transfer(
+                self.function,
+                instruction,
+                &mut out,
+                self.callable,
+                (self.memory_register, &mut *self.memory_slot),
+                self.result,
+            )
+            .is_none()
+        {
+            self.fail(|| format!("unsupported-instruction:{op:?}@{block}"));
+        }
+        out
+    }
+
+    fn transfer_edge_at(&self, block: usize, index: usize, out: &AnalysisState) -> AnalysisState {
+        match &self.raised[block] {
+            Some(entered) if self.edge_starts[block] + index + 1 == self.edge_starts[block + 1] => {
+                entered.clone()
+            }
+            _ => out.clone(),
+        }
+    }
 }
 
 /// The analysis context shared by every function of a program.
@@ -5207,12 +4333,6 @@ struct Analysis<'a> {
     /// Whether imported calls may compile: a callee may grow memory, which
     /// moves an unguarded memory's bytes.
     callouts: bool,
-    /// `unreachable` is enabled only for a bounded, explicitly selected root
-    /// experiment until its compile-time memory cost is measured.
-    experimental_root_compilation: bool,
-    /// A root-only function may call out only while callouts are safe for its
-    /// current memory view. A VM callee can grow unguarded memory.
-    root_only: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
     /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
@@ -5228,10 +4348,10 @@ struct Analysis<'a> {
 
 impl<'a> Analysis<'a> {
     /// The plan of program `program` (`code`) over the instance environment `env`: callouts compile, no
-    /// root experiment, no diagnostics, no unrolling, growth unknown, bindings read from `env`.
+    /// diagnostics, no unrolling, growth unknown, bindings read from `env`.
     fn new(vm: &'a Vm, program: ProgramId, code: &'a ResidualProgram, env: Value) -> Self {
         Self {
-            vm, program, code, env, callouts: true, experimental_root_compilation: false, root_only: false,
+            vm, program, code, env, callouts: true,
             compile_rejections: None, unrolls: false, grows_memory: quench_runtime::bitset::BitSet::default(), declared: None,
         }
     }
@@ -5387,11 +4507,8 @@ impl Analysis<'_> {
 
     /// The function's plan, assuming every function in `callable` compiles.
     fn plan(&self, index: usize, callable: &quench_runtime::bitset::BitSet, memory_slot: &mut Option<u32>) -> Option<Plan> {
-        let plan_started = self
-            .compile_rejections
-            .as_ref()
-            .map(|_| std::time::Instant::now());
-        let memory_before = plan_started.and_then(|_| jit_memory_snapshot());
+        let diagnose = self.compile_rejections.is_some();
+        let memory_before = diagnose.then(jit_memory_snapshot).flatten();
         let function = &self.code.function(index);
         let Some(signature) = self.signature(index as u32) else {
             self.reject(index, || "missing-signature".into());
@@ -5440,55 +4557,39 @@ impl Analysis<'_> {
                 Slot::Value(Kind::of(*ty)?),
             )?;
         }
-        let mut states: Vec<Option<AnalysisState>> = vec![None; instructions.len()];
-        states[0] = Some(entry);
-        let mut work = vec![0usize];
         let (catches, bound) = wasm_catch::catch_frame(function)?;
-        while let Some(pc) = work.pop() {
-            let instruction = instructions[pc];
-            let mut state = states[pc]
-                .clone()
-                .expect("queued instructions have a state");
-            if let Some(callee) = Step::of(instruction.op(), instruction.imm())
-                .and_then(|step| step.callee(instruction))
-                && !callable.contains(callee)
-                && !self.experimental_root_compilation
-            {
-                self.reject(index, || format!("uncompiled-callee:{callee}@{pc}"));
-                return None;
-            }
-            wasm_catch::raise_edge(&mut states, &mut work, catches[pc], &state, bound)?;
-            if self
-                .transfer(
-                    function,
-                    instruction,
-                    &mut state,
-                    callable,
-                    (memory_register, memory_slot),
-                    result,
-                )
-                .is_none()
-            {
-                let op = instruction.op();
-                self.reject(index, || format!("unsupported-instruction:{op:?}@{pc}"));
-                return None;
-            }
-            for successor in successors(function, pc, instruction) {
-                if successor >= instructions.len() {
-                    self.reject(index, || format!("invalid-successor:{successor}@{pc}"));
-                    return None;
+        let mut edge_starts = Vec::with_capacity(instructions.len() + 1);
+        let mut edge_targets = Vec::with_capacity(instructions.len());
+        for (pc, instruction) in instructions.iter().copied().enumerate() {
+            edge_starts.push(edge_targets.len());
+            quench_runtime::bytecode::for_each_instruction_successor(pc, instruction, |successor| {
+                if successor < instructions.len() {
+                    edge_targets.push(successor);
                 }
-                let changed = match &mut states[successor] {
-                    Some(existing) => existing.join_from(&state),
-                    target @ None => {
-                        *target = Some(state.clone());
-                        true
-                    }
-                };
-                if changed {
-                    work.push(successor);
-                }
-            }
+            });
+            edge_targets.extend(catches[pc].map(|catch| catch.target));
+        }
+        edge_starts.push(edge_targets.len());
+        let mut flow = PlanFlow {
+            analysis: self,
+            index,
+            function: *function,
+            instructions: &instructions,
+            callable,
+            memory_register,
+            memory_slot,
+            result,
+            entry,
+            catches: &catches,
+            bound,
+            raised: vec![None; instructions.len()],
+            edge_starts,
+            edge_targets,
+            failed: false,
+        };
+        let states = quench_runtime::dataflow::solve(&mut flow);
+        if flow.failed {
+            return None;
         }
         let operands = states
             .iter()
@@ -5541,8 +4642,8 @@ impl Analysis<'_> {
                     .unwrap_or_default()
             })
             .collect();
-        if let Some(started) = plan_started {
-            plan_report::report(index, started, memory_before, instructions.len(), registers, &states);
+        if diagnose {
+            plan_report::report(index, memory_before, instructions.len(), registers, &states);
         }
         Some(Plan {
             params,
@@ -5681,13 +4782,13 @@ impl MemoryArguments {
     }
 }
 
-/// The calling convention of compiled Wasm bodies and of the calls between them. `Tail` makes a
-/// flagged call a true tail call (`return_call` / `return_call_indirect`, which Cranelift allows
-/// only between functions of one convention that supports tail calls). The entry trampoline
-/// (`build_entry`) keeps the default convention and calls its body with this one; the callouts
-/// into the VM keep the default, as they call Rust. With `unwind_info` on (the u-jit's setting),
-/// `Tail` saves the SystemV callee-saved registers, so a SystemV caller of a body is unaffected.
-const BODY_CALL_CONV: cranelift_codegen::isa::CallConv = cranelift_codegen::isa::CallConv::Tail;
+/// The calling convention of compiled bodies, Wasm and lane JavaScript alike, and of the calls between them. `Tail`
+/// makes a flagged call a true tail call (`return_call` / `return_call_indirect`, which Cranelift allows only between
+/// functions of one convention that supports tail calls). The entry trampoline (`build_entry`) and the lane body
+/// shim (`lane_body_abi::body_shim`) keep the default convention and call their body with this one; the callouts
+/// into the VM keep the default, as they call Rust. With `unwind_info` on (the u-jit's setting), `Tail` saves the
+/// SystemV callee-saved registers, so a SystemV caller of a body is unaffected.
+pub(crate) const BODY_CALL_CONV: cranelift_codegen::isa::CallConv = cranelift_codegen::isa::CallConv::Tail;
 
 /// The internal signature of a compiled function: the context, the memory
 /// arguments, then the Wasm parameters.
@@ -5777,15 +4878,8 @@ fn unrollable_loops(instructions: &[WideInstruction], plan: &Plan) -> Vec<Option
         }
     }
     let mut loops = vec![None; instructions.len()];
-    for (latch, instruction) in instructions.iter().enumerate() {
-        let layout = instruction.op().control_flow_layout();
-        if !plan.reachable(latch)
-            || !layout.jumps()
-        {
-            continue;
-        }
-        let header = instruction.jump_target() as usize;
-        if header > latch {
+    for (latch, header) in quench_runtime::bytecode::back_edges_of(instructions.iter().copied()) {
+        if !plan.reachable(latch) {
             continue;
         }
         let length = latch - header + 1;
@@ -5853,7 +4947,7 @@ fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Op
     if instruction.a() != register {
         return None;
     }
-    match WasmOperation::of(instruction.op(), instruction.imm())? {
+    match wasm_operation_of(instruction.op(), instruction.imm())? {
         WasmOperation::Test { nonzero } => Some((value != 0) == nonzero),
         WasmOperation::Binary {
             operator,
@@ -6221,8 +5315,6 @@ pub(crate) struct Emitter<'a, 'b> {
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
-    /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
-    diagnostics_enabled: bool,
     base: ir::Value,
     /// The memory's exact length for checked accesses and bulk operations.
     length: Option<ir::Value>,
@@ -6920,7 +6012,6 @@ impl<'a> Analysis<'a> {
         guarded: bool,
         fixed_base: Option<i32>,
         reference_site_ids: &'a [(usize, usize)],
-        diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
@@ -6982,7 +6073,6 @@ impl<'a> Analysis<'a> {
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
-            diagnostics_enabled,
             base,
             length,
             grows,
@@ -7584,8 +6674,8 @@ impl Vm {
         self.execution_mode = mode;
         self.lane_tiers_run = None;
         #[cfg(feature = "jit")]
-        crate::regexp_native::enable(mode != ExecutionMode::Interpreted, (self.programs.tiers().regexp_stitch_runs(), self.programs.tiers().regexp_native_runs));
-        self.set_narrow_runs(mode == ExecutionMode::Interpreted);
+        crate::regexp_native::enable(quench_runtime::vm::tier_policy::regexp_runs_native(mode));
+        self.set_narrow_runs(quench_runtime::vm::tier_policy::runs_narrow(mode));
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
@@ -7593,32 +6683,14 @@ impl Vm {
 
     /// Whether the process enrolled the lane-body tier (a mode selection, not realm state).
     #[cfg(test)]
-    pub(crate) fn methods_enrolled_in_lane(&self) -> bool { self.programs.js_jit_lane_methods_enabled() }
+    pub(crate) fn methods_enrolled_in_lane(&self) -> bool { admission::lane_bodies_enrolled(self) }
 
-    /// Whether the runtime compiles Wasm modules whole at their first entry.
-    pub(crate) fn wasm_compile_at_first_entry(&self) -> bool {
-        self.programs.wasm_modules_compile_at_first_entry()
-    }
-
-    /// The unit of a Wasm program's module compile at `root` (`UnitKind::WasmModule`); `None` where
-    /// the program is missing, not Wasm, or a root-only compile names no root.
-    pub(crate) fn wasm_module_unit(&self, program: ProgramId, root: Option<usize>, root_only: bool) -> Option<admission::CompiledUnit> {
+    /// The unit of a Wasm program's module compile (`UnitKind::WasmModule`); `None` where the
+    /// program is missing or not Wasm.
+    pub(crate) fn wasm_module_unit(&self, program: ProgramId) -> Option<admission::CompiledUnit> {
         let code = self.programs.get(program)?;
-        let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, root_ok: !(root_only && root.is_none()), ..Default::default() };
-        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts }).compiled()
-    }
-
-    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`), as
-    /// `unit` (`UnitKind::WasmEager`) says.
-    pub(crate) fn compile_wasm_eagerly(&mut self, unit: admission::CompiledUnit) {
-        // An execution-only build (no `jit`) compiles no Wasm module at run time.
-        #[cfg(feature = "jit")]
-        {
-            let _ = unit;
-            self.programs.compile_wasm_modules_at_first_entry();
-        }
-        #[cfg(not(feature = "jit"))]
-        let _ = unit;
+        let facts = admission::UnitFacts { wasm_program: code.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() };
+        admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts })
     }
 
     pub(crate) fn native_execution_rejections(&self) -> u64 {
@@ -7639,28 +6711,18 @@ impl Vm {
         native_poll_page(&self.execution_interrupt)
     }
 
-    /// Whether any compiled tier may run (`tier_may_run` of every tier), decided once per execution
+    /// Whether any compiled tier may run (`tier_policy::tiers_run` of every tier), decided once per execution
     /// mode and memory policy rather than at every lane entry.
     #[inline]
     pub(crate) fn tiers_run_in_lanes(&mut self) -> bool {
         match self.lane_tiers_run {
             Some(run) => run,
-            None => *self.lane_tiers_run.insert(self.tier_may_run(crate::compiled::admission::Tier::ANY)),
+            None => *self.lane_tiers_run.insert(quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::ANY)),
         }
     }
 
-    /// Whether any of `tiers` runs: compiled execution under a memory policy
-    /// that compiles them (`PolicyTiers::js_function_tiers`) and a JIT mode that allows one, in a build whose profiles do not count
-    /// interpreted work exactly.
-    #[inline]
-    pub(crate) fn tier_may_run(&self, tiers: &[crate::compiled::admission::Tier]) -> bool {
-        !cfg!(quench_profiled)
-            && self.execution_mode == ExecutionMode::Compiled
-            && tier_policy::tier_may_run(self.memory_policy(), tiers)
-    }
-
-    /// Whether the entry paths claim `function`: a numeric candidate that pays for a native
-    /// entry, or a body a lane body may take.
+    /// Whether the entry paths claim `function`: a numeric candidate the predicted tier compiles
+    /// (`ProgramStore::compiled_tier`), or a body a lane body may take.
     pub(crate) fn js_tier_may_claim(
         &mut self,
         program: &ResidualProgram,
@@ -7673,28 +6735,26 @@ impl Vm {
         if self.images_run_in_lane() && self.programs.ahead_images(id, program).is_some() {
             return true;
         }
-        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
+        // The Cranelift function tiers claim, and so do lane bodies, which the b-jit tier stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
-            cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT),
-            base_lane_allowed: self.programs.js_jit_lane_methods_enabled() && self.tier_may_run(&[crate::compiled::admission::Tier::Base]),
-            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).compiled().is_none() {
+            cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT),
+            base_lane_allowed: admission::lane_bodies_enrolled(self) && quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), &[admission::Tier::Base]),
+            wasm_program: program.kind == quench_runtime::bytecode::ProgramKind::Wasm, ..Default::default() } }).is_none() {
             return false;
         }
         let Some(facts) = self.programs.js_entry_facts(id, function) else {
             return false;
         };
         let state = self.programs.js_tier(id, function);
-        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
-        // costs a short call-free one its leaf calls. A function the numeric tier cannot take
-        // is still theirs to claim.
-        let lane_claims = self.programs.js_jit_lane_methods_enabled()
-            && program.function_get(function as usize).is_some_and(|body| body_may_amortize_in_lane(self.programs.tiers(), body));
+        // Lane bodies claim every function the policy picks compiled: the pick is the entry's (not a loop's), and an
+        // interpreted pick claims nothing. A function the numeric tier cannot take is still theirs to claim.
+        let compiled = self.programs.compiled_tier(id, function);
+        let lane_claims = admission::lane_bodies_enrolled(self) && compiled;
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
         }
-        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
-        // Inlining may erase a short body's calls; a call-free candidate still has
-        // to pay for native entry under the same cost policy.
+        // A numeric candidate claims where the same argmin compiles it, with no separate cost test of its entry.
+        let candidate = facts.candidate && compiled;
         candidate || lane_claims
     }
 
@@ -7744,11 +6804,7 @@ impl Vm {
             parameters: parameters.iter().copied().collect(),
             facts: self.programs.js_entry_facts(id, function)?,
         };
-        let entered = self.js_jit_at_entry(program, &entry);
-        if entered.is_none() {
-            self.programs.record_js_jit_fallback_entry(id, function);
-        }
-        entered
+        self.js_jit_at_entry(program, &entry)
     }
 
     /// The callee's depth-0 capture under the same environment binding as the lane.
@@ -7850,7 +6906,7 @@ impl Vm {
     /// An execution-only build (no `jit`) compiles no function at an entry.
     #[cfg(feature = "jit")]
     fn js_tier_frame_entry_compiled(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
-        if self.execution_mode != ExecutionMode::Compiled {
+        if !quench_runtime::vm::tier_policy::compiles_at_entry(self.execution_mode) {
             return None;
         }
         if self.frames[frame].js_jit_skip_entry_once {
@@ -7862,9 +6918,6 @@ impl Vm {
         // Most entries are of functions no tier path can take.
         let facts = self.programs.js_entry_facts(program_id, function)?;
         let at_entry = self.frames[frame].pc == 0;
-        if !facts.candidate && at_entry {
-            self.programs.observe_unclaimed_entry(program, program_id, function, &self.frames[frame].registers);
-        }
         let entry = self.frames.get(frame).filter(|_| facts.candidate && at_entry).and_then(|record| {
             let params = program.function_get(record.function as usize)?.params;
             Some(TierEntry {
@@ -7881,13 +6934,6 @@ impl Vm {
             self.frames[frame].registers[usize::from(return_register)] = value;
             return Some(return_pc);
         }
-        self.programs.record_js_jit_fallback_entry(program_id, function);
-        if program.kind != quench_runtime::bytecode::ProgramKind::Wasm
-            && self.programs.js_jit_diagnostics_enabled()
-            && self.frames[frame].js_jit_interpreter_started.is_none()
-        {
-            self.frames[frame].js_jit_interpreter_started = Some(std::time::Instant::now());
-        }
         None
     }
 
@@ -7901,7 +6947,7 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         // The Cranelift tiers' gate (`UnitKind::Entry`) comes before any entry is counted.
         let Some(unit) = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Entry,
-            facts: admission::UnitFacts { cranelift_allowed: self.tier_may_run(crate::compiled::admission::Tier::CRANELIFT), ..Default::default() } }).compiled() else { return None };
+            facts: admission::UnitFacts { cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT), ..Default::default() } }) else { return None };
         if program.kind == quench_runtime::bytecode::ProgramKind::Wasm {
             return None;
         }
@@ -7912,7 +6958,6 @@ impl Vm {
         if !self.programs.js_entry_specializations_enabled() { return None; }
         // Most entries are of functions no entry path can claim.
         if !facts.candidate {
-            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let tier = self.programs.js_tier(program_id, function_id);
@@ -7920,13 +6965,11 @@ impl Vm {
             tier.as_ref(),
             Some(quench_runtime::vm::program_store::JsTierState::Unsupported | quench_runtime::vm::program_store::JsTierState::Rejected { .. })
         ) {
-            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let params = usize::from(function.params);
         let arguments = entry.parameters.get(..params)?;
         let numeric = arguments.iter().all(|value| value.as_number().is_some());
-        self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
         let compiled = match tier {
             Some(quench_runtime::vm::program_store::JsTierState::Compiled(compiled)) => {
                 if !numeric {
@@ -7938,10 +6981,8 @@ impl Vm {
                 quench_runtime::vm::program_store::JsTierState::Unsupported
                 | quench_runtime::vm::program_store::JsTierState::Rejected { .. },
             ) => return None,
-            Some(quench_runtime::vm::program_store::JsTierState::Hot { .. })
-            | Some(quench_runtime::vm::program_store::JsTierState::PromotionPending)
-            | None => {
-                if !self.programs.note_js_function_entry(program_id, function_id, numeric, numeric) || !numeric {
+            None => {
+                if !self.programs.note_js_function_entry(program_id, function_id, numeric) {
                     return None;
                 }
                 self.js_tier_compile(unit, program_id, function_id)?
@@ -7950,7 +6991,6 @@ impl Vm {
         if compiled.params() != params {
             return None;
         }
-        self.programs.record_js_jit_native_entry(program_id, function_id);
         let poll_page = self.compiled_poll_page();
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
@@ -7965,10 +7005,8 @@ impl Vm {
             return None; // no run-time compile without the JIT: only image bodies run natively
         }
         let residual = self.programs.get(program_id)?;
-        self.keep_slot_representations();
-        let compile_started = self.programs.js_jit_diagnostics_enabled().then(std::time::Instant::now);
         let key = (program_id, function_id);
-        let pending = self.js_tier_pending.remove(&key).or_else(|| (!residual.function_get(function_id as usize).is_some_and(|function| base_body::kernel_loop(&function.instructions().collect::<Vec<_>>(), self.programs.constants(program_id), function, residual.register_root_masks(function_id), |recurrence| recurrence.closed_form()))).then(|| crate::js_compiled::start(&residual, function_id, unit)).flatten()); // a closed-form kernel loop costs less in the interpreter
+        let pending = self.js_tier_pending.remove(&key).or_else(|| crate::js_compiled::start(&residual, function_id, unit));
         let image = match pending.map(|mut pending| (pending.poll(), pending)) {
             Some((std::task::Poll::Pending, pending)) => {
                 self.js_tier_pending.insert(key, pending);
@@ -7988,41 +7026,10 @@ impl Vm {
             );
         }
         self.host.after_native_compilation();
-        let artifact_failed = artifact.is_none();
         let compiled = artifact.and_then(CompiledJsFunction::from_artifact).map(Rc::new);
-        let compile_rejection = Self::js_tier_compile_rejection(&residual, function_id, artifact_failed, compiled.is_none());
         let installed = self.programs.install_js_tier(program_id, function_id, compiled.clone());
-        if let Some(compile_started) = compile_started {
-            let rejection = if !installed && compiled.is_some() { Some("shared-code-cache-budget-exhausted") } else { compile_rejection };
-            self.record_js_tier_compile(program_id, function_id, compile_started, compiled.as_deref().filter(|_| installed), rejection);
-        }
         installed.then_some(())?;
         compiled
-    }
-
-    /// Why a compile installed nothing: the specializer declined the candidate
-    /// (`artifact_failed`), or executable memory could not be allocated for its artifact.
-    fn js_tier_compile_rejection(residual: &ResidualProgram, function_id: u32, artifact_failed: bool,
-        unallocated: bool) -> Option<&'static str> {
-        if artifact_failed {
-            Some(crate::js_compiled::candidate_rejection_reason(residual, function_id))
-        } else {
-            unallocated.then_some("executable-memory-allocation-failed")
-        }
-    }
-
-    /// Records a compile for the diagnostics: its time, the installed code's size, and why
-    /// nothing was installed.
-    fn record_js_tier_compile(&mut self, program_id: ProgramId, function_id: u32, started: std::time::Instant,
-        installed: Option<&CompiledJsFunction>, rejection: Option<&'static str>) {
-        self.programs.record_js_jit_compile(
-            program_id,
-            function_id,
-            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-            installed.map_or(0, CompiledJsFunction::mapped_bytes),
-            installed.is_some(),
-            rejection,
-        );
     }
 
     /// The JavaScript tier's direct entry of a plain call of a same-program user function,
@@ -8039,7 +7046,7 @@ impl Vm {
         arguments: &[Value],
     ) -> Option<Value> {
         if returns
-            || !self.tier_may_run(crate::compiled::admission::Tier::ANY)
+            || !quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::ANY)
             || program_id != self.active_program
             || program.kind == quench_runtime::bytecode::ProgramKind::Wasm
         {
@@ -8047,7 +7054,6 @@ impl Vm {
         }
         let (programs, interrupt) = (&mut self.programs, &self.execution_interrupt);
         let function = program.function_get(function_id as usize)?;
-        let diagnostics = programs.js_jit_diagnostics_enabled();
         let native_result = {
             let compiled = match programs.js_tier_ref(program_id, function_id)? {
                 quench_runtime::vm::program_store::JsTierState::Compiled(compiled) => compiled.as_ref(),
@@ -8059,10 +7065,6 @@ impl Vm {
             }
             direct_call(compiled, arguments, interrupt)
         };
-        if diagnostics {
-            programs.record_js_jit_entry(program_id, function_id, true, function.params);
-            programs.record_js_jit_native_entry(program_id, function_id);
-        }
         native_result
     }
 
@@ -8104,204 +7106,82 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         let compiled = entry.compiled.upgrade()?;
         let value = direct_call(&compiled, parameters, &self.execution_interrupt)?;
-        let (program, function) = entry.function;
-        self.programs.record_js_jit_entry(program, function, true, entry.params);
-        self.programs.record_js_jit_native_entry(program, function);
         Some((entry.return_pc, entry.return_register, value))
     }
 
-    /// Compile every function of `program` that has a compiled denotation,
-    /// with `env` as the instance whose bindings fix global types and memory.
-    fn compile_program(&self, program: ProgramId, env: Value, unit: admission::CompiledUnit) -> Option<CompiledProgram> {
-        self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled(), unit)
-    }
-
-    fn compile_program_with_diagnostics(
+    /// Compile function `root` of `program`, and the functions its static closure calls, with `env` as the instance
+    /// whose bindings fix global types and memory.
+    fn compile_program_and_root(
         &self,
         program: ProgramId,
         env: Value,
-        diagnostics_enabled: bool,
-        unit: admission::CompiledUnit,
-    ) -> Option<CompiledProgram> {
-        let root = jit_root_override().ok()?;
-        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, root, unit)
-    }
-
-    fn compile_program_with_diagnostics_and_root(
-        &self,
-        program: ProgramId,
-        env: Value,
-        diagnostics_enabled: bool,
-        root: Option<usize>,
-        unit: admission::CompiledUnit,
-    ) -> Option<CompiledProgram> {
-        self.compile_program_with_diagnostics_and_root_mode(
-            program,
-            env,
-            diagnostics_enabled,
-            root,
-            false,
-            unit,
-        )
-    }
-
-    /// Compile one explicitly selected Wasm function without its static
-    /// `CallKnown` closure. Unselected callees use the existing VM callout
-    /// path. This is an opt-in diagnostic tier; normal root compilation keeps
-    /// its current closure behavior.
-    fn compile_program_with_diagnostics_and_root_mode(
-        &self,
-        program: ProgramId,
-        env: Value,
-        diagnostics_enabled: bool,
-        root: Option<usize>,
-        root_only: bool,
+        root: usize,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         // Without the JIT's routes (`jit_routes`) the program runs in the interpreter.
-        (crate::jit_routes::jit()?.wasm)(self, program, env, diagnostics_enabled, root, root_only, unit)
+        (crate::jit_routes::jit()?.wasm)(self, program, env, root, unit)
     }
 
-    /// `compile_program_with_diagnostics_and_root_mode`'s route, which `jit_routes` installs.
+    /// `compile_program_and_root`'s route, which `jit_routes` installs.
     fn compile_wasm_program(
         &self,
         program: ProgramId,
         env: Value,
-        diagnostics_enabled: bool,
-        root: Option<usize>,
-        root_only: bool,
+        root: usize,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         let _ = unit;
+        // Compile-time reports (rejections, rss by body) print only when the `wasm-jit` channel is on.
+        let diagnostics = quench_runtime::trace::Channel::WasmJit.on();
         let code = self.programs.get(program)?;
-        let compile_started = diagnostics_enabled.then(std::time::Instant::now);
         let compile_rejections =
-            diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
+            diagnostics.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let count = code.functions.len();
-        let allowed = if let Some(root) = root.filter(|_| root_only) {
-            let mut selected = vec![false; count];
-            let Some(function) = code.function_get(root) else {
-                if diagnostics_enabled {
-                    eprintln!("QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={root}");
+        let mut selected = vec![false; count];
+        let mut pending = vec![root];
+        while let Some(index) = pending.pop() {
+            let Some(selected_function) = selected.get_mut(index) else {
+                if diagnostics {
+                    eprintln!(
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
+                    );
                 }
                 return None;
             };
+            if *selected_function {
+                continue;
+            }
+            let function = code.function_get(index)?;
             if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
-                if diagnostics_enabled {
+                if diagnostics {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={root} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
                         function.code.len()
                     );
                 }
                 return None;
             }
-            selected[root] = true;
-            selected
-        } else if let Some(root) = root {
-            let mut selected = vec![false; count];
-            let mut pending = vec![root];
-            while let Some(index) = pending.pop() {
-                let Some(selected_function) = selected.get_mut(index) else {
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
-                        );
-                    }
-                    return None;
-                };
-                if *selected_function {
-                    continue;
-                }
-                let function = code.function_get(index)?;
-                if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                            function.code.len()
-                        );
-                    }
-                    return None;
-                }
-                *selected_function = true;
-                for packed in &function.code {
-                    let instruction = function.widened(*packed);
-                    if let Some(callee) = Step::of(instruction.op(), instruction.imm())
-                        .and_then(|step| step.callee(instruction))
-                    {
-                        pending.push(callee);
-                    }
+            *selected_function = true;
+            for packed in &function.code {
+                let instruction = function.widened(*packed);
+                if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                    .and_then(|step| step.callee(instruction))
+                {
+                    pending.push(callee);
                 }
             }
-            // A selective tier normally follows only statically known calls.
-            // Before this promotion, however, the eager artifact has already
-            // observed hot `call_indirect` targets. Add a bounded set of those
-            // callees from call sites inside this root's static closure; the
-            // generated call still keeps the dynamic resolver as its miss
-            // path.
-            if let Some(baseline) = self.programs.compiled(program).flatten() {
-                let profiled_targets =
-                    baseline.profiled_indirect_targets(self, program, env, &selected);
-                for target in profiled_targets {
-                    if target >= count || selected[target] {
-                        continue;
-                    }
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_PROFILED_INDIRECT_TARGET root={root} function={target}"
-                        );
-                    }
-                    pending.push(target);
-                }
-                while let Some(index) = pending.pop() {
-                    let Some(selected_function) = selected.get_mut(index) else {
-                        if diagnostics_enabled {
-                            eprintln!(
-                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
-                            );
-                        }
-                        return None;
-                    };
-                    if *selected_function {
-                        continue;
-                    }
-                    let function = code.function_get(index)?;
-                    if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
-                        if diagnostics_enabled {
-                            eprintln!(
-                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                                function.code.len()
-                            );
-                        }
-                        return None;
-                    }
-                    *selected_function = true;
-                    for packed in &function.code {
-                        let instruction =
-                            function.widened(*packed);
-                        if let Some(callee) = Step::of(instruction.op(), instruction.imm())
-                            .and_then(|step| step.callee(instruction))
-                        {
-                            pending.push(callee);
-                        }
-                    }
-                }
+        }
+        let selected_count = selected.iter().filter(|selected| **selected).count();
+        if selected_count > MAX_JIT_ROOT_FUNCTIONS {
+            if diagnostics {
+                eprintln!(
+                    "QUENCH_WASM_JIT_ROOT_REJECTION root={root} functions={selected_count} limit={MAX_JIT_ROOT_FUNCTIONS}"
+                );
             }
-            let selected_count = selected.iter().filter(|selected| **selected).count();
-            if selected_count > MAX_JIT_ROOT_FUNCTIONS {
-                if diagnostics_enabled {
-                    eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} functions={selected_count} limit={MAX_JIT_ROOT_FUNCTIONS}"
-                    );
-                }
-                return None;
-            }
-            selected
-        } else {
-            vec![true; count]
-        };
+            return None;
+        }
+        let allowed = selected;
         let mut analysis = Analysis {
-            experimental_root_compilation: root.is_some(),
-            root_only,
             compile_rejections: compile_rejections.as_ref(),
             ..Analysis::new(self, program, &code, env)
         };
@@ -8342,7 +7222,7 @@ impl Vm {
         if plans.iter().all(Option::is_none) {
             return None;
         }
-        if root.is_some_and(|root| plans.get(root).is_none_or(Option::is_none)) {
+        if plans.get(root).is_none_or(Option::is_none) {
             return None;
         }
         let fixed_base = guarded
@@ -8351,20 +7231,14 @@ impl Vm {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
-        // Under `--b-jit` no Cranelift code is generated, so no ISA is created.
-        let base_only = crate::compiled::admission::stencil_only();
-        let isa = if base_only {
-            None
-        } else {
-            let opt_level = jit_root_opt_level(root, root_only).ok()?;
-            if diagnostics_enabled {
+        let isa = {
+            let opt_level = "speed";
+            if diagnostics {
                 eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
             }
-            Some(quench_runtime::vm::jit_backend::target_isa_at(opt_level)?)
+            quench_runtime::vm::jit_backend::target_isa_at(opt_level)?
         };
         let mut reference_site_ids = vec![Vec::new(); count];
-        let mut reference_call_sites = Vec::new();
-        let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
         // One pass over each callable function's full plan finds what every body's compilation
         // reads first: its indirect reference sites.
@@ -8379,28 +7253,19 @@ impl Vm {
                 if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(WasmCall::Reference)) {
                     continue;
                 }
-                let Slot::IndirectReference { table, .. } = full_plan.operand(pc) else {
+                let Slot::IndirectReference { .. } = full_plan.operand(pc) else {
                     continue;
                 };
                 let site_id = reference_cache_count;
                 reference_cache_count += 1;
                 reference_site_ids[index].push((pc, site_id));
-                reference_cache_sites.push((index, pc, table));
-                if diagnostics_enabled {
-                    reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                        function: index,
-                        pc,
-                        counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                        targets: std::cell::RefCell::new(Vec::new()),
-                    });
-                }
             }
         }
         let mut bytes = Vec::new();
         let mut offsets = vec![None; count];
         let mut spans = Vec::new();
         let mut entries = vec![None; count];
-        // Stitched rows call a function through its cell, filled once the code is placed.
+        // Bodies call a function through its cell, filled once the code is placed.
         let entry_cells: Box<[std::cell::Cell<usize>]> = (0..count).map(|_| std::cell::Cell::new(0)).collect();
         let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
@@ -8417,120 +7282,44 @@ impl Vm {
         };
         // Largest first: the longest compile starts at once and the rest fill around it, so
         // the slowest function does not finish last on one worker (bodies are placed by index).
-        // Without an ISA (`--b-jit`) no body or Cranelift entry exists: `bodies` stays empty.
-        let mut bodies = Vec::new();
-        if let Some(isa) = isa.as_deref() {
-            analysis.unrolls = program_unrolls(&code);
-            let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
-            build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
-            let build = build_order.into_iter().map(|index| {
-                let full_plan = full_plans[index].as_ref()?;
-                let body_build_started = diagnostics_enabled.then(std::time::Instant::now);
-                let body_memory_before = body_build_started.and_then(|_| jit_memory_snapshot());
-                let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
-                let built = WasmSpecializer {
-                    index,
-                    plans: &plans,
-                    full_plan,
-                    reference_site_ids: &reference_site_ids[index],
-                    admitted,
-                    tier: WasmTierChoice::Optimizing { analysis: &analysis, isa, guarded, fixed_base, diagnostics_enabled },
-                }
-                .specialize(&code);
-                if let Some(started) = body_build_started {
-                    let memory_after = jit_memory_snapshot();
-                    eprintln!(
-                        "QUENCH_WASM_JIT_BODY_MEMORY function={index} elapsed_us={} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
-                        started.elapsed().as_micros(),
-                        body_memory_before.map(|memory| memory.0),
-                        memory_after.map(|memory| memory.0),
-                        body_memory_before.map(|memory| memory.1),
-                        memory_after.map(|memory| memory.1),
-                    );
-                }
-                let Ok(WasmResidual::Compiled(built, entry)) = built else { return None };
-                Some((index, built, entry))
-            });
-            bodies = compile_built_functions(isa, count, self.memory_policy(), build)?;
-        }
-        // Under `--b-jit` each function's entry is its stitched rows. A callee whose stitch fails
-        // has no entry cell, so it leaves `callable` and its callers call it through the VM
-        // (`CALL_VM`) instead of failing. Only a movable memory (`memory_stable` false) refuses
-        // that call, so there a caller still fails with its callee; the set only shrinks.
-        let mut stitched: Vec<Option<Vec<u8>>> = if base_only {
-            let mut callable: Vec<bool> = plans.iter().map(Option::is_some).collect();
-            loop {
-                let codes: Vec<Option<Vec<u8>>> = (0..count)
-                    .map(|index| {
-                        if !callable[index] {
-                            return None;
-                        }
-                        let full_plan = full_plans[index].as_ref()?;
-                        let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() }).compiled()?;
-                        let residual = WasmSpecializer {
-                            index,
-                            plans: &plans,
-                            full_plan,
-                            reference_site_ids: &reference_site_ids[index],
-                            admitted,
-                            tier: WasmTierChoice::Baseline {
-                                analysis: &analysis,
-                                memory_slot,
-                                entry_cells: &entry_cells,
-                                callable: &callable,
-                            },
-                        }
-                        .specialize(&code);
-                        match residual.ok()? {
-                            WasmResidual::Rows(rows) => Some(rows),
-                            WasmResidual::Compiled(..) => None,
-                        }
-                    })
-                    .collect();
-                let kept: Vec<bool> = codes.iter().map(Option::is_some).collect();
-                if kept == callable {
-                    break codes;
-                }
-                callable = kept;
+        analysis.unrolls = program_unrolls(&code);
+        let mut build_order: Vec<usize> = (0..count).filter(|&index| plans[index].is_some()).collect();
+        build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
+        let build = build_order.into_iter().map(|index| {
+            let full_plan = full_plans[index].as_ref()?;
+            let body_memory_before = diagnostics.then(jit_memory_snapshot).flatten();
+            let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
+            let built = WasmSpecializer {
+                index,
+                plans: &plans,
+                full_plan,
+                reference_site_ids: &reference_site_ids[index],
+                admitted,
+                tier: WasmOptimizing { analysis: &analysis, isa: &*isa, guarded, fixed_base },
             }
-        } else {
-            Vec::new()
-        };
+            .specialize(&code);
+            if diagnostics {
+                let memory_after = jit_memory_snapshot();
+                eprintln!(
+                    "QUENCH_WASM_JIT_BODY_MEMORY function={index} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
+                    body_memory_before.map(|memory| memory.0),
+                    memory_after.map(|memory| memory.0),
+                    body_memory_before.map(|memory| memory.1),
+                    memory_after.map(|memory| memory.1),
+                );
+            }
+            let Ok(WasmResidual::Compiled(built, entry)) = built else { return None };
+            Some((index, built, entry))
+        });
+        let mut bodies = compile_built_functions(&*isa, count, self.memory_policy(), build)?;
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
             }
-            if base_only {
-                // `--b-jit`: the stitched rows are the entry, and the table names them as the
-                // body too (the same `WasmEntry` ABI, so indirect calls enter them directly).
-                // A function whose stitch failed has no native entry: it runs in the interpreter.
-                let Some(stitched) = stitched[index].take() else {
-                    continue;
-                };
-                let stitched_projected_len = projected_code_len(bytes.len(), stitched.len())?;
-                if let Some(root) = root
-                    && stitched_projected_len > MAX_JIT_ROOT_CODE_BYTES
-                {
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={stitched_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
-                        );
-                    }
-                    return None;
-                }
-                let stitched_len = stitched.len();
-                let offset = place(&mut bytes, stitched);
-                offsets[index] = Some(offset);
-                spans.push((offset, stitched_len, index));
-                entries[index] = Some(offset);
-                continue;
-            }
             let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
-            if let Some(root) = root
-                && body_projected_len > MAX_JIT_ROOT_CODE_BYTES
-            {
-                if diagnostics_enabled {
+            if body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
+                if diagnostics {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
@@ -8543,10 +7332,8 @@ impl Vm {
             spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
-            if let Some(root) = root
-                && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES
-            {
-                if diagnostics_enabled {
+            if entry_projected_len > MAX_JIT_ROOT_CODE_BYTES {
+                if diagnostics {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
@@ -8559,7 +7346,6 @@ impl Vm {
             link(&mut bytes, offset, &call, offsets[call.callee]?)?;
         }
         let memory = CodeMemory::new(&bytes)?;
-        let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
         write_perf_map("wasm-function", base, &bytes, &spans);
         for (cell, entry) in entry_cells.iter().zip(&entries) {
@@ -8590,52 +7376,6 @@ impl Vm {
                 }
             })
             .collect();
-        let compiled_functions = functions.len();
-        let diagnostics = diagnostics_enabled.then(|| {
-            let import_callout_names = self
-                .programs
-                .wasm_signatures(program)
-                .map(|signatures| {
-                    signatures
-                        .imports()
-                        .iter()
-                        .enumerate()
-                        .map(|(function, import)| {
-                            (
-                                u32::try_from(function).expect("Wasm function indices fit in u32"),
-                                import.name.index,
-                                import.name.module.clone(),
-                                import.name.name.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let import_callout_counts = import_callout_names
-                .iter()
-                .map(|_| std::cell::Cell::new(0))
-                .collect();
-            WasmJitDiagnostics {
-                program: program.raw(),
-                total_functions: count,
-                compiled_functions,
-                code_bytes: bytes.len(),
-                mapped_bytes,
-                compile_ns: compile_started.map_or(0, |started| started.elapsed().as_nanos()),
-                native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                native_entry_samples: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                native_entry_sampled_ns: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                compiled_to_vm_callouts: std::cell::Cell::new(0),
-                compiled_import_callouts: std::cell::Cell::new(0),
-                compiled_known_callouts: std::cell::Cell::new(0),
-                compiled_reference_callouts: std::cell::Cell::new(0),
-                emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
-                import_callout_names,
-                import_callout_counts,
-                reference_call_sites,
-            }
-        });
         Some(CompiledProgram {
             _code: memory,
             table,
@@ -8645,27 +7385,11 @@ impl Vm {
             memory_slot,
             guarded,
             fixed_base,
-            diagnostics,
-            indirect_hits: indirect_profile::SiteHits::new(reference_cache_count),
-            reference_cache_sites,
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn install_compiled_diagnostics_for_test(
-        &mut self,
-        program: ProgramId,
-        env: Value,
-    ) -> bool {
-        let Some(compiled) = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program_with_diagnostics(program, env, true, unit))
-            .map(Rc::new)
-        else {
-            return false;
-        };
-        self.programs.set_compiled(program, Some(compiled));
-        true
-    }
-
+    /// Installs the root tier of function `root` of `program` in instance `env` (`compile_wasm_root`), without the first
+    /// call's claim: a test of compiled code runs a function whose predicted tier leaves it interpreted otherwise.
     #[cfg(test)]
     pub(crate) fn install_compiled_root_for_test(
         &mut self,
@@ -8673,34 +7397,12 @@ impl Vm {
         env: Value,
         root: usize,
     ) -> bool {
-        let Some(compiled) = self.wasm_module_unit(program, Some(root), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, true, Some(root), unit))
-            .map(Rc::new)
-        else {
-            return false;
-        };
-        self.programs.set_compiled(program, Some(compiled));
-        true
-    }
-
-    #[cfg(test)]
-    pub(crate) fn install_compiled_root_only_for_test(
-        &mut self,
-        program: ProgramId,
-        env: Value,
-        root: usize,
-    ) -> bool {
-        let Some(compiled) = self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, true, Some(root), true, unit))
-            .map(Rc::new)
-        else {
-            return false;
-        };
-        self.programs.set_compiled(program, Some(compiled));
-        true
+        self.compile_wasm_root(program, env, root as u32)
     }
 
     /// The native code a known call of function `id` from frame `caller` runs, offered as the
     /// general loop's native entry (`wasm_activation::enter_native`) asks: the code a tier holds,
-    /// after the tiers' entry counters and compiles this entry makes (`offer_compiled_in`).
+    /// after the compile this entry makes due (`offer_compiled_in`).
     /// `None` where no tier runs it: the interpreter takes the call.
     pub(crate) fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<Rc<CompiledProgram>> {
         #[cfg(feature = "jit")]
@@ -8839,171 +7541,27 @@ impl Vm {
         self.run_offered_in(compiled, program, env, id, args)
     }
 
-    /// The tiers' answer to an entry of function `id` of `program` in instance `env`: the code
-    /// that runs it natively, after the entry's counters and the compiles it makes due (the
-    /// program's first decision, a selective module's whole compile, a hot root's tier). `None`
-    /// where no tier holds it, which is noted as the function's interpreter fallback.
+    /// The tiers' answer to an entry of function `id` of `program` in instance `env`: the root tier's code that runs
+    /// it natively, after the compile the entry makes due (`wasm_activation::offer_entry`). `None` where no tier holds
+    /// it, and the interpreter runs the call.
     #[inline(always)]
     fn offer_compiled_in(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
-        if self.execution_mode != ExecutionMode::Compiled {
+        if !quench_runtime::vm::tier_policy::wasm_runs_native(self.execution_mode) {
             return None;
         }
-        // The common entry: the program's whole compile holds the function, which no counter,
-        // escalation or tier changes (the decisions below all start from a missing artifact).
-        if let Some(Some(baseline)) = self.programs.compiled(program)
-            && baseline.has_function(id as usize)
-        {
-            return Some(baseline);
-        }
-        self.offer_compiled_cold(program, env, id)
-    }
-
-    /// `offer_compiled_in` of a function the program's whole compile does not hold.
-    #[cold]
-    #[inline(never)]
-    fn offer_compiled_cold(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
-        if !cfg!(feature = "jit") || self.execution_mode != ExecutionMode::Compiled {
-            return None;
-        }
-        let wasm_root_only = jit_wasm_root_only_enabled()
-            && self
-                .programs
-                .residual(program)
-                .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-        let wasm_root_first = jit_wasm_root_first_enabled()
-            && self
-                .programs
-                .residual(program)
-                .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-        let _decided = match self.programs.compiled(program) {
-            Some(compiled) => compiled,
-            None => {
-                if self
-                    .programs
-                    .residual(program)
-                    .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm)
-                {
-                    self.host.before_native_compilation();
-                }
-                if wasm_root_only || wasm_root_first {
-                    // This explicit diagnostic mode compiles only the
-                    // function named by QUENCH_DEV=wasm-root=N. Root-only mode
-                    // keeps its callees in the VM; root-first mode allows a
-                    // hot callee to enter the existing bounded tier below.
-                    let diagnose = jit_diagnostics_enabled();
-                    let started = diagnose.then(std::time::Instant::now);
-                    let root = jit_root_override().ok().flatten();
-                    let compiled = root
-                        .and_then(|root| {
-                            self.wasm_module_unit(program, Some(root), true).and_then(|unit| self.compile_program_with_diagnostics_and_root_mode(program, env, diagnose, Some(root), true, unit))
-                        })
-                        .map(Rc::new);
-                    if diagnose && compiled.is_none() {
-                        let mode_field = if wasm_root_first {
-                            "\"root_first\":true"
-                        } else {
-                            "\"root_only\":true"
-                        };
-                        eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},{},\"compile_failed\":true,\"root\":{},\"compile_ns\":{}}}",
-                            program.raw(),
-                            mode_field,
-                            root.map_or_else(|| "null".to_owned(), |root| root.to_string()),
-                            started
-                                .expect("diagnostic timer started")
-                                .elapsed()
-                                .as_nanos(),
-                        );
-                    }
-                    self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program);
-                    self.programs.compiled(program).flatten()
-                } else if self
-                    .programs
-                    .residual(program)
-                    .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm)
-                    && self.programs.wasm_module_starts_interpreted(program)
-                {
-                    // A Wasm module starts in the interpreter and compiles whole once it runs
-                    // long (`WasmModuleTier`); a small one compiles whole below, at once.
-                    self.programs.set_compiled(program, None);
-                    None
-                } else {
-                    let diagnose = jit_diagnostics_enabled()
-                        && self
-                            .programs
-                            .get(program)
-                            .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-                    let started = diagnose.then(std::time::Instant::now);
-                    let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
-                    if diagnose && compiled.is_none() {
-                        let total_functions = self
-                            .programs
-                            .get(program)
-                            .map_or(0, |code| code.functions.len());
-                        eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{},\"compile_ns\":{}}}",
-                            program.raw(),
-                            total_functions,
-                            started
-                                .expect("diagnostic timer started")
-                                .elapsed()
-                                .as_nanos(),
-                        );
-                    }
-                    self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program);
-                    self.programs.compiled(program).flatten()
-                }
-            }
-        };
-        // The program's first entry decided its whole compile above; the entry's counters and the
-        // compiles they make due are the staged rule both interpreters run.
-        let mut tiers = GeneralTiers { vm: self, program, env, root_only: wasm_root_only, root_first: wasm_root_first };
+        let mut tiers = GeneralTiers { vm: self, program, env };
         match quench_runtime::staged::wasm_activation::offer_entry(&mut tiers, id) {
             quench_runtime::staged::wasm_activation::EntryOffer::Held(code) => Some(code),
             _ => None,
         }
     }
 
-    /// Makes the claimed whole compile of selective Wasm module `program` (`WasmModuleTier`).
-    fn escalate_wasm_module(&mut self, program: ProgramId, env: Value) {
-        // The module's code is about to run natively, so the interpreter's views of it go
-        // first, and the compile reuses their memory, unless a frame of it is on the stack,
-        // whose lane run may hold their records, or a lane activation deferred beside this
-        // call (`runs_beside_activations`), a frame not on it. An interpreted run derives
-        // them again.
-        if !self.deferred_activations_run(program) && !self.frames.iter().any(|frame| frame.program == program) {
-            self.programs.release_lane_views(program);
-            // Their records' addresses name private-name sites' entries (`PrivateSiteHomes`).
-            self.private_site_homes.clear();
-        }
-        let started = jit_diagnostics_enabled().then(std::time::Instant::now);
-        let compiled = jit_root_override().ok().and_then(|root| self.wasm_module_unit(program, root, false)).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
-        if let Some(started) = started {
-            let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
-                (0..code.functions.len())
-                    .filter_map(|index| code.function_get(index))
-                    .map(|function| function.code.len())
-                    .sum()
-            });
-            eprintln!(
-                "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{},\"compile_ns\":{}}}",
-                program.raw(),
-                compiled.is_some(),
-                bytecodes,
-                started.elapsed().as_nanos(),
-            );
-        }
-        self.programs.set_compiled(program, compiled);
-    }
-
-    /// Makes the root compile of function `id` of Wasm module `program` and installs it; whether
-    /// the tier keeps it.
+    /// Makes the root compile of function `id` of Wasm program `program` and installs it; whether the tier keeps it.
     fn compile_wasm_root(&mut self, program: ProgramId, env: Value, id: u32) -> bool {
         #[cfg(feature = "jit")]
         {
-            let tier = self.wasm_module_unit(program, Some(id as usize), false).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
+            self.host.before_native_compilation();
+            let tier = self.wasm_module_unit(program).and_then(|unit| self.compile_program_and_root(program, env, id as usize, unit)).map(Rc::new);
             tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
         }
         #[cfg(not(feature = "jit"))]
@@ -9029,30 +7587,6 @@ impl Vm {
             let raw = self.compiled_raw_args(args, &function.params)?;
             let marker = 0u8;
             let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-            let mut import_callouts = 0u64;
-            let mut known_callouts = 0u64;
-            let mut reference_callouts = 0u64;
-            let mut emscripten_memcpy_fast_path_hits = 0u64;
-            let (
-                import_callouts_ptr,
-                known_callouts_ptr,
-                reference_callouts_ptr,
-                emscripten_memcpy_fast_path_hits_ptr,
-            ): (*mut u64, *mut u64, *mut u64, *mut u64) = if compiled.diagnostics.is_some() {
-                (
-                    &mut import_callouts as *mut u64,
-                    &mut known_callouts as *mut u64,
-                    &mut reference_callouts as *mut u64,
-                    &mut emscripten_memcpy_fast_path_hits as *mut u64,
-                )
-            } else {
-                (
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                )
-            };
             let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
                 head: CallContextFields {
@@ -9070,21 +7604,13 @@ impl Vm {
                     call_reference: reference_callout as ReferenceCallout as usize,
                     compiled: std::ptr::null(),
                     program,
-                    import_callouts: import_callouts_ptr,
-                    known_callouts: known_callouts_ptr,
-                    reference_callouts: reference_callouts_ptr,
                     memory: Value::UNDEFINED,
                     memory_length: 0,
                     raised: None,
-                    call_reference_diagnostic: 0,
-                    reference_call_sites: std::ptr::null(),
-                    reference_call_site_count: 0,
                     poll_start: poll.map_or(0, |(start, _)| start),
                     poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                    emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
-                    import_callout_counts: std::ptr::null(),
-                    import_callout_count: 0,
                     adapter_payload: std::ptr::null_mut(),
+                    body_shim: lane_body_abi::body_shim(),
                 },
                 interrupt_owner: std::ptr::null(),
                 instance: std::ptr::null(),
@@ -9095,9 +7621,8 @@ impl Vm {
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });
             let mut out = 0u64;
-            let native_entry_should_sample = compiled.note_native_entry(id as usize);
-            let native_entry_sample_started =
-                native_entry_should_sample.then(std::time::Instant::now);
+            #[cfg(test)]
+            compiled.note_native_entry(id as usize);
             // SAFETY: the entry is compiled code for this function's
             // signature; the context, arguments and result outlive the call,
             // and the memory view stays valid because compiled code never
@@ -9112,43 +7637,6 @@ impl Vm {
                     function.entry,
                 )
             };
-            if let Some(started) = native_entry_sample_started {
-                compiled.finish_native_entry_sample(id as usize, started);
-            }
-            if let Some(stats) = &compiled.diagnostics {
-                stats.compiled_to_vm_callouts.set(
-                    stats
-                        .compiled_to_vm_callouts
-                        .get()
-                        .saturating_add(import_callouts)
-                        .saturating_add(known_callouts)
-                        .saturating_add(reference_callouts),
-                );
-                stats.compiled_import_callouts.set(
-                    stats
-                        .compiled_import_callouts
-                        .get()
-                        .saturating_add(import_callouts),
-                );
-                stats.compiled_known_callouts.set(
-                    stats
-                        .compiled_known_callouts
-                        .get()
-                        .saturating_add(known_callouts),
-                );
-                stats.compiled_reference_callouts.set(
-                    stats
-                        .compiled_reference_callouts
-                        .get()
-                        .saturating_add(reference_callouts),
-                );
-                stats.emscripten_memcpy_fast_path_hits.set(
-                    stats
-                        .emscripten_memcpy_fast_path_hits
-                        .get()
-                        .saturating_add(emscripten_memcpy_fast_path_hits),
-                );
-            }
             if i64::from(status) == TERMINATED_STATUS {
                 return Some(Err(JsError::execution_terminated()));
             }
@@ -9171,71 +7659,35 @@ impl Vm {
                 None => self.programs.constant(program, VOID_RESULT_CONSTANT)?,
             }))
         })();
-        if let Some(stats) = &compiled.diagnostics
-            && result.is_none()
-            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(id as usize)
-        {
-            fallbacks.set(fallbacks.get().saturating_add(1));
-        }
         result
     }
 }
 
 /// The general loop's tiers for one Wasm entry (`wasm_activation::offer_entry`): it makes the
-/// compiles an entry makes due in place. `root_only` and `root_first` are the diagnostic root modes.
+/// compiles an entry makes due in place.
 struct GeneralTiers<'a> {
     vm: &'a mut Vm,
     program: ProgramId,
     env: Value,
-    root_only: bool,
-    root_first: bool,
 }
 
 impl quench_runtime::staged::wasm_activation::WasmEntryTiers for GeneralTiers<'_> {
     type Code = Rc<CompiledProgram>;
 
-    fn whole(&mut self, function: u32) -> Option<Rc<CompiledProgram>> {
-        self.vm.programs.compiled(self.program).flatten().filter(|compiled| compiled.has_function(function as usize))
-    }
-
-    fn note_module_work(&mut self) -> bool {
-        !self.root_only && !self.root_first && matches!(self.vm.programs.compiled(self.program), Some(None))
-            && self.vm.programs.note_wasm_module_entry(self.program)
-    }
-
-    fn compile_whole(&mut self) -> quench_runtime::staged::wasm_activation::Compile {
-        use quench_runtime::staged::wasm_activation::Compile;
-        if !self.vm.programs.claim_wasm_module_escalation(self.program) {
-            return Compile::Refused;
-        }
-        self.vm.escalate_wasm_module(self.program, self.env);
-        Compile::Made
-    }
-
     fn root(&mut self, function: u32) -> Option<Rc<CompiledProgram>> {
         self.vm.programs.wasm_tier_containing(self.program, function)
     }
 
-    /// Root-first mode earns further tiering only after its selected root produced an artifact:
-    /// where admission failed, the workload stays in the interpreter instead of silently becoming
-    /// ordinary selective tiering.
-    fn root_admissible(&mut self, function: u32) -> bool {
-        !self.root_only
-            && (!self.root_first || self.vm.programs.compiled(self.program).flatten().is_some())
-            && self.vm.programs.wasm_root_admissible(self.program, function)
-    }
-
-    fn note_root_entry(&mut self, function: u32) -> bool {
-        self.vm.programs.note_wasm_root_entry(self.program, function, false)
+    fn root_due(&mut self, function: u32) -> bool {
+        self.vm.programs.wasm_root_due(self.program, function)
     }
 
     fn compile_root(&mut self, function: u32) -> quench_runtime::staged::wasm_activation::Compile {
         use quench_runtime::staged::wasm_activation::Compile;
+        if !self.vm.programs.claim_wasm_root(self.program, function) {
+            return Compile::Refused;
+        }
         if self.vm.compile_wasm_root(self.program, self.env, function) { Compile::Made } else { Compile::Refused }
-    }
-
-    fn note_fallback(&mut self, function: u32) {
-        self.vm.programs.has_compiled_function_or_note_fallback(self.program, function as usize);
     }
 }
 
@@ -9252,7 +7704,6 @@ impl Vm {
         env: Value,
         function: u32,
         current_memory: Value,
-        memcpy_fast_path_hits: *mut u64,
         args: *const u64,
         out: *mut u64,
     ) -> Result<(), JsError> {
@@ -9322,7 +7773,6 @@ impl Vm {
                     receiver,
                     &values,
                     current_memory,
-                    memcpy_fast_path_hits,
                 )?
             } else {
                 self.call_value(&code, callee, receiver, &values)?
@@ -9340,26 +7790,9 @@ impl Vm {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// Whether a lane body for `body` could amortize an entry (`lane_facts::amortizes_entry`): a
-/// loop, a call (which a plan inlines or binds), or length. A short call-free function never
-/// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(crate) fn body_may_amortize_in_lane(tiers: &Tiers, body: &quench_runtime::bytecode::Function) -> bool {
-    body_may_amortize(tiers, body, tier_policy::body_tier_in_lane())
-}
-
-/// `body_may_amortize_in_lane` for the body of `tier`, whose length that tier must reach.
-pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: crate::compiled::admission::Tier) -> bool {
-    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
-        || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(body.widened(*packed)))
-}
-
-/// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
-/// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
-pub(crate) fn pays_native_entry(body: &quench_runtime::bytecode::Function) -> bool {
-    body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
-}
 
 pub(crate) use quench_runtime::vm::engine_types::DirectTierEntry;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(DirectTierEntryOps1)]
 impl DirectTierEntry {
@@ -9400,7 +7833,7 @@ mod tests {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
         let value = builder.block_params(entry)[0];
-        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None };
+        let mut stage = object_slots::Emit { builder: &mut builder, property_values: None, gate: None, payload: None, facts: Default::default(), fresh: false };
         let encoded = quench_runtime::staged::narrow::narrow_form(&mut stage, value, typed_ir::Type::ANY);
         builder.ins().return_(&[encoded]);
         builder.seal_all_blocks();
@@ -9416,45 +7849,6 @@ mod tests {
         for value in values {
             let expected = value.to_narrow().map_or(u64::MAX, u64::from);
             assert_eq!(unsafe { encode(value.to_bits()) }, expected, "{value:?}");
-        }
-    }
-
-    #[test]
-    fn native_narrow_decoder_matches_value_bits() {
-        use quench_runtime::value::NarrowLayout as N;
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        let mut signature = ir::Signature::new(isa.default_call_conv());
-        signature.params.push(AbiParam::new(types::I32));
-        signature.returns.push(AbiParam::new(types::I64));
-        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-        let mut context = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut function, &mut context);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        let narrow = builder.block_params(entry)[0];
-        let done = builder.create_block();
-        let result = builder.append_block_param(done, types::I64);
-        let table = process_narrow_table(&mut builder);
-        emit_narrow_read(&mut builder, narrow, table, done);
-        builder.switch_to_block(done);
-        builder.ins().return_(&[result]);
-        builder.seal_all_blocks();
-        builder.finalize(isa.frontend_config());
-        let memory = compile_native_function(function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the function above accepts one u32 and returns its decoded u64.
-        let decode: unsafe extern "C" fn(u32) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
-        let indices = [0, 1, (1 << N::INTEGER_BITS) - 1, u32::MAX];
-        for code in 0..=N::CODE_MASK {
-            for index in indices {
-                let narrow = (index << N::INDEX_SHIFT) | (code << N::CODE_SHIFT);
-                assert_eq!(unsafe { decode(narrow) }, Value::from_narrow(narrow).to_bits());
-            }
-        }
-        let half = 1_i32 << (N::INTEGER_BITS - 1);
-        for integer in [i32::MIN, -half, -half + 1, -1, 0, 1, half - 1, half, i32::MAX] {
-            let narrow = ((integer as u32) << N::CODE_SHIFT) | N::INTEGER_FLAG;
-            assert_eq!(unsafe { decode(narrow) }, Value::from_narrow(narrow).to_bits());
         }
     }
 
@@ -10340,11 +8734,10 @@ mod tests {
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         vm.programs.enable_js_lane_methods();
-        vm.keep_slot_representations();
         let function = program.functions.iter().position(|body|
             body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
         let method = vm.compile_lane_method(&program, function as u32,
-            &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+            &|_| (0, 0), Vec::new()).unwrap();
         assert!(!method.dependencies.slots.is_empty(), "the actual field read must subscribe");
         let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
         let active = published.lease().unwrap();
@@ -10358,7 +8751,7 @@ mod tests {
         assert!(published.lease().is_some());
         vm.store_property_slot(receiver, slot, Value::number(0.5));
         assert!(published.lease().is_none(), "widening retires future entry at the write");
-        assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
+        assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::number(0.5)));
         assert!(weak.upgrade().is_some(), "retirement preserves the active code lease");
         drop(active);
         assert!(weak.upgrade().is_none());
@@ -10410,7 +8803,6 @@ mod tests {
             let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             quench_runtime::test_support::execute(&mut vm, &program).unwrap();
             vm.programs.enable_js_lane_methods();
-            vm.keep_slot_representations();
             let reader = program.functions.iter().position(|body|
                 body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "read")).unwrap();
             let writer = program.functions.iter().position(|body|
@@ -10419,7 +8811,7 @@ mod tests {
             let store = program.function(writer).instructions().find(|i| matches!(quench_runtime::staged::Operation::<u64, ()>::of(*i),
                 Some(quench_runtime::staged::Operation::SetField { base: Some(_), strict: false, .. }))).unwrap();
             let method = vm.compile_lane_method(&program, reader as u32,
-                &|_, _| Vec::new(), &|_| (0, 0), Vec::new(), &[]).unwrap();
+                &|_| (0, 0), Vec::new()).unwrap();
             assert!(!method.dependencies.slots.is_empty());
             let published = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(method, &mut facts) }.unwrap();
             let active = published.lease().unwrap();
@@ -10437,18 +8829,17 @@ mod tests {
                         shape as u64, slot as u64, quench_runtime::typed_ir::SlotType::from_type(quench_runtime::typed_ir::Type::NUMBER) as u64),
                     Edge::Store => field_set_in_lane(machine, residual, receiver,
                         store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5)),
-                    Edge::Pointer => u64::from(vm.cached_field_store_pointer(&program, receiver,
+                    Edge::Pointer => u64::from(vm.cached_field_store_pointer(receiver,
                         store.atom_index(), store.cache_site_index(), quench_runtime::typed_ir::Type::NUMBER).is_some()),
                 }
             };
             assert_eq!(admitted, 0, "widening must exit before mutation");
             assert!(published.lease().is_none());
             assert_eq!(vm.heap.slot_type(shape, slot), quench_runtime::typed_ir::Type::NUMBER);
-            assert_eq!(vm.heap_reads().property_get(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
+            assert_eq!(vm.heap_reads().property_get_ref(vm.heap_reads().object(receiver).unwrap(), slot), Some(Value::integer(1)));
             vm.store_property_slot(receiver, slot, Value::number(0.5));
-            assert!(vm.admit_slot_writes_as(shape, slot, quench_runtime::typed_ir::Type::NUMBER, false),
+            assert!(vm.admit_slot_writes(shape, slot, quench_runtime::typed_ir::Type::NUMBER),
                 "the wider domain is admitted on the next entry");
-            assert_eq!(vm.heap.unrepresented_slots(), 0);
             drop(active);
         }
     }
@@ -10468,57 +8859,11 @@ mod tests {
     }
 
     #[test]
-    fn bound_field_arena_preserves_slot_bounds() {
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        for bound in [false, true] {
-            let mut signature = Signature::new(isa.default_call_conv());
-            signature.params.extend([AbiParam::new(types::I64); 4]);
-            signature.returns.push(AbiParam::new(types::I64));
-            let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-            let mut context = FunctionBuilderContext::new();
-            let mut builder = FunctionBuilder::new(&mut native, &mut context);
-            let entry = builder.create_block();
-            builder.append_block_params_for_function_params(entry);
-            builder.switch_to_block(entry);
-            let p = builder.block_params(entry).to_vec();
-            let arena = FieldArena::Unbound { values: p[0], length: p[1] };
-            let arena = if bound { arena.bind(&mut builder, p[3]) } else { arena };
-            let miss = builder.create_block();
-            let address = arena.address(&mut builder, p[2], FieldSlot::Bound(p[3]), miss);
-            builder.ins().return_(&[address]);
-            builder.switch_to_block(miss);
-            let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-            builder.ins().return_(&[deleted]);
-            builder.seal_all_blocks();
-            builder.finalize(isa.frontend_config());
-            let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
-            // SAFETY: this function performs integer address arithmetic only and
-            // never dereferences the synthetic arena or returned address.
-            let run = unsafe { std::mem::transmute::<*mut u8,
-                unsafe extern "C" fn(u64, u64, u64, u64) -> u64>(memory.pointer()) };
-            let width = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
-            let base = width;
-            for (length, storage, slot) in [
-                (0, 0, 0), (1, 0, 0), (1, 0, 1), (1, 0, 2),
-                (3, 1, 1), (3, 2, 1),
-                (u64::from(u32::MAX), u64::from(u32::MAX), 0),
-                (u64::from(u32::MAX) + u64::from(u16::MAX) + 1,
-                    u64::from(u32::MAX), u64::from(u16::MAX)),
-            ] {
-                let expected = if storage + slot < length { base + (storage + slot) * width }
-                    else { Value::DELETED.to_bits() };
-                assert_eq!(unsafe { run(base, length, storage, slot) }, expected,
-                    "bound={bound}, length={length}, storage={storage}, slot={slot}");
-            }
-        }
-    }
-
-    #[test]
     fn nullable_slot_observations_keep_checks_across_execution_tiers() {
         quench_runtime::test_support::on_compile_stack(|| {
             let source = include_str!("../../quench-runtime/tests/fixtures/nullable-slot-writes.js");
             let program = quench_runtime::Engine::specialize(source, "nullable-slot-writes.js").unwrap();
-            let native = quench_runtime::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let native = quench_runtime::NativeJsProgram::publish(program.clone()).unwrap();
             for mode in [ExecutionMode::Interpreted, ExecutionMode::Compiled, ExecutionMode::NativeOnly] {
                 let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
                 vm.programs.enable_js_lane_methods();
@@ -10530,79 +8875,6 @@ mod tests {
                 assert_eq!(vm.own_property(vm.realm.globals, atom), Some(Value::integer(3076)));
             }
         });
-    }
-
-    #[test]
-    fn native_holder_read_does_not_require_receiver_arena_storage() {
-        for (source, inline_holder) in [
-            ("function read(o){return o.method;} function Box(){} Box.prototype.method=42; Box.prototype.pad=0; globalThis.box=new Box(); box.own=1; read(box);", false),
-            ("function read(o){return o.method;} function Box(){} Box.prototype.method=42; globalThis.box=new Box(); box.own=1; read(box);", true),
-        ] {
-        let program = quench_runtime::Engine::specialize(source, "packed-holder.js").unwrap();
-        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
-        let atom = vm.lookup_atom("box").unwrap();
-        let receiver = vm.own_property(vm.realm.globals, atom).unwrap();
-        assert!(vm.heap_reads().object(receiver).unwrap().inline_properties().is_some());
-        let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let function = program.functions.iter().position(|function|
-            function.header().name.is_some_and(|name| &program.atoms[name as usize] == "read")).unwrap();
-        let site = program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
-            Some(FieldLookup::Atom { cache_site, .. }) => Some(cache_site), _ => None,
-        }).unwrap();
-        let cache = vm.field_cache_entry(site);
-        assert_ne!(cache.holder, quench_runtime::vm::NO_FIELD_HOLDER);
-        assert_eq!(vm.record_field_entry_hit(cache, receiver), Some(Value::number(42.0)));
-        let prototype = vm.heap_reads().object(receiver).unwrap().proto();
-        let holder = vm.heap_reads().object(prototype).unwrap();
-        assert_eq!(holder.exact_shape(), cache.holder);
-        assert_eq!(holder.inline_properties().is_some(), inline_holder);
-        assert_eq!(holder.extras_storage_start().is_some(), !inline_holder);
-
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        let mut signature = Signature::new(isa.default_call_conv());
-        signature.params.extend([AbiParam::new(types::I64); 4]);
-        signature.returns.push(AbiParam::new(types::I64));
-        let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-        let mut context = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut native, &mut context);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        let parameters = builder.block_params(entry).to_vec();
-        let mut binding = FieldSlotBinding {
-            receiver: builder.ins().iconst(types::I32, i64::from(cache.receiver)),
-            holder: builder.ins().iconst(types::I32, i64::from(cache.holder)),
-            slot: FieldSlot::Bound(builder.ins().iconst(types::I64, i64::from(cache.slot))),
-            records: parameters[0],
-            arena: FieldArena::Unbound { values: parameters[1], length: parameters[2] },
-            writes: None, admitted: None,
-        };
-        let slot = binding.slot.read(&mut builder);
-        binding.arena = binding.arena.bind(&mut builder, slot);
-        let miss = builder.create_block();
-        let unused = builder.ins().iconst(types::I64, 0);
-        let (address, _) = emit_js_cached_field_slot(&mut builder, unused,
-            parameters[3], site, true, miss, Some(binding), None, None);
-        let value = builder.ins().load(types::I64, MemFlagsData::trusted(), address, 0);
-        builder.ins().return_(&[value]);
-        builder.switch_to_block(miss);
-        let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-        builder.ins().return_(&[deleted]);
-        builder.seal_all_blocks();
-        builder.finalize(isa.frontend_config());
-        let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the four inputs name this VM's live reservation, arena and
-        // receiver. No guest call or collection occurs while the code runs.
-        let run = unsafe { std::mem::transmute::<*mut u8,
-            unsafe extern "C" fn(usize, *const Value, usize, u64) -> u64>(memory.pointer()) };
-        let (values, length) = vm.heap_reads().native_property_values();
-        let records = vm.heap_reads().object_record_base().unwrap() as usize;
-        assert_eq!(Value::from_bits(unsafe { run(records, values, length, receiver.to_bits()) }), Value::number(42.0));
-        // A receiver that has not proved the cached shape cannot read this slot.
-        assert_eq!(unsafe { run(records, values, length, Value::NULL.to_bits()) }, Value::DELETED.to_bits());
-        assert_eq!(unsafe { run(records, values, length, vm.realm.globals.to_bits()) }, Value::DELETED.to_bits());
-        }
     }
 
     #[test]
@@ -10631,17 +8903,14 @@ mod tests {
     }
 
     #[test]
-    fn typed_native_loops_preserve_stores_in_native_only_and_unspecialized_execution() {
+    fn typed_native_loops_preserve_stores_in_native_only_execution() {
         let source = "function tail(node) { while(node.next!==null) { node.mark=node.mark+1; node=node.next; } return node; } const end={next:null,mark:0}; const head={next:end,mark:0}; for(let i=0;i<40;i++) { if(tail(head)!==end) throw 'identity'; } throw head.mark;";
-        for specialized in [false, true] {
-            let mut program = quench_runtime::Engine::specialize(source, "native-loop-store.js").unwrap();
-            program.specialized = specialized;
-            let native = quench_runtime::NativeJsProgram::compile_eager(program).unwrap();
-            let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-            vm.set_execution_mode(ExecutionMode::NativeOnly);
-            let error = vm.execute_native_program(&native, true).unwrap_err();
-            assert_eq!(error.thrown_value(), Some(Value::number(40.0)));
-        }
+        let program = quench_runtime::Engine::specialize(source, "native-loop-store.js").unwrap();
+        let native = quench_runtime::NativeJsProgram::publish(program).unwrap();
+        let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
+        vm.set_execution_mode(ExecutionMode::NativeOnly);
+        let error = vm.execute_native_program(&native, true).unwrap_err();
+        assert_eq!(error.thrown_value(), Some(Value::number(40.0)));
     }
 
 
@@ -10653,8 +8922,7 @@ mod tests {
             "function count(n){n=n|0;let sum=0;for(let i=0;i<n;i=(i+1)|0)sum=(sum+1)|0;return sum;}",
             "nested-poll-binding.js").unwrap();
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
-        let method = vm.compile_lane_method(&program, 1, &|_, _| Vec::new(),
-            &|_| (0, 0), Vec::new(), &[]).expect("polling lane body");
+        let method = vm.compile_lane_method(&program, 1, &|_| (0, 0), Vec::new()).expect("polling lane body");
         assert!(method.fault_poll);
         let frame = frame_in_lane();
         // The real outer landing must survive an inner trampoline overwriting it.
@@ -10720,11 +8988,7 @@ mod tests {
     fn numeric_jit_shared_entry_observes_live_termination() {
         use std::{sync::mpsc, thread, time::Duration};
         const TIMEOUT: Duration = Duration::from_secs(5);
-        fn started(context: &mut quench_runtime::NativeContext<'_>,
-            _: quench_runtime::RootId, _: &[quench_runtime::RootId]) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
-            context.host_as::<quench_runtime::test_host::TestHost>().state::<mpsc::Sender<()>>().send(()).unwrap();
-            Ok(context.undefined())
-        }
+        use crate::tier_tests::ahead_behaviour::started;
         let (ready, entered) = mpsc::channel::<()>();
         let (send_handle, receive_handle) = mpsc::channel();
         let (complete, finished) = mpsc::channel();
@@ -10857,54 +9121,6 @@ mod tests {
     /// Publishes compiled `code` of a function lowered with `native_entry_signature` to
     /// executable memory, and its entry.
     #[test]
-    fn native_object_table_binding_tracks_heap_lifetime() {
-        let source = "globalThis.tableProbe=0; throw 7;";
-        let mut vm = semantic_vm(source);
-        let original = vm.heap_reads().object_record_base().unwrap() as usize;
-        let probe = vm.lookup_atom("tableProbe").unwrap();
-        let program = vm.programs.get(ProgramId::MAIN).unwrap();
-        let assert_binding = |vm: &mut Vm, expected| {
-            JsStepDispatch::with(vm, ProgramId::MAIN, 0, 0, false, true, |activation, vm| {
-                assert_ne!(expected, 0);
-                assert_eq!(activation.object_record_base, expected);
-                assert_eq!(vm.heap_reads().object_record_base().unwrap() as usize, expected);
-            }).unwrap();
-        };
-        assert_binding(&mut vm, original);
-        // A normal semantic store may allocate/widen property storage; neither
-        // it nor a full collection replaces the record-table reservation.
-        vm.set_property(vm.realm.globals, probe, Value::number(1.5)).unwrap();
-        vm.collect_now(&program);
-        assert_binding(&mut vm, original);
-        assert_eq!(vm.own_property(vm.realm.globals, probe), Some(Value::number(1.5)));
-
-        let mut other = semantic_vm(source);
-        let other_base = other.heap_reads().object_record_base().unwrap() as usize;
-        // Reentry in another VM admits that VM's table, without changing the
-        // outer activation's admitted base or retaining it for later entries.
-        JsStepDispatch::with(&mut vm, ProgramId::MAIN, 0, 0, false, true, |activation, _| {
-            assert_binding(&mut other, other_base);
-            assert_eq!(activation.object_record_base, original);
-        }).unwrap();
-
-        // Realm initialization destroys the old heap reservation. Rebuild the
-        // caller frame as semantic_program does, then admit the current table;
-        // allocators may reuse the address, so pointer inequality is no proof.
-        vm.initialize_for_snapshot(&program).unwrap();
-        let current = vm.programs.get(ProgramId::MAIN).unwrap();
-        let body = current.function(0);
-        let mut frame = Box::new(Frame::empty(ProgramId::MAIN, 0));
-        frame.registers.resize(usize::from(body.registers), Value::UNDEFINED);
-        frame.locals.resize(usize::from(body.locals), Value::UNDEFINED);
-        frame.initialized_registers = frame.registers.len();
-        vm.frames.push(frame);
-        vm.active_registers = vm.frames[0].registers.as_mut_ptr();
-        let reset_base = vm.heap_reads().object_record_base().unwrap() as usize;
-        assert_binding(&mut vm, reset_base);
-        assert_binding(&mut other, other_base);
-    }
-
-    #[test]
     fn native_activation_owns_metadata_without_retaining_it_between_entries() {
         let vm_source = "throw 7;";
         let mut first_vm = semantic_vm(vm_source);
@@ -11027,29 +9243,6 @@ mod tests {
         assert_eq!(status, i64::from(quench_bjit::call_record::TERMINATED_STATUS), "terminated entry must stop");
         assert!(outcome.is_none());
         assert_eq!(vm.own_property(vm.realm.globals, instruction.atom_index()), None);
-    }
-
-    #[test]
-    fn per_import_callout_counts_use_function_indices_and_escape_json_names() {
-        let names = vec![
-            (0, 2, "env".to_owned(), "copy\"fast".to_owned()),
-            (1, 5, "host\\api".to_owned(), "line\nfeed".to_owned()),
-        ];
-        let counters = [std::cell::Cell::new(0), std::cell::Cell::new(0)];
-        // SAFETY: the pointer covers both initialized counters for their
-        // entire use below.
-        unsafe {
-            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
-            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
-            note_import_callout_target(counters.as_ptr(), counters.len(), 99);
-        }
-        assert_eq!(counters[0].get(), 0);
-        assert_eq!(counters[1].get(), 2);
-        assert_eq!(
-            quench_runtime::vm::engine_types::format_import_callout_targets(&names, &counters),
-            "{\"function\":1,\"import_index\":5,\"module\":\"host\\\\api\",\"name\":\"line\\nfeed\",\"count\":2}"
-        );
-        assert_eq!(quench_runtime::vm::engine_types::json_string("\u{1}\t"), "\"\\u0001\\t\"");
     }
 
     #[test]
@@ -11279,32 +9472,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn native_entry_sampling_is_sparse_and_deterministic() {
-        assert!(!native_entry_sample_due(0));
-        assert!(!native_entry_sample_due(1));
-        assert!(native_entry_sample_due(JIT_NATIVE_ENTRY_SAMPLE_INTERVAL));
-        assert!(!native_entry_sample_due(
-            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL + 1
-        ));
-        assert!(native_entry_sample_due(
-            JIT_NATIVE_ENTRY_SAMPLE_INTERVAL * 2
-        ));
-    }
-
-    #[test]
-    fn root_only_jit_defaults_to_none_and_accepts_explicit_opt_level() {
-        assert_eq!(parse_jit_root_opt_level(true, None), Ok("none"));
-        assert_eq!(parse_jit_root_opt_level(false, None), Ok("speed"));
-        assert_eq!(parse_jit_root_opt_level(true, Some("none")), Ok("none"));
-        assert_eq!(parse_jit_root_opt_level(true, Some("speed")), Ok("speed"));
-        assert_eq!(
-            parse_jit_root_opt_level(true, Some("speed_and_size")),
-            Ok("speed_and_size")
-        );
-        assert_eq!(parse_jit_root_opt_level(true, Some("invalid")), Err(()));
     }
 
     #[test]

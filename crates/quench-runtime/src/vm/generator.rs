@@ -5,6 +5,7 @@ use super::promise_async::StopOwner;
 use crate::heap::AwaitKind;
 use super::promise::{PromiseState, ThenCapability};
 use super::*;
+use super::native_table::NativeFn;
 mod job_windows;
 mod window_steps;
 #[cfg(test)]
@@ -76,7 +77,7 @@ impl Vm {
     /// delegate's own result a `yield*` passes on.
     pub fn finish_materialized_generator_step(
         &mut self,
-        mut frame: Box<Frame>,
+        frame: Box<FrameRecord>,
         resume: GeneratorResume,
         value: Value,
         stop: MaterializedStop,
@@ -84,7 +85,6 @@ impl Vm {
         let generator = self.pop_host_frame().expect("a resumed generator's activation");
         let done = match stop {
             MaterializedStop::Yielded { destination, delegated_result } => {
-                frame.with_objects = self.with_stack.split_off(frame.with_base);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.suspend(Continuation::suspend(frame, Completion::Yield(value), Some(destination), Value::UNDEFINED));
                 }
@@ -95,8 +95,7 @@ impl Vm {
             }
             MaterializedStop::Awaited { .. } => unreachable!("only an async generator's frame awaits in place"),
             MaterializedStop::Returned => {
-                self.finish_frame_scopes(&frame);
-                self.pool_frame(frame);
+                self.pool_frame(frame.into_buffers(self.with_stack.len()));
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.complete();
                 }
@@ -115,13 +114,14 @@ impl Vm {
             record.complete();
         }
     }
-    pub(super) fn generator_prototype_method(
+    /// Throws unless `receiver` is a generator that is not running: the receiver check of
+    /// `Generator.prototype.{method}`.
+    pub(super) fn check_generator_receiver(
         &mut self,
         p: &ResidualProgram,
-        native: Native,
+        method: &str,
         receiver: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
+    ) -> Result<(), JsError> {
         let is_running = match self.heap.iterator(receiver) {
             Some(IteratorRecord {
                 kind: IteratorKind::Generator,
@@ -131,26 +131,15 @@ impl Vm {
             _ => None,
         };
         let Some(is_running) = is_running else {
-            let name = match native {
-                Native::GeneratorNext => "next",
-                Native::GeneratorReturn => "return",
-                Native::GeneratorThrow => "throw",
-                _ => unreachable!(),
-            };
             return Err(self.type_error(
                 p,
-                format!("Generator.prototype.{name} called on incompatible receiver"),
+                format!("Generator.prototype.{method} called on incompatible receiver"),
             ));
         };
         if is_running {
             return Err(self.type_error(p, "Generator is already executing".into()));
         }
-        match native {
-            Native::GeneratorNext => self.generator_next(p, receiver, args),
-            Native::GeneratorReturn => self.generator_return(p, receiver, args),
-            Native::GeneratorThrow => self.generator_throw(p, receiver, args),
-            _ => unreachable!(),
-        }
+        Ok(())
     }
 
     pub fn call_generator(
@@ -190,10 +179,12 @@ impl Vm {
                 ));
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if function.arguments_alias_parameters()
-                && let Some(object) = self.object_data_mut(arguments) {
+            if function.arguments_alias_parameters() {
+                self.heap.ensure_cell_extras(arguments);
+                if let Some(mut object) = self.heap.object_mut(arguments) {
                     object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }
+            }
         }
         self.initialize_frame_invocation(p, &mut frame, function, context, args);
         frame.function = id;
@@ -221,6 +212,10 @@ impl Vm {
                 None,
                 None,
             );
+            // A captured run took this frame into its chain (`capture_chain_parked`): none is left to pop.
+            if result.as_ref().is_err_and(JsError::is_captured) {
+                return Err(result.err().expect("checked above"));
+            }
             frame = self.frames.pop().expect("generator parameter frame exists");
             match result {
                 Ok(FrameOutcome::ParameterInitializationComplete) => {}
@@ -269,11 +264,12 @@ impl Vm {
                 self.own_function_prototype_data(function, prototype_atom)
                     .or_else(|| self.own_property(function, prototype_atom))
             })
-            .filter(|prototype| self.object_data(*prototype).is_some())
+            .filter(|prototype| self.heap.object(*prototype).is_some())
             .unwrap_or(default_prototype);
         let mut object = Self::empty_object(generator_prototype);
         if let Some(function) = function_object {
-            self.capture_constructed_name(&mut object, function, true);
+            let class = self.ordinary_class(function);
+            self.capture_constructed_name(&mut object, function, class, true);
         }
         let generator = self.heap.alloc_iterator(IteratorRecord {
             object,
@@ -295,7 +291,7 @@ impl Vm {
         };
         *source = generator;
         ext.generator = Some(Box::new(GeneratorRecord::new(
-            Continuation::suspend(frame, Completion::GeneratorStart, None, Value::UNDEFINED),
+            Continuation::suspend(FrameRecord::capture(frame), Completion::GeneratorStart, None, Value::UNDEFINED),
             realm,
         )));
         Ok(generator)
@@ -1140,7 +1136,7 @@ impl Vm {
             vm.with_call_roots([rejected], |vm| {
                 vm.promise_settle(p, rejected, PromiseState::Rejected, reason)?;
                 let promise = vm.promise_object()?;
-                Ok((rejected, promise))
+                Ok::<_, JsError>((rejected, promise))
             })
         })?;
         self.async_generator_await(p, generator, promise, continuation, rejected)?;
@@ -1343,7 +1339,7 @@ impl Vm {
     pub(super) fn park_generator_frame(
         &mut self,
         generator: Value,
-        frame: Box<Frame>,
+        frame: Box<FrameRecord>,
         (value, destination): (Value, crate::bytecode::Register),
         delegated_result: Option<Value>,
     ) -> GeneratorStep {
@@ -1531,7 +1527,7 @@ impl Vm {
         p: &ResidualProgram,
         generator: Value,
         promise: Value,
-        frame: Box<Frame>,
+        frame: Box<FrameRecord>,
         value: Value,
         destination: u16,
         delegated: bool,
@@ -1603,4 +1599,48 @@ mod call_completion_tests {
             assert!(matches!(completion, CallCompletion::Value));
         }
     }
+}
+
+/// The entry that runs a synchronous generator's `next`, `return` or `throw`, or `None` when the
+/// generator family does not claim `native`.
+pub(super) fn entry(native: Native) -> Option<NativeFn> {
+    match native {
+        Native::GeneratorNext => Some(generator_next_native),
+        Native::GeneratorReturn => Some(generator_return_native),
+        Native::GeneratorThrow => Some(generator_throw_native),
+        _ => None,
+    }
+}
+
+fn generator_next_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.check_generator_receiver(p, "next", this)?;
+    vm.generator_next(p, this, args)
+}
+
+fn generator_return_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.check_generator_receiver(p, "return", this)?;
+    vm.generator_return(p, this, args)
+}
+
+fn generator_throw_native(
+    vm: &mut Vm,
+    p: &ResidualProgram,
+    _native: Native,
+    this: Value,
+    args: &[Value],
+) -> Result<Value, JsError> {
+    vm.check_generator_receiver(p, "throw", this)?;
+    vm.generator_throw(p, this, args)
 }

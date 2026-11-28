@@ -15,6 +15,7 @@
 //! (`builtin_calls`) runs its staged row, its result a tagged Boolean, Number or string, or an
 //! int32.
 
+#[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, InvocationFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
@@ -25,6 +26,7 @@ use quench_runtime::vm::global_facts::GlobalRead;
 use super::builtin_calls::Builtin;
 use super::data_view_calls::DataViewCall;
 use quench_runtime::vm::global_facts::scalar_native;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A native a call runs inline: a Math function of Numbers that native code lowers
 /// (`MathCall::is_row`), computed by its staged row; or a builtin on its staged row (`Builtin`).
@@ -107,30 +109,6 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(crate) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
-/// Whether a lane body runs a call of `native` inline, which a loop holds natively (`holds_in_loop`). A loop whose calls are all such runs
-/// natively in a body (`loop_body::offer_body`).
-pub(crate) fn inlines_in_loop(native: Native) -> bool {
-    Inline::of(native).is_some()
-}
-
-/// Whether a call of `native` with `count` arguments runs inline in a loop that holds it, the lane's test
-/// of `intrinsic_calls` (`accepts`) for the region analysis.
-pub(crate) fn inlines_in_loop_call(native: Native, count: u16) -> bool {
-    Inline::of(native).is_some_and(|inline| inline.accepts(count))
-}
-
-/// Whether the call at `pc` of `decoded` is a method call of a native that `inlines_in_loop_call` runs in place:
-/// its callee is the register a field read of the realm's native method defined last before it (as
-/// `intrinsic_calls` finds it), which `Vm::method_native` answers.
-pub(crate) fn native_method_call(machine: &mut Vm, decoded: &[WideInstruction], pc: usize) -> bool {
-    let call = decoded[pc];
-    if !quench_runtime::staged::meaning::means(call, quench_runtime::staged::meaning::Meaning::Call) { return false; }
-    let callee = call.register_b();
-    let Some(definition) = (0..pc).rev().find(|at| decoded[*at].written_registers().any(|register| register == callee)) else { return false };
-    let Some(quench_runtime::vm::global_facts::GlobalRead::NativeMember { native, .. }) = machine.method_native(&decoded[definition]) else { return false };
-    inlines_in_loop_call(native, quench_runtime::bytecode::ImmediateLayout::argument_count(call.imm()))
-}
-
 /// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`) or folded
 /// to its value: its read is a slot, a live load that leaves at a miss, or none, and it changes nothing a loop holds.
 pub(crate) fn scalar_name_read(global_reads: &quench_runtime::vm::global_facts::GlobalReads, pc: usize) -> bool {
@@ -173,6 +151,11 @@ pub(crate) fn reads_string(intrinsics: &Intrinsics, pc: usize) -> bool {
     intrinsics.get(pc).copied().flatten().is_some_and(|(_, inline, _)| inline.reads_string())
 }
 
+/// The last instruction before `pc` that writes `register`: the definition its value came from.
+pub(crate) fn definition_before(unit: &super::super::lane_unit::Unit, pc: usize, register: Register) -> Option<usize> {
+    (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|written| written == register))
+}
+
 /// The calls of `unit` that run inline, by PC: a call's callee register was defined by a field
 /// read that was a native function when the body was compiled (`GlobalRead::NativeMember`: a
 /// member of a Stable global, or a method of the string or array prototype; `GlobalRead::NativeSlot`: a
@@ -184,8 +167,7 @@ pub(crate) fn intrinsic_calls(unit: &super::super::lane_unit::Unit, global_reads
         && !direct(*pc) && !instruction.returns_from_frame()
         && !instruction.direct_eval() && !instruction.parameter_eval() && instruction.result_flags() == 0)
         .and_then(|(pc, instruction)| {
-            let callee = instruction.register_b();
-            let defined = (0..pc).rev().find(|at| unit.instructions[*at].written_registers().any(|register| register == callee))?;
+            let defined = definition_before(unit, pc, instruction.register_b())?;
             let (value, native, holder) = match global_reads.get(&defined)? {
                 GlobalRead::NativeMember { value, native, holder, .. } | GlobalRead::NativeSlot { value, native, holder, .. } => (*value, *native, *holder),
                 _ => return None,
@@ -203,6 +185,8 @@ impl Lowering<'_, '_> {
     /// dense array). False where the call is not one.
     pub(crate) fn intrinsic_call(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         let Some(&Some((callee, inline, holder))) = self.intrinsics.get(pc) else { return false };
+        // The power leaf's address is no image's to embed where its helpers are not named by symbol (`remainder`).
+        if matches!(inline, Inline::Math(MathCall::Power)) && self.helpers.links() && !self.helpers.names_symbols() { return false; }
         // A scalar native whose callee identity and arguments the loop's entry proved (`hoist_scalar_calls`): the call's
         // value is the one the entry computed, its callee being the same function on each iteration.
         if let Some(hoisted) = self.scalar_values.get(&pc).copied() && hoisted.fixed {
@@ -229,8 +213,12 @@ impl Lowering<'_, '_> {
         // An in-place native's or lookup's helper checks its callee itself, so a name several prototypes hold (`has`) takes each.
         if !matches!(inline, Inline::InPlace | Inline::Lookup) {
             self.hold_holder_any(state, exit, holder);
-            let same = self.is_identity(held, callee);
-            emit_js_guard(&mut self.builder, same, exit);
+            // The callee the solve proves is the builtin this call names (`named_builtin`) is no compare of its identity here.
+            let named = definition_before(self.unit, pc, instruction.register_b()).and_then(|defined| self.named_builtin(defined));
+            if !named.is_some_and(|expected| self.proves_builtin(pc, instruction.register_b(), expected)) {
+                let same = self.is_identity(held, callee);
+                emit_js_guard(&mut self.builder, same, exit);
+            }
         }
         match inline {
             Inline::Builtin(builtin) => self.builtin_call(state, pc, instruction, builtin, exit),
@@ -365,8 +353,11 @@ impl Lowering<'_, '_> {
         let exit = self.guard_exit_for(state, header as u32, ExitFact::Callee);
         self.hold_holder_any(state, exit, holder);
         let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
-        let same = self.is_identity(entry, identity);
-        emit_js_guard(&mut self.builder, same, exit);
+        // A fixed callee the solve proves is the builtin it names (`named_builtin`) is no compare of its identity.
+        if !(fixed && self.named_builtin(defined).is_some_and(|expected| self.proves_builtin(pc, callee, expected))) {
+            let same = self.is_identity(entry, identity);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         let mut values = Vec::with_capacity(usize::from(argc));
         for argument in arguments {
             values.push(match argument {

@@ -18,6 +18,7 @@ use quench_runtime::vm::activation::{FrameRecord, SuspendKind};
 use quench_runtime::vm::error::FrameSite;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneSites;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The source pc of the frame an activation's caller becomes, paused at the call of `above`
 /// (`ActivationView::caller_pc`): `resume_caller_frame` resumes it at `caller_resume`'s pc, after the call
@@ -98,12 +99,8 @@ impl Vm {
         let window = Registers(activation.window_ptr());
         let (this, env) = (window.this(), window.env());
         if script.completion == Completion::Forwarder {
-            // The construction's skipped forwarding constructor, pending at its forwarding call:
-            // its descriptor's for a native frame (`NativeFrames`), else its side record's.
-            let record = activation.record();
-            // SAFETY: a native frame's callee outlives the run.
-            let forwarder = unsafe { record.callee.as_ref() }
-                .map_or_else(|| activation.payload().forwarder(), |callee| callee.forwarder)?;
+            // The construction's skipped forwarding constructor, pending at its forwarding call: its side record's.
+            let forwarder = activation.payload().forwarder()?;
             let forwarder_pc = forwarder.method.call_pc as usize;
             sites.push(FrameSite {
                 program,

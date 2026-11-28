@@ -3,7 +3,7 @@
 
 extern crate test;
 
-use super::{OBJECT_RECORD_CAPACITY, OCCUPANCY_WORD_BITS, PromotionAge, RecordSpace, TEST_RECORD_CAPACITY};
+use super::{OCCUPANCY_WORD_BITS, PromotionAge, RecordSpace, TEST_RECORD_CAPACITY};
 use crate::heap::{ArrayElements, ArrayObject, Heap, Object};
 use crate::value::Value;
 use std::hint::black_box;
@@ -17,15 +17,6 @@ fn empty_object() -> Object {
 
 fn shared_array(elements: &ArrayElements) -> ArrayObject {
     ArrayObject::new(empty_object(), black_box(elements).clone())
-}
-
-#[bench]
-fn primitive_record_object_construct_batch(b: &mut Bencher) {
-    b.iter(|| {
-        for _ in 0..BATCH_RECORDS {
-            black_box(empty_object());
-        }
-    });
 }
 
 #[bench]
@@ -47,22 +38,6 @@ fn clone_drop<T: Clone>(b: &mut Bencher, source: &T) {
             drop(black_box(black_box(source).clone()));
         }
     });
-}
-
-#[bench]
-fn primitive_record_object_clone_drop_batch(b: &mut Bencher) {
-    let source = empty_object();
-    assert_eq!(source.allocated_extra_bytes(), 0);
-    clone_drop(b, &source);
-}
-
-#[bench]
-fn primitive_record_object_extras_clone_drop_batch(b: &mut Bencher) {
-    let mut source = empty_object();
-    source.set_arguments_object();
-    assert!(source.allocated_extra_bytes() > 0);
-    clone_drop(b, &source);
-    assert!(source.is_arguments_object());
 }
 
 #[bench]
@@ -92,11 +67,6 @@ fn recycle<T: std::fmt::Debug>(b: &mut Bencher, mut make: impl FnMut() -> T) {
 }
 
 #[bench]
-fn primitive_record_object_recycle_batch(b: &mut Bencher) {
-    recycle(b, empty_object);
-}
-
-#[bench]
 fn primitive_record_array_shared_recycle_batch(b: &mut Bencher) {
     let elements = ArrayElements::from_fn(BATCH_RECORDS, |index| Value::integer(index as i32));
     recycle(b, || shared_array(&elements));
@@ -113,20 +83,6 @@ fn primitive_record_array_owned_recycle_batch(b: &mut Bencher) {
             ArrayElements::from_fn(black_box(BATCH_RECORDS), |index| Value::integer(index as i32)),
         )
     });
-}
-
-#[bench]
-fn primitive_record_object_mark_sweep_live_batch(b: &mut Bencher) {
-    let mut records: RecordSpace<Object, OBJECT_RECORD_CAPACITY> = RecordSpace::default();
-    let ids: [_; BATCH_RECORDS] = std::array::from_fn(|_| records.try_insert(empty_object()).unwrap());
-    b.iter(|| {
-        black_box(&mut records).clear_marks();
-        for id in ids {
-            black_box(black_box(&mut records).mark(black_box(id)));
-        }
-        black_box(black_box(&mut records).sweep(true, PromotionAge::First, false, |_| {}));
-    });
-    assert_eq!(records.live_count(), BATCH_RECORDS);
 }
 
 #[bench]

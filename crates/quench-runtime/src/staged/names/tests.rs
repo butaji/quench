@@ -1,10 +1,14 @@
 //! The name, environment and iteration rows on the interpreter's stage (`Concrete`).
+#[allow(unused_imports)] use crate::staged::OperationNamesExt;
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::heap::EnvironmentSlots;
 use crate::typed_ir::Type;
 use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
 use crate::Value;
 use crate::staged::Operation as Row;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A register file whose callouts record what they are asked, or decline when `declines`.
 #[derive(Default)]
@@ -105,8 +109,8 @@ impl PropertyFrame<Concrete> for Probe {
 impl crate::staged::CallFrame<Concrete> for Probe {}
 
 impl NumericFrame<Concrete> for Probe {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numeric row") }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numeric row") }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!("no numeric row") }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { unreachable!("no numeric row") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn int_fact(&self) {}
@@ -114,7 +118,7 @@ impl NumericFrame<Concrete> for Probe {
 }
 
 fn run(frame: &mut Probe, operation: Row<u64, ()>) -> Step<u64, Edge> {
-    step(&mut Concrete::new(std::ptr::null()), frame, operation)
+    step(&mut Concrete::pure(), frame, operation)
 }
 
 #[test]

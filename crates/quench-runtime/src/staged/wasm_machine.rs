@@ -17,6 +17,9 @@ use crate::wasm::memory::MemoryStorage;
 use crate::wasm::memory::checked_range;
 use crate::wasm::V128_BYTES;
 use crate::Value;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A stage over a linear memory's bytes, which it reads.
 pub(crate) struct ConcreteBytes<'a> {
@@ -24,6 +27,7 @@ pub(crate) struct ConcreteBytes<'a> {
 }
 
 /// A stage over a linear memory's bytes, which it reads and writes.
+#[quench_macros::test_visible]
 pub(crate) struct ConcreteMemory<'a> {
     pub(crate) memory: &'a mut [u8],
 }

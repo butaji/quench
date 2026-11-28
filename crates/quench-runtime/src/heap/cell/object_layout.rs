@@ -8,8 +8,8 @@ use super::*;
 
 impl Object {
     /// The record's two stored words, `(payload, layout)`, as they are written. A fresh empty
-    /// object's pair depends only on its prototype, so generated allocation copies it
-    /// (`JsStepDispatch::empty_object_layout`).
+    /// array's pair depends only on its prototype, so generated allocation copies it
+    /// (`JsStepDispatch::empty_array_layout`).
     pub fn stored_words(&self) -> (u64, u32) {
         (self.head.payload, self.head.layout)
     }
@@ -53,6 +53,27 @@ impl Object {
         }
     }
 
+    /// The object a live class cell presents to its readers: a record whose layout is the cell's class and
+    /// whose payload is zero. A live cell holds no extras and no arena run,
+    /// so every class fact it has is in its class word.
+    #[inline(always)]
+    pub(crate) fn of_class(class: u32) -> Self {
+        Self { head: crate::staged::record_heads::ObjectHead { payload: 0, layout: class } }
+    }
+
+    /// Makes `class` (a class id of `heap::layouts`) this object's class: its header word, with the
+    /// prototype link, shape and flags the class holds. The storage form stays the object's own
+    /// (`STORAGE_FORM`), which a class word does not record, and the class's capacity region (`CLASS_REGION_MASK`)
+    /// is not the record's: a record's auxiliary word has none. This is the one writer of a record's
+    /// class id outside construction.
+    #[inline(always)]
+    pub(crate) fn set_class(&mut self, class: u32) {
+        let word = super::layouts::word(class);
+        let storage = self.aux() & crate::value_vec::STORAGE_FORM;
+        let class_bits = !(crate::value_vec::STORAGE_FORM | super::layouts::CLASS_REGION_MASK);
+        self.set_header((word >> u32::BITS) as u32, (word as u32 & class_bits) | storage);
+    }
+
     #[inline(always)]
     pub(super) fn set_meta(&mut self, meta: u32) {
         let auxiliary = self.aux();
@@ -83,7 +104,8 @@ impl Object {
     #[inline(always)]
     pub(super) fn encode_proto(proto: Value) -> u32 {
         match proto.direct_object_index() {
-            Some(id) if (id as usize) < OBJECT_PROTO_WINDOW => PROTO_OBJECT_RECORD_BASE + id,
+            // An object's link carries its stub granule, the bits of its direct `Value`.
+            Some(object) if (object.granule() as usize) < OBJECT_PROTO_WINDOW => PROTO_OBJECT_RECORD_BASE + object.granule(),
             _ => Self::encode_other_proto(proto),
         }
     }
@@ -140,7 +162,6 @@ impl Object {
     }
 
     pub fn set_proto(&mut self, proto: Value) {
-        self.note_constant_write();
         self.note_prototype_layout_change();
         self.set_meta((self.meta() & !PROTO_INDEX_BITS) | Self::encode_proto(proto));
     }
@@ -184,13 +205,13 @@ impl Object {
 
     /// This prototype's subject in its heap's dependency table (`Heap::mark_prototype`).
     pub(crate) fn watch_as(&mut self, watch: super::dependencies::Watch) {
-        self.extras_mut().watch = watch;
+        self.extras_mut().set_watch(watch);
     }
 
     #[quench_macros::test_visible]
     /// This watched prototype's subject, if a heap's dependency table gave it one.
     pub(crate) fn watched_subject(&self) -> Option<u32> {
-        self.extras().and_then(|extras| extras.watch.subject())
+        self.extras().and_then(ObjectExtras::watched_subject)
     }
 
     /// Whether this object is an array's, which keeps named properties in the arena.
@@ -222,11 +243,8 @@ impl Object {
     #[inline(always)] pub(super) fn initialize_properties(&mut self, properties: ValueVec) {
         let (start, auxiliary) = properties.into_parts();
         // Exotic access is a fact of the object, not of the storage that replaces its own.
-        // A storage change ends the object's constancy (`note_constant_write`): its readers
-        // retire here, and the new word carries no mark.
-        self.note_constant_write();
         let (meta, current) = (self.meta(), self.aux());
-        let auxiliary = (auxiliary & !crate::value_vec::CONSTANT_FORM) | (current & crate::value_vec::EXOTIC_ACCESS);
+        let auxiliary = auxiliary | (current & crate::value_vec::EXOTIC_ACCESS);
         let flags = meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
         let position = start & VALUE_VEC_START_BITS;
         if properties.has_inline_property_storage() {

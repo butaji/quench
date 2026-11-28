@@ -10,12 +10,125 @@ use crate::{Value, ValueType};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TypeKind {
     Language(u16),
+    /// A Number that is never NaN and has no integer range: the NaN-free refinement of `NUMBER`.
+    /// The NaN bit lives here and nowhere else. A Number that may be NaN is `Language(Number)`
+    /// (`NUMBER`) and an integer range is never NaN (`Int`), so equal types keep equal
+    /// representations and the solve's fixpoint compares them by `==`.
+    NotNaN,
     Int(IntRange),
     DirectObjectFamily,
     NullableDirectObjectFamily(u16),
     DirectObjectShape { shape: u32, nullish: u16 },
     FunctionIdentity(Value),
     FunctionBody(u32),
+    /// A string refined by its interned atoms, its length and whether it is flat (`StringFact`). Never the full range with
+    /// no atom and not flat: that is `Language(String)`, so equal types keep equal representations.
+    String(StringFact),
+}
+
+/// The most interned atoms a string fact names. A value that may be one of more atoms than this is any string of its
+/// length range (`StringFact::join`), so the lattice stays finite and a fixpoint over concatenations terminates.
+pub const MAX_STRING_ATOMS: usize = 4;
+
+/// The UTF-16 length range of a string, inclusive: `FULL` is any length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StringLength {
+    pub min: u32,
+    pub max: u32,
+}
+
+impl StringLength {
+    pub const FULL: Self = Self { min: 0, max: u32::MAX };
+
+    /// The hull of two length ranges.
+    pub fn join(self, other: Self) -> Self {
+        Self { min: self.min.min(other.min), max: self.max.max(other.max) }
+    }
+}
+
+/// A string value's fact: the program atoms it may be, the range of its length, and whether it is flat. An atom is an
+/// interned string, so two values that are both one atom are the same string object, and `===` between such values is a
+/// pointer compare. `count == 0` names no atom: the value is any string of `length`. Atoms are sorted and distinct.
+///
+/// `flat` is a lattice component of its own: a value that is flat is held as its units, not as a rope of parts, at every
+/// point it is read. It joins by AND, so its bottom is `true` (the identity of AND; no string has a bottom of its own) and
+/// its top is `false`. A string proven flat where it is made (a literal, a character or a slice) stays flat in every join
+/// that keeps it; a string of unknown form is not flat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StringFact {
+    atoms: [u32; MAX_STRING_ATOMS],
+    count: u8,
+    length: StringLength,
+    flat: bool,
+}
+
+impl StringFact {
+    /// Any string: `Type::language(String)`. Not flat: the top of the flat component.
+    pub const ANY: Self = Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length: StringLength::FULL, flat: false };
+
+    /// The fact of a string that is one of `atoms` (sorted and deduplicated here), of length `length`, flat or not. More
+    /// atoms than `MAX_STRING_ATOMS` name none: the fact is any string of that length, with the same flatness.
+    fn new(atoms: &[u32], length: StringLength, flat: bool) -> Self {
+        let mut ids = [0u32; MAX_STRING_ATOMS];
+        let mut count = 0usize;
+        for &atom in atoms {
+            if ids[..count].contains(&atom) { continue; }
+            if count == MAX_STRING_ATOMS { return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length, flat }; }
+            ids[count] = atom;
+            count += 1;
+        }
+        ids[..count].sort_unstable();
+        Self { atoms: ids, count: count as u8, length, flat }
+    }
+
+    /// Whether the string is flat at every point it is read: its units are held in one run, never as the halves of a rope.
+    pub fn flat(&self) -> bool {
+        self.flat
+    }
+
+    /// The atoms the string may be, sorted; empty where it names none.
+    pub fn atoms(&self) -> &[u32] {
+        &self.atoms[..usize::from(self.count)]
+    }
+
+    /// The one atom the string is, where its set holds exactly one.
+    pub fn atom(&self) -> Option<u32> {
+        (self.count == 1).then_some(self.atoms[0])
+    }
+
+    /// The range of the string's UTF-16 length.
+    pub fn length(&self) -> StringLength {
+        self.length
+    }
+
+    /// The hull of two facts: the union of their atoms where both name atoms and the union fits `MAX_STRING_ATOMS`, else
+    /// no atom; the hull of their lengths; flat only where both are (AND).
+    pub fn join(self, other: Self) -> Self {
+        let length = self.length.join(other.length);
+        let flat = self.flat && other.flat;
+        if self.count == 0 || other.count == 0 {
+            return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length, flat };
+        }
+        // Both sides hold at most `MAX_STRING_ATOMS` each: a fixed buffer, no allocation (the stencils are `no_std`).
+        let mut atoms = [0u32; 2 * MAX_STRING_ATOMS];
+        let mut count = 0;
+        for &atom in self.atoms().iter().chain(other.atoms()) {
+            atoms[count] = atom;
+            count += 1;
+        }
+        Self::new(&atoms[..count], length, flat)
+    }
+
+    /// `join`, where a bound that `self` did not reach jumps to the length's own bound (0 or `u32::MAX`), so a loop that
+    /// grows a string (`s += "x"`) reaches a fixed length range in finitely many joins.
+    pub fn widen(self, next: Self) -> Self {
+        let joined = self.join(next);
+        let length = StringLength {
+            min: if joined.length.min < self.length.min { 0 } else { joined.length.min },
+            max: if joined.length.max > self.length.max { u32::MAX } else { joined.length.max },
+        };
+        Self { length, ..joined }
+    }
 }
 
 /// Every language type: the set `Type::ANY` holds, and the declared set of a type with no
@@ -81,7 +194,11 @@ impl Type {
     pub const IMMEDIATE: Self = Self(TypeKind::Language(
         Languages::of(ValueType::Number).union(Languages::of(ValueType::Boolean))
             .union(Languages::of(ValueType::Null)).union(Languages::of(ValueType::Undefined)).bits()));
+    /// A Number that may be NaN: every Number the language holds, and the top of the Number part.
     pub const NUMBER: Self = Self::language(ValueType::Number);
+    /// A Number that is never NaN (its infinities allowed). A Float64 holds it like any Number, and a
+    /// `Comparison` or `Math` over it needs no NaN case. Integers (`INT32`, `int`) are never NaN too.
+    pub const NOT_NAN_NUMBER: Self = Self(TypeKind::NotNaN);
     /// `undefined`, what `Type::immediate(Value::UNDEFINED)` is, as a constant the stencil build can name.
     pub(crate) const UNDEFINED: Self = Self::language(ValueType::Undefined);
     /// The integers of the whole int32 span, the widest range an int32-represented value holds.
@@ -112,11 +229,39 @@ impl Type {
     pub(super) const fn kinds(self) -> u16 {
         match self.0 {
             TypeKind::Language(kinds) => kinds,
-            TypeKind::Int(_) => language_bit(ValueType::Number),
+            TypeKind::NotNaN | TypeKind::Int(_) => language_bit(ValueType::Number),
             TypeKind::DirectObjectFamily => language_bit(ValueType::Object),
             TypeKind::DirectObjectShape { nullish, .. } => language_bit(ValueType::Object) | nullish,
             TypeKind::NullableDirectObjectFamily(nullish) => language_bit(ValueType::Object) | nullish,
             TypeKind::FunctionIdentity(_) | TypeKind::FunctionBody(_) => language_bit(ValueType::Function),
+            TypeKind::String(_) => language_bit(ValueType::String),
+        }
+    }
+
+    /// A string that is one of the interned `atoms` (none: any string), whose UTF-16 length lies in `min..=max`, `flat` where
+    /// it is held as one run of units. The caller gives the hull of the atoms' lengths. More than `MAX_STRING_ATOMS` atoms,
+    /// or none, is any string of that length.
+    pub fn string_atoms(atoms: &[u32], min: u32, max: u32, flat: bool) -> Self {
+        Self::from_string(StringFact::new(atoms, StringLength { min, max }, flat))
+    }
+
+    /// A string of any content whose UTF-16 length lies in `min..=max`, `flat` where it is held as one run of units.
+    pub fn string_length(min: u32, max: u32, flat: bool) -> Self {
+        Self::string_atoms(&[], min, max, flat)
+    }
+
+    /// A string as its fact, normalized: the full range with no atom and not flat is `language(String)`, never `String`.
+    pub(super) fn from_string(fact: StringFact) -> Self {
+        if fact == StringFact::ANY { Self::language(ValueType::String) } else { Self(TypeKind::String(fact)) }
+    }
+
+    /// The string fact of a type all of whose language types are strings: a refined string, or any string. `None` for
+    /// a type that may hold anything else, and for `NEVER`.
+    pub fn string_fact(self) -> Option<StringFact> {
+        match self.0 {
+            TypeKind::String(fact) => Some(fact),
+            TypeKind::Language(kinds) if kinds == language_bit(ValueType::String) => Some(StringFact::ANY),
+            _ => None,
         }
     }
 
@@ -139,6 +284,33 @@ impl Type {
     #[inline(always)]
     pub(crate) const fn language_union(self, other: Self) -> Self {
         Self::languages(self.kinds() | other.kinds())
+    }
+
+    /// Whether a value of this type may be of one of `other`'s language types: false where the two
+    /// share none, so a test for `other`'s types is decided false by the fact (`staged::value::decided`).
+    #[inline(always)]
+    pub const fn may_be_languages(self, other: Self) -> bool {
+        self.kinds() & other.kinds() != 0
+    }
+
+    /// Whether every value of this type is an int32 (`Representation::Int32` words, `TypeKind::Int`).
+    #[inline(always)]
+    pub const fn is_int(self) -> bool {
+        matches!(self.0, TypeKind::Int(_))
+    }
+
+    /// Whether a value of this type may be NaN. Integer ranges and `NOT_NAN_NUMBER` never are; any other
+    /// type holding a Number may be. The NaN bit is the Number part's only refinement by NaN, so a type
+    /// without a Number alternative (`Boolean`, a direct object) is not NaN, and `NEVER` holds none.
+    #[inline(always)]
+    pub const fn may_be_nan(self) -> bool {
+        !matches!(self.0, TypeKind::Int(_) | TypeKind::NotNaN) && self.kinds() & language_bit(ValueType::Number) != 0
+    }
+
+    /// Whether every value of this type is of one of `other`'s language types (`within_languages`, public).
+    #[inline(always)]
+    pub const fn only_languages(self, other: Self) -> bool {
+        self.within_languages(other)
     }
 
     #[inline(always)]
@@ -183,6 +355,24 @@ impl Type {
         }
     }
 
+    /// The value of this type with `null` and `undefined` removed: what an edge proving the value is not
+    /// nullish carries (a truthy test, a loose `!=` against `null`). A nullable direct object is a direct
+    /// object there, and a shape keeps its record without its nullish alternatives.
+    pub fn not_nullish(self) -> Self {
+        match self.0 {
+            TypeKind::Language(kinds) => Self::languages(kinds & !Self::NULLISH.kinds()),
+            TypeKind::NullableDirectObjectFamily(_) => Self::DIRECT_OBJECT_FAMILY,
+            TypeKind::DirectObjectShape { shape, .. } => Self::direct_object(shape),
+            _ => self,
+        }
+    }
+
+    /// `self` met with `Type::NULLISH`: the nullish alternatives of this type, what an edge proving the
+    /// value is `null` or `undefined` carries. A type with no nullish alternative meets to `Type::NEVER`.
+    pub fn nullish_part(self) -> Self {
+        Self::languages(self.kinds() & Self::NULLISH.kinds())
+    }
+
     /// Whether nothing narrower than a Number is known: what an int32 contract of a loop may narrow.
     pub fn is_any_or_number(self) -> bool { matches!(self, Self::ANY | Self::NUMBER) }
 
@@ -223,6 +413,9 @@ impl Type {
             return if kinds == 0 { Self::DIRECT_OBJECT_FAMILY }
                 else { Self(TypeKind::NullableDirectObjectFamily(kinds)) };
         }
+        if let (Some(left), Some(right)) = (self.string_fact(), other.string_fact()) {
+            return Self::from_string(left.join(right));
+        }
         Self(TypeKind::Language(self.kinds() | other.kinds()))
     }
 
@@ -237,6 +430,7 @@ impl Type {
     fn same(self, other: Self) -> bool {
         match (self.0, other.0) {
             (TypeKind::Language(left), TypeKind::Language(right)) => left == right,
+            (TypeKind::NotNaN, TypeKind::NotNaN) => true,
             (TypeKind::Int(left), TypeKind::Int(right)) => left == right,
             (TypeKind::DirectObjectFamily, TypeKind::DirectObjectFamily) => true,
             (TypeKind::NullableDirectObjectFamily(left), TypeKind::NullableDirectObjectFamily(right)) => left == right,
@@ -244,6 +438,7 @@ impl Type {
                 shape == other_shape && nullish == other_nullish,
             (TypeKind::FunctionIdentity(left), TypeKind::FunctionIdentity(right)) => left == right,
             (TypeKind::FunctionBody(left), TypeKind::FunctionBody(right)) => left == right,
+            (TypeKind::String(left), TypeKind::String(right)) => left == right,
             _ => false,
         }
     }
@@ -254,6 +449,8 @@ impl Type {
         if self.is_any() { return expected.is_any(); }
         self.same(Self::NEVER) || self.same(expected)
             || matches!((self.0, expected.0), (TypeKind::Int(known), TypeKind::Int(allowed)) if allowed.contains(known))
+            // An integer is a Number that is never NaN, so it is a subtype of the NaN-free Number.
+            || (expected.same(Self::NOT_NAN_NUMBER) && (self.is_int() || self.same(Self::NOT_NAN_NUMBER)))
             || matches!(expected.0, TypeKind::DirectObjectShape { shape, nullish }
                 if matches!(self.0, TypeKind::DirectObjectShape { shape: actual, nullish: alternatives }
                     if actual == shape && alternatives & !nullish == 0)
@@ -263,5 +460,6 @@ impl Type {
                 if self.direct_family_nullish().is_some_and(|actual| actual & !nullish == 0)
                     || matches!(self.0, TypeKind::Language(kinds) if kinds & !nullish == 0))
             || matches!(expected.0, TypeKind::Language(kinds) if self.kinds() & !kinds == 0)
+            || matches!((self.string_fact(), expected.string_fact()), (Some(known), Some(allowed)) if known.join(allowed) == allowed)
     }
 }
