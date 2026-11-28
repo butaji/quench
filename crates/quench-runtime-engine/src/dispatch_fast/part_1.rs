@@ -99,8 +99,6 @@ pub(crate) const fn runtime_base(site: u8) -> bool {
     site == HELD_OTHER_THIS || site == INHERITED_OTHER_THIS || entry_site(site)
 }
 
-pub(crate) const fn own_constant_site(site: u8) -> bool { site == OWN_CONSTANT_REGISTER }
-
 pub(crate) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE || site == STRING_LENGTH_SITE }
 
 pub(crate) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE || site == GEOMETRY_SITE }
@@ -222,10 +220,6 @@ pub(crate) const fn private_field_site(site: u8) -> bool {
     site == PRIVATE_FIELD_THIS || site == PRIVATE_FIELD_REGISTER
 }
 
-pub(crate) const fn cached_field_site(site: u8) -> bool {
-    site == CACHED_FIELD_THIS || site == CACHED_FIELD_REGISTER
-}
-
 pub(crate) const fn returning_site(this: bool, leaf: u8) -> u8 { own_site(this, RETURNING_FORM) + 2 * leaf }
 
 pub(crate) const fn returning_field_site(site: u8) -> bool { site >= RETURNING_BASE }
@@ -243,11 +237,6 @@ pub(super) fn returning_own_row(handler: *const ()) -> bool {
 /// Whether site `site` is a trusted own-field read of a fixed class's cell (`TRUSTED_OWN_*`, `TRUSTED_RUN_*`).
 pub(crate) const fn trusted_site(site: u8) -> bool {
     site == TRUSTED_OWN_THIS || site == TRUSTED_OWN_REGISTER || site == TRUSTED_RUN_THIS || site == TRUSTED_RUN_REGISTER
-}
-
-pub(crate) const fn cell_own_site(site: u8) -> bool {
-    site == CELL_OWN_THIS || site == CELL_OWN_REGISTER || site == CELL_RUN_THIS || site == CELL_RUN_REGISTER
-        || site == CELL_EXTRAS_THIS || site == CELL_EXTRAS_REGISTER
 }
 
 /// Whether site `site` reads through the record's inherited hint; of any receiver (`other`).
