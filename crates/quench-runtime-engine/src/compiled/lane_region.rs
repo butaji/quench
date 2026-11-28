@@ -54,12 +54,12 @@ pub(crate) mod global_reads;
 #[path = "lane_region/native_calls.rs"] pub(crate) mod native_calls;
 #[path = "lane_region/builtin_calls.rs"] pub(crate) mod builtin_calls;
 #[path = "lane_region/data_view_calls.rs"] pub(crate) mod data_view_calls;
-pub(crate) use native_calls::{inlines_in_loop_call, native_method_call, IN_PLACE_CALL, LOOKUPS};
+pub(crate) use native_calls::{IN_PLACE_CALL, LOOKUPS};
 #[path = "lane_region/stable.rs"]
 pub(crate) mod stable;
 #[path = "lane_region/polls.rs"]
 pub(crate) mod polls;
-mod receiver_records;
+#[path = "lane_region/receiver_records.rs"] mod receiver_records;
 #[path = "lane_region/scalar.rs"] pub(crate) mod scalar;
 #[path = "lane_region/trips.rs"] pub(crate) mod trips;
 #[path = "lane_region/function_names.rs"] pub(crate) mod function_names;
@@ -143,7 +143,7 @@ use polls::specialize_closed_polls;
 use polls::retain_closed_polls;
 pub(crate) use stable::StableFacts;
 use quench_runtime::typed_ir::IntRange;
-use quench_runtime::staged::machine::{Binary, Extend, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use quench_runtime::staged::machine::{Binary, Extend, Lane, Relation, Unary};
 use super::emit_machine::Builds;
 
 /// The call context, step dispatch and result words a lane body or trampoline reads and writes.
@@ -170,10 +170,10 @@ mod numeric_gate;
 pub(crate) use numeric_gate::*;
 #[path = "lane_region/move_analysis.rs"]
 mod move_analysis;
-pub(crate) use move_analysis::*;
+use move_analysis::*;
 #[path = "lane_region/loop_invariants.rs"]
 mod loop_invariants;
-pub(crate) use loop_invariants::*;
+use loop_invariants::*;
 #[path = "lane_region/region_plan.rs"]
 mod region_plan;
 pub(crate) use region_plan::*;
