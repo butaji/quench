@@ -134,6 +134,11 @@ libc = "0.2"
 
 # The AOT facts solver's closed-world tests: they reach the solver's items through `test-support`.
 [[test]]
+name = "staged_decoding"
+path = "tests/staged_decoding.rs"
+required-features = ["test-support"]
+
+[[test]]
 name = "aot_facts"
 path = "tests/aot_facts.rs"
 required-features = ["test-support"]

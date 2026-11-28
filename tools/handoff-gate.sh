@@ -3,7 +3,7 @@
 # (TOD-2445 4-hour review rules 3-7, 2026-11-28). Any FAIL line blocks the merge. The last
 # line is the verdict; the exit status is 1 when any gate failed.
 #   G5 type pass: cargo check of every layer crate; integ stays at 0 type errors.
-#   G4 opcode round trip (staged::tests::decoding) passes, and the solver test count
+#   G4 opcode round trip (tests/staged_decoding) passes, and the solver test count
 #      (tests/aot_facts) is reported and may not drop below tools/gate-baseline.txt.
 #   G3 one.js and richards run in no-jit, default and AOT (a compiled image): any panic,
 #      non-zero exit or wrong output blocks.
@@ -31,8 +31,8 @@ else
 fi
 
 # G4: the opcode round trip, then the solver test count against the baseline.
-if cargo test -q -p quench-runtime --features test-support --lib staged::tests::decoding > "$WORK/decoding.log" 2>&1; then
-  pass "G4 opcode round trip (staged::tests::decoding)"
+if cargo test -q -p quench-runtime --features test-support --test staged_decoding > "$WORK/decoding.log" 2>&1; then
+  pass "G4 opcode round trip (tests/staged_decoding)"
 else
   fail "G4 opcode round trip (see $WORK/decoding.log)"
 fi
