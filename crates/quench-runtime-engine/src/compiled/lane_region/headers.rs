@@ -144,7 +144,7 @@ pub(crate) fn prove_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut 
 pub(crate) fn note_header_shape(builder: &mut FunctionBuilder<'_>, state: &mut State, word: ir::Value,
     (expected, fact): (u32, ShapeFact)) {
     if let Some((_, proof, _)) = state.proofs.headers.iter_mut().find(|(known, ..)| *known == word) {
-        proof.shape = emit(builder).raw_const(Lane::I32, i64::from(expected));
+        proof.shape = Some(emit(builder).raw_const(Lane::I32, i64::from(expected)));
         proof.shape_fact = Some(fact);
     }
 }

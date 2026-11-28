@@ -2,15 +2,16 @@
 //! cell of its union layout from birth, so the receiver's cell is its direct reference's granule (`ObjectRecord::FixedCell`),
 //! and union slot `k` is the cell's field at `fields_offset + field_size * k`. No record presence, departed, class or shape
 //! test is made: the class is the fact. A slot of an absent field holds `DELETED`, which a read answers by the union's
-//! `FieldDefault`. A store writes its slot in place, since the union's domain admits every store of the field.
+//! `FieldDefault`. A store writes its slot in place, since the union's domain admits every store of the field; a tagged store
+//! first passes the class space's barrier (`Stage::store_gate`), keyed by the cell's granule.
 
 use super::*;
-use super::super::object_slots::{emit, ObjectRecord};
+use super::super::object_slots::{emit, Emit, ObjectRecord};
 use quench_runtime::bytecode::{Atom, Register};
 use quench_runtime::compile::aot_facts::{AotFacts, FieldDefault, UnionField};
 use quench_runtime::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
-use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineScalar, Relation, Unary};
-use quench_runtime::value::ValueLayout;
+use quench_runtime::staged::machine::{Lane, MachineAccess, MachineScalar, Relation, Unary};
+use quench_runtime::staged::{Receiver, StagedRecordSpace};
 use quench_runtime::Value;
 
 /// Union slot `slot` of the instances of a fixed class, as its displacement from the class cell's address.
@@ -39,9 +40,41 @@ fn union_field(facts: &AotFacts, class: u32, atom: Atom) -> Option<(usize, Union
     layout.fields.iter().enumerate().find(|(_, (name, _))| *name == atom).map(|(slot, (_, field))| (slot, *field))
 }
 
+/// The class cell the entry proved of the receiver `owner` (None for `this`), where `invariant_field_records` proved its
+/// owner a fixed class's cell. The entry's record of `this` is its last (the registers' records come first).
+pub(crate) fn entry_fixed_record(entry: &Entry, owner: Option<Register>) -> Option<ObjectRecord> {
+    let index = match owner {
+        Some(register) => usize::from(register),
+        None => entry.records.len().checked_sub(1)?,
+    };
+    match entry.records.get(index)? {
+        Some(record @ ObjectRecord::FixedCell { .. }) => Some(*record),
+        _ => None,
+    }
+}
+
 impl Lowering<'_, '_> {
-    /// The receiver `owner` (None for `this`) as its class cell (`ObjectRecord::prove_fixed`). No test is made.
+    /// Whether the entry proved the receiver `owner` (None for `this`) a fixed class's cell (`entry_fixed_record`). Its record
+    /// then has no shape, storage form or presence to test, so no shape guard is made of it (`hoist_receivers`, `conform_object`).
+    pub(crate) fn entry_fixed(&self, owner: Option<Register>) -> bool {
+        self.entry.as_ref().is_some_and(|entry| entry_fixed_record(entry, owner).is_some())
+    }
+
+    /// The fixed class `receiver` holds just before unit PC `pc` (`fixed_class`), for a register or `this`.
+    pub(crate) fn fixed_receiver_class(&self, pc: usize, receiver: Receiver) -> Option<u32> {
+        match receiver {
+            Receiver::Register(register) => self.fixed_class(pc, Some(register)),
+            Receiver::This { path: None } => self.fixed_class(pc, None),
+            _ => None,
+        }
+    }
+
+    /// The receiver `owner` (None for `this`) as its class cell: the entry's cell where it proved one (`entry_fixed_record`),
+    /// else the cell of the owner's word (`ObjectRecord::prove_fixed`). No test is made.
     fn fixed_cell(&mut self, state: &mut State, owner: Option<Register>) -> Option<ObjectRecord> {
+        if let Some(record) = self.entry.as_ref().and_then(|entry| entry_fixed_record(entry, owner)) {
+            return Some(record);
+        }
         let bits = match owner {
             Some(register) => self.tagged(state, register),
             None => {
@@ -49,8 +82,13 @@ impl Lowering<'_, '_> {
                 headers::this_word(&mut self.builder, this)
             }
         };
+        Some(self.fixed_record(bits))
+    }
+
+    /// The class cell of the direct object reference `bits` (`ObjectRecord::prove_fixed`), with no test.
+    pub(crate) fn fixed_record(&mut self, bits: ir::Value) -> ObjectRecord {
         let class_base = headers::class_table_base(&mut self.builder, self.payload);
-        Some(ObjectRecord::prove_fixed(&mut self.builder, bits, class_base))
+        ObjectRecord::prove_fixed(&mut self.builder, bits, class_base)
     }
 
     /// The fixed class and the union field `atom` of the receiver `owner` at unit PC `pc` (`tag_proofs::fixed_class`).
@@ -95,6 +133,21 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// The word of union field `atom` of the fixed receiver `owner` (None for `this`) at unit PC `pc`, read on a loop's
+    /// entering edge (`loop_hoists`) from the receiver's cell: the slot's tagged word and its type, which an absent field
+    /// joins with `undefined`. A Number slot's raw bits are its tagged word. None where the receiver is no fixed class's.
+    pub(crate) fn fixed_hoisted_word(&mut self, state: &mut State, pc: usize, owner: Option<Register>, atom: Atom,
+        exit: ir::Block) -> Option<(ir::Value, Type)> {
+        let fixed = self.fixed_field_of(pc, owner, atom)?;
+        let cell = self.fixed_cell(state, owner)?;
+        let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
+        let address = cell.offset_address(&mut self.builder, displacement);
+        Some(match self.slot_word(pc, address, fixed, exit) {
+            SlotWord::Number(number) => (self.raw_unary(Unary::Bitcast(Lane::I64), number), fixed.field.cell.ty),
+            SlotWord::Tagged(word, ty) => (word, ty),
+        })
+    }
+
     /// `GetField` of the union field `atom` of a fixed receiver `owner` (None for `this`), defining the instruction's
     /// register. False, emitting nothing, where the receiver is no fixed class's or the union names no such field.
     pub(crate) fn fixed_field_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
@@ -136,7 +189,7 @@ impl Lowering<'_, '_> {
             emit(&mut self.builder).raw_store(Lane::F64, property, (number, false), address, 0);
         } else {
             let value = self.tagged(state, source);
-            self.fixed_store_barrier(state, owner, source, value, exit);
+            self.fixed_store_barrier(state, (owner, cell), source, value, exit);
             emit(&mut self.builder).raw_store(Lane::I64, property, (value, false), address, 0);
         }
         state.proofs.write_field(atom);
@@ -158,15 +211,19 @@ impl Lowering<'_, '_> {
         Some(LoopStore { header, address, packed_range: None, domain })
     }
 
-    /// The store barrier (4.7) of the tagged `value` (of register `source`) into the fixed class cell of `owner`.
-    /// The class space logs every heap reference stored into a cell (`class_cell_store`, which tests no mark), and the lane
-    /// has no mark list for the class space, so a heap reference leaves to the VM's store at `exit`. An immediate needs no
-    /// barrier, and neither does a store into a holder this unit allocated with no safepoint since (`holder_fresh`).
-    fn fixed_store_barrier(&mut self, state: &mut State, owner: Option<Register>, source: Register, value: ir::Value, exit: ir::Block) {
-        if state.values[usize::from(source)].value.ty.is_subtype(Type::IMMEDIATE) || self.holder_fresh(state, owner) { return; }
-        let tag = self.raw_binary_imm(Binary::And, value, ValueLayout::TAG_MASK as i64);
-        let heap = self.raw_compare_imm(Relation::Equal, tag, ValueLayout::HEAP_TAG as i64);
-        let plain = self.raw_compare_imm(Relation::Equal, heap, 0);
-        emit_js_guard(&mut self.builder, plain, exit);
+    /// The store barrier (4.7) of the tagged `value` (of register `source`) into the fixed class cell `cell` of `owner`: the
+    /// class space's gate (`Stage::store_gate`, `StagedRecordSpace::Class`) keyed by the cell's granule, which leaves at `exit`
+    /// where it logs the store. An immediate needs no barrier. A store into a holder this unit allocated with no safepoint
+    /// since (`holder_fresh`) logs nothing, so only the observation gate is asked (4.7 (b)).
+    fn fixed_store_barrier(&mut self, state: &mut State, (owner, cell): (Option<Register>, ObjectRecord), source: Register,
+        value: ir::Value, exit: ir::Block) {
+        if state.values[usize::from(source)].value.ty.is_subtype(Type::IMMEDIATE) { return; }
+        let Some(granule) = cell.granule() else { return };
+        let fresh = self.holder_fresh(state, owner);
+        let payload = self.payload;
+        let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: Some(payload), payload: Some(payload),
+            facts: Default::default(), fresh };
+        let open = stage.store_gate(StagedRecordSpace::Class, granule, value);
+        stage.guard(open, exit).expect("an Emit guard always continues");
     }
 }
