@@ -173,7 +173,9 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
             let class_base = headers::class_table_base(stage.builder, self.payload);
             let header = ObjectHeader::prove_readable(stage.builder, this, records, class_base, functions, miss);
-            stage.goto(join, &[header.address, header.shape, header.inline]);
+            // A readable proof names a record or a function's object, whose shape and storage form it reads.
+            let (shape, inline) = (header.shape.expect("a readable header names a record"), header.inline.expect("a readable header names a record"));
+            stage.goto(join, &[header.address, shape, inline]);
             stage.builder.switch_to_block(join);
             return Some(Reached { shape: Some(shape_at), inline: Some(inline_at), ..Reached::bare(record) });
         }
@@ -187,7 +189,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
         };
-        Some(Reached { shape: Some(header.shape), inline: Some(header.inline), word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
+        Some(Reached { shape: header.shape, inline: header.inline, word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
     }
 
     /// The shape the owner's header holds as a constant, or its kept layout's.
