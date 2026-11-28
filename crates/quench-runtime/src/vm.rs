@@ -1271,7 +1271,9 @@ enum ShapeTransition {
     FunctionName { name: Atom },
     FunctionNameReconfigured,
     FunctionLengthReconfigured,
-    Constructed { constructor: Value, new_target_is_base: bool },
+    /// The `Constructed` root of `constructor`'s instances of class `class` (a class id: the constructor's body, or the
+    /// synthetic class of its construct site): the union layout the root's slots follow (`seed_union_domains`).
+    Constructed { constructor: Value, class: u32, new_target_is_base: bool },
     Add {
         key: property_key::PropertyKey,
         slot: u32,
@@ -1295,7 +1297,7 @@ enum ShapeTransitionKey {
     FunctionName(Atom),
     FunctionNameReconfigured,
     FunctionLengthReconfigured,
-    Constructed(Value, bool),
+    Constructed(Value, u32, bool),
     /// An added data property. A symbol key names a symbol a live shape keeps alive
     /// (`append_shape_roots`); compaction rebuilds the index from live shapes only, so no
     /// entry outlives the symbol it names.
@@ -1490,7 +1492,7 @@ impl ShapeTransition {
             Self::FunctionName { name } => Some(ShapeTransitionKey::FunctionName(name)),
             Self::FunctionNameReconfigured => Some(ShapeTransitionKey::FunctionNameReconfigured),
             Self::FunctionLengthReconfigured => Some(ShapeTransitionKey::FunctionLengthReconfigured),
-            Self::Constructed { constructor, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, new_target_is_base)),
+            Self::Constructed { constructor, class, new_target_is_base } => Some(ShapeTransitionKey::Constructed(constructor, class, new_target_is_base)),
             Self::Add {
                 key,
                 attributes,
