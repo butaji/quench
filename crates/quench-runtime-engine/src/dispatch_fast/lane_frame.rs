@@ -1517,16 +1517,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         }
     }
 
-    /// The nested chain's base: the register the record's site names, or the activation's `this`.
-    #[inline(always)]
-    fn nested_base(&mut self, stage: &mut Concrete, miss: ()) -> Option<u64> {
-        let (_, base) = self.plan?.nested?;
-        match base.register_index() {
-            Some(register) => Some(self.tagged(stage, register)),
-            None => self.field_this(stage, miss),
-        }
-    }
-
     /// The activation's `this` as the lane holds it: an unbound one (`Value::DELETED`) is no
     /// direct object, so the receiver's record test refuses it with no test of its own.
     #[inline(always)]

@@ -80,7 +80,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_complete
 fn quench_engine_vm_record_native_execution_rejection(this: &mut Vm) -> () { <Vm as CompiledVm4>::record_native_execution_rejection(this) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_record_native_execution_rejection = quench_engine_vm_record_native_execution_rejection;
 #[unsafe(no_mangle)]
-#[unsafe(no_mangle)]
 fn quench_engine_vm_wasm_table_step(this: &mut Vm, f: usize, i: WideInstruction) -> Result<(), JsError> { <Vm as CompiledWasmTableOpsStageVm>::wasm_table_step(this, f, i) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_wasm_table_step = quench_engine_vm_wasm_table_step;
 #[unsafe(no_mangle)]
@@ -151,7 +150,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_executio
 #[unsafe(no_mangle)]
 fn quench_engine_vm_load_ahead_images(this: &mut Vm, images: AheadImages) -> () { <Vm as CompiledAheadImagesVm>::load_ahead_images(this, images) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_load_ahead_images = quench_engine_vm_load_ahead_images;
-#[unsafe(no_mangle)]
 #[unsafe(no_mangle)]
 fn quench_engine_vm_set_execution_mode(this: &mut Vm, mode: ExecutionMode) -> () { <Vm as CompiledVm4>::set_execution_mode(this, mode) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_set_execution_mode = quench_engine_vm_set_execution_mode;

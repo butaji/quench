@@ -63,7 +63,7 @@ pub(crate) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Optio
     let instruction = raw.without_return();
     let operation = direct_operation(instruction)?;
     // SAFETY: the running lane's context; the VM, frame and program are the ones `lane_in_place` dispatches.
-    let (vm, frame, program) = unsafe { (&mut *(*cx).vm, (*cx).frame(), &*(*cx).code) };
+    let (vm, frame) = unsafe { (&mut *(*cx).vm, (*cx).frame()) };
     if let Operation::SetField { value, base, .. } = operation { return unsafe { set_field(cx, instruction, value, base) }; }
     if !vm.lane_stack.activations().is_empty() || !unsafe { (*cx).leaf.call }.is_null() {
         return None;

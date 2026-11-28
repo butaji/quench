@@ -285,7 +285,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::lane_stack_trace::DispatchFastLaneStackTraceVm as _;
     pub use crate::dispatch_fast::lane_trace::LaneStackOps12 as _;
     pub use crate::dispatch_fast::loop_body::LoopBodyOps1 as _;
-    pub use crate::dispatch_fast::loop_body::LoopSiteOps3 as _;
     pub use crate::dispatch_fast::loop_body::LoopBodyOps2 as _;
     pub use crate::dispatch_fast::loop_runs::LoopSiteRunsOps as _;
     pub use crate::dispatch_fast::loop_tier::LoopTierOps1 as _;

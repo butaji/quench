@@ -123,7 +123,7 @@ pub(in super::super) fn enter_cell_body_in_lane(
         method, direct_calls: direct_calls_in_lane(cx), program: unsafe { (*cx).program }, residual: unsafe { &*(*cx).code },
         registers: window.0, receiver: entry_receiver_in_lane(cx, own.binds_this()), captures: capture_reads(target.capture), lane_context: cx.cast(),
         pending: CALLEE_ACTIVATION_PENDING, bases_stand: false };
-    Some(cell_body_ended_in_lane(cx, window, own, target.function, method, vm.run_lane_body(&run)))
+    Some(cell_body_ended_in_lane(cx, window, own, method, vm.run_lane_body(&run)))
 }
 
 /// A frameless call of `target` (`CallEntry::frameless(Frameless::Native)`), passed the `argc` values at `passed`
@@ -184,7 +184,6 @@ pub(in super::super) fn cell_body_ended_in_lane(
     cx: *mut LaneContext,
     window: Registers,
     own: &LaneView,
-    function: u32,
     method: &crate::compiled::LaneMethod,
     exit: crate::compiled::LaneExit,
 ) -> Resumed {
