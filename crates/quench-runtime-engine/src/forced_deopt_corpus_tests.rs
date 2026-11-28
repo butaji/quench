@@ -3,7 +3,7 @@
 //! hook is test-only, so this is the corpus's forced-deopt driver:
 //! `cargo test -p quench-runtime --lib forced_deopt_corpus`.
 
-use super::forced_deopt_tests::forced_everywhere;
+use crate::forced_deopt_tests::forced_everywhere;
 use quench_tier_corpus::{generate, program_seed, Options, Sink};
 
 const RUN_SEED: u64 = 0x5EED;

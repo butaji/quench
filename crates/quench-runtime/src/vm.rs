@@ -245,14 +245,10 @@ pub mod object_keys;
 pub mod object_static;
 pub mod object_symbols;
 pub mod object_shape_adopt;
-#[cfg(test)] mod lane_loop_tests;
 #[cfg(test)] mod record_slot_tests;
 #[cfg(test)] mod lane_native_callback_tests;
-#[cfg(test)] mod lane_entry_tests;
 #[cfg(test)] mod call_out_tests;
 #[cfg(test)] mod object_tests; #[cfg(test)] mod shape_attribute_tests;
-#[cfg(test)] mod native_frame_tests;
-#[cfg(test)] mod catch_tests; #[cfg(test)] mod shape_stability_tests;
 pub mod property_key;
 use call_arguments::CallArguments;
 use object::AtomClass;
@@ -1786,6 +1782,7 @@ fn shape_layouts(shapes: &[Shape]) -> Vec<(usize, Option<(u32, usize)>)> {
         .collect()
 }
 
+#[quench_macros::test_visible]
 struct Shape {
     /// The shape this one extends; `NO_PARENT_SHAPE` for the root.
     parent: u32,
@@ -2577,7 +2574,8 @@ struct IteratorRealmPrototypes {
 
 impl Vm {
     /// Record a method-cache name, as a call site's first call does (tests).
-    #[cfg(test)]
+    #[quench_macros::test_visible]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn name_method_atom(&mut self, atom: crate::bytecode::Atom) {
         self.method_cache_atoms.name(atom);
     }
@@ -2750,12 +2748,14 @@ impl Vm {
         }
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.heap.root(value)
     }
     pub(crate) fn update_root(&mut self, root: RootId, value: Value) -> bool {
         self.heap.update_root(root, value)
     }
+    #[quench_macros::test_visible]
     pub(crate) fn root_value(&self, root: RootId) -> Option<Value> {
         self.heap.root_value(root)
     }
@@ -2766,6 +2766,7 @@ impl Vm {
             args,
         });
     }
+    #[quench_macros::test_visible]
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }
@@ -3394,6 +3395,7 @@ impl Vm {
             drop(std::ptr::read(&vm.host));
         }
     }
+    #[quench_macros::test_visible]
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }

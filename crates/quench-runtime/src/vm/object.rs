@@ -13,68 +13,6 @@ use mru_chain::record_mru_entry;
 /// (`general_store`).
 pub const FIELD_BYTE: u32 = 0xff;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_host::TestHost;
-
-    #[test]
-    fn native_only_field_probes_use_semantic_specialization_permission() {
-        let program = crate::Engine::specialize(r#"
-            var own={value:7};
-            function Static(){}
-            Static.value=8;
-            var inherited=Object.create({value:9});
-            var getterCalls=0;
-            var accessor={get value(){getterCalls++;return 11;}};
-            function readOwn(object){return object.value;}
-            function readCell(object){return object.value;}
-            function readInherited(object){return object.value;}
-            for(let i=0;i<4;i++){
-                if(readOwn(own)!==7||readCell(Static)!==8||readInherited(inherited)!==9)throw 'data';
-            }
-        "#, "native-field-permission.js").unwrap();
-        let native = crate::NativeJsProgram::publish(program).unwrap();
-        let program = native.residual();
-        let mut vm = Vm::new(TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
-        vm.execute_native_program(&native, true).unwrap();
-        assert!(!vm.admits_in_lane(crate::vm::ProgramId::MAIN, program), "native semantics do not admit interpreter lane dispatch");
-        let site = |name: &str| {
-            let function = program.functions.iter().position(|body| body.header().name
-                .is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-            program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
-                Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, .. })
-                    if &program.atoms[atom as usize] == "value" => Some(cache_site),
-                _ => None,
-            }).unwrap()
-        };
-        let mut global = |name| {
-            let atom = vm.intern_atom(name);
-            vm.own_property(vm.realm.globals, atom).unwrap()
-        };
-        let own = global("own");
-        let function = global("Static");
-        let inherited = global("inherited");
-        let accessor = global("accessor");
-        let own_site = site("readOwn");
-        let cell_site = site("readCell");
-        let inherited_site = site("readInherited");
-        assert_eq!(vm.cell_own_field_hit(own, own_site), Some(Value::integer(7)));
-        assert_eq!(vm.cell_own_field_hit(function, cell_site), Some(Value::integer(8)));
-        assert!(matches!(vm.cached_field_hit(inherited, inherited_site), FieldCacheProbe::Hit(value)
-            if value == Value::integer(9)));
-        assert!(matches!(vm.cached_field_hit(function, cell_site), FieldCacheProbe::Hit(value)
-            if value == Value::integer(8)));
-        assert_eq!(vm.cell_own_field_hit(accessor, own_site), None,
-            "a data probe must leave accessor semantics untouched");
-        let value = vm.intern_atom("value");
-        assert_eq!(vm.get_field_cached(program, accessor, value, own_site).unwrap(), Value::integer(11));
-        let calls = vm.intern_atom("getterCalls");
-        assert_eq!(vm.own_property(vm.realm.globals, calls), Some(Value::integer(1)));
-    }
-}
-
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
@@ -2045,6 +1983,7 @@ impl Vm {
 
     /// `primary_own_field_hit` for a receiver any heap cell holds, such as a function's own
     /// static field (`Strength.REQUIRED`), which a direct object's record lookup misses.
+    #[quench_macros::test_visible]
     #[inline(always)]
     pub(super) fn cell_own_field_hit(
         &mut self,

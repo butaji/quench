@@ -1,9 +1,10 @@
 //! OSR facts that change between entries: a receiver field use guards the shape it reads, so
 //! its departure falls out there, and only a shape compaction retires embedded shape IDs.
 
-use super::super::Vm;
-use crate::test_host::TestHost;
-use crate::{Engine, Value};
+use quench_runtime::vm::Vm;
+use crate::ext_traits::*;
+use quench_runtime::test_host::TestHost;
+use quench_runtime::{Engine, Value};
 
 const SOURCE: &str = r#"
     function sum(list, n) {
@@ -19,14 +20,14 @@ const SOURCE: &str = r#"
 "#;
 
 fn test_vm() -> Vm {
-    let mut vm = Vm::new(TestHost::default());
-    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(TestHost::default());
+    vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
+    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm
 }
 
-fn function_named(program: &crate::bytecode::ResidualProgram, name: &str) -> usize {
+fn function_named(program: &quench_runtime::bytecode::ResidualProgram, name: &str) -> usize {
     program.functions.iter().position(|function|
         function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name))
         .expect("receiver-departure loop function")
@@ -50,13 +51,13 @@ fn depart(vm: &mut Vm, anchor: Value, shape: u32, round: i32) -> u32 {
 
 /// The OSR site of `function_id`'s outermost loop: the first header's, closed by its last
 /// backward jump.
-fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::engine_types::OsrSiteDiagnostics {
+fn osr_site(vm: &Vm, function_id: usize) -> quench_runtime::vm::engine_types::OsrSiteDiagnostics {
     let osr = vm
         .programs
-        .views_in_lane(crate::vm::program_store::ProgramId::MAIN)
+        .views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN)
         .unwrap()
         .get(function_id)
-        .and_then(crate::vm::program_store::derived_lane_view)
+        .and_then(quench_runtime::vm::program_store::derived_lane_view)
         .expect("receiver-departure loop lane view")
         .osr_diagnostics();
     osr.sites.iter().min_by_key(|site| (site.header_pc, std::cmp::Reverse(site.backedge_pc)))
@@ -66,10 +67,10 @@ fn osr_site(vm: &Vm, function_id: usize) -> crate::vm::engine_types::OsrSiteDiag
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations() {
-    let program = Engine::compile(crate::ExecutionRequest::script(SOURCE, "osr-receiver-shape-departure.js")).unwrap();
+    let program = Engine::compile(quench_runtime::ExecutionRequest::script(SOURCE, "osr-receiver-shape-departure.js")).unwrap();
     let function_id = function_named(&program, "sum");
     let mut vm = test_vm();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     let (sum, anchor, list) = sum_and_objects(&mut vm);
     let mut shape = vm.heap.object(anchor).unwrap().exact_shape();
     for round in 0..40_i32 {
@@ -105,16 +106,16 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
         }
         var result = f([2147483647, 2147483646, 2147483645, 2147483644, 2147483643, 2147483642, 2147483641, 2147483640]);
     "#;
-    let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-int32-overflow-widen.js")).unwrap();
+    let program = Engine::compile(quench_runtime::ExecutionRequest::script(source, "osr-int32-overflow-widen.js")).unwrap();
     let run = |mode| {
         let mut vm = test_vm();
         vm.set_execution_mode(mode);
-        vm.execute(&program).unwrap();
+        quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let (globals, atom) = (vm.realm.globals, vm.intern_atom("result"));
         (vm.own_property(globals, atom).expect("result"), vm)
     };
-    let (interpreted, _) = run(crate::ExecutionMode::Interpreted);
-    let (compiled, vm) = run(crate::ExecutionMode::Compiled);
+    let (interpreted, _) = run(quench_runtime::ExecutionMode::Interpreted);
+    let (compiled, vm) = run(quench_runtime::ExecutionMode::Compiled);
     assert_eq!(compiled, interpreted, "the widened loop computes the interpreter's sum");
     let site = osr_site(&vm, function_named(&program, "f"));
     assert!(
@@ -149,12 +150,12 @@ fn shared_osr_appends_match_the_interpreter_across_growth_doubles_and_prototype_
       delete Array.prototype[120];
       print(out.join(",") + ":" + hits);
     "#;
-    let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-appends.js")).unwrap();
-    let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
-    for policy in crate::MemoryPolicy::ALL {
-        let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
+    let program = Engine::compile(quench_runtime::ExecutionRequest::script(source, "osr-appends.js")).unwrap();
+    let (expected, _) = printed_run(&program, quench_runtime::ExecutionMode::Interpreted, quench_runtime::MemoryPolicy::Throughput);
+    for policy in quench_runtime::MemoryPolicy::ALL {
+        let (printed, vm) = printed_run(&program, quench_runtime::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
-        if crate::vm::compiled::loop_tier_compiles(policy) {
+        if crate::compiled::loop_tier_compiles(policy) {
             let site = osr_site(&vm, function_named(&program, "fill"));
             assert!(site.native_region_runs > 0, "the append loop runs natively under {policy:?}: {site:?}");
         }
@@ -203,12 +204,12 @@ const REMAINDER_SOURCE: &str = r#"
 fn shared_osr_remainder_matches_the_interpreter_across_int32_edges_and_doubles() {
     // `%` of proved int32 operands is an int32 remainder; a zero divisor's NaN and a negative
     // dividend's `-0` (`-2147483648 % -1` included) leave, and doubles keep the Number path.
-    let program = Engine::compile(crate::ExecutionRequest::script(REMAINDER_SOURCE, "osr-remainder.js")).unwrap();
-    let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
-    for policy in crate::MemoryPolicy::ALL {
-        let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
+    let program = Engine::compile(quench_runtime::ExecutionRequest::script(REMAINDER_SOURCE, "osr-remainder.js")).unwrap();
+    let (expected, _) = printed_run(&program, quench_runtime::ExecutionMode::Interpreted, quench_runtime::MemoryPolicy::Throughput);
+    for policy in quench_runtime::MemoryPolicy::ALL {
+        let (printed, vm) = printed_run(&program, quench_runtime::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
-        if crate::vm::compiled::loop_tier_compiles(policy) {
+        if crate::compiled::loop_tier_compiles(policy) {
             let site = osr_site(&vm, function_named(&program, "rems"));
             assert!(site.native_region_runs > 0, "the remainder loop runs natively under {policy:?}: {site:?}");
         }
@@ -216,14 +217,14 @@ fn shared_osr_remainder_matches_the_interpreter_across_int32_edges_and_doubles()
 }
 
 /// What `program` prints run in `mode` under `policy`, with its VM.
-fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::ExecutionMode, policy: crate::MemoryPolicy)
+fn printed_run(program: &quench_runtime::bytecode::ResidualProgram, mode: quench_runtime::ExecutionMode, policy: quench_runtime::MemoryPolicy)
     -> (Vec<String>, Vm) {
     let output = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let mut vm = Vm::new(TestHost::writing_to(output.clone()));
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(policy);
     vm.set_execution_mode(mode);
     vm.programs.enable_js_jit_diagnostics();
-    vm.execute(program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, program).unwrap();
     let printed = output.borrow().clone();
     (printed, vm)
 }
@@ -233,17 +234,17 @@ fn printed_run(program: &crate::bytecode::ResidualProgram, mode: crate::Executio
 /// the policy compiles loops. The throughput run's VM.
 fn assert_typed_osr(source: &str, native: &[&str]) -> Vm {
     // The fixtures are too small to repay a compile at the wall-clock cost the model has learned.
-    let program = Engine::compile(crate::ExecutionRequest::script(source, "osr-typed.js")).unwrap();
-    let (expected, _) = printed_run(&program, crate::ExecutionMode::Interpreted, crate::MemoryPolicy::Throughput);
-    for policy in crate::MemoryPolicy::ALL {
-        let (printed, vm) = printed_run(&program, crate::ExecutionMode::Compiled, policy);
+    let program = Engine::compile(quench_runtime::ExecutionRequest::script(source, "osr-typed.js")).unwrap();
+    let (expected, _) = printed_run(&program, quench_runtime::ExecutionMode::Interpreted, quench_runtime::MemoryPolicy::Throughput);
+    for policy in quench_runtime::MemoryPolicy::ALL {
+        let (printed, vm) = printed_run(&program, quench_runtime::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
-        for name in native.iter().filter(|_| crate::vm::compiled::loop_tier_compiles(policy)) {
+        for name in native.iter().filter(|_| crate::compiled::loop_tier_compiles(policy)) {
             let site = osr_site(&vm, function_named(&program, name));
             assert!(site.native_region_runs > 0, "{name}'s loop runs natively under {policy:?}: {site:?}");
         }
     }
-    printed_run(&program, crate::ExecutionMode::Compiled, crate::MemoryPolicy::Throughput).1
+    printed_run(&program, quench_runtime::ExecutionMode::Compiled, quench_runtime::MemoryPolicy::Throughput).1
 }
 
 #[test]
@@ -291,7 +292,7 @@ fn shared_osr_loop_over_dense_then_typed_arrays_recompiles_for_each() {
       for (var round = 0; round < 90; round++) out.push(total(round < 30 || round >= 60 ? d : t, 500), mixed(d, t));
       print(out.join(","));
     "#, &["total"]);
-    let program = Engine::compile(crate::ExecutionRequest::script("function total(a) {}", "osr-typed.js")).unwrap();
+    let program = Engine::compile(quench_runtime::ExecutionRequest::script("function total(a) {}", "osr-typed.js")).unwrap();
     let site = osr_site(&vm, function_named(&program, "total"));
     assert!(site.compile_successes >= 2, "each element kind compiles its own views: {site:?}");
 }
@@ -413,10 +414,10 @@ const REPATCH_SOURCE: &str = r#"
 /// The leaves a loop region makes in one `sum` call after `anchor` changes shape `changes`
 /// times in a row, one call to each: the exits and native runs that call added.
 fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
-    let program = Engine::compile(crate::ExecutionRequest::script(REPATCH_SOURCE, "bjit-repatch.js")).unwrap();
+    let program = Engine::compile(quench_runtime::ExecutionRequest::script(REPATCH_SOURCE, "bjit-repatch.js")).unwrap();
     let function_id = function_named(&program, "sum");
     let mut vm = test_vm();
-    vm.execute(&program).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     let (sum, anchor, list) = sum_and_objects(&mut vm);
     let call = |vm: &mut Vm| {
         assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[list, Value::number(3000.0)]).unwrap(), Value::number(3000.0));

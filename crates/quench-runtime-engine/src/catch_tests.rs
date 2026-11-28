@@ -2,10 +2,11 @@
 //! same function covers is the catch's jump in native code, and one that none covers crosses
 //! compiled frames as `LANE_BODY_THREW` (`lane_region::catches`); every result equals the
 //! interpreter's.
-use super::*;
-use crate::Engine;
-use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::engine_prelude::*;
+use crate::ext_traits::*;
+use quench_runtime::Engine;
+use quench_runtime::test_host::TestHost;
+use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
 use std::{cell::RefCell, rc::Rc};
 
 /// The compiled run's output, which the oracle holds to the interpreter's, and its loop regions' runs.
@@ -108,18 +109,18 @@ pub(super) type BodyRuns = (u32, u32);
 /// crossed native frames made no frame, so no run left.
 fn body_runs(source: &str, names: &[&str]) -> Vec<BodyRuns> {
     let program = Engine::specialize(source, "catch-tests.js").unwrap();
-    let mut vm = Vm::new(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
-    vm.set_memory_policy(crate::MemoryPolicy::Throughput);
-    vm.set_execution_mode(crate::ExecutionMode::Compiled);
+    let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
+    vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
+    vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
-    vm.execute(&program).unwrap();
-    let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
+    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
+    let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
     names.iter().map(|name| {
         let id = program.functions.iter()
             .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == *name))
             .unwrap();
-        let view = views.get(id).and_then(super::program_store::derived_lane_view).expect("lane view");
+        let view = views.get(id).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("lane view");
         view.tier().body_stats.ended_runs()
     }).collect()
 }
@@ -128,7 +129,7 @@ fn body_runs(source: &str, names: &[&str]) -> Vec<BodyRuns> {
 pub(super) fn bodies_match_interpreter(source: &str, tier: Tier, names: &[&str]) -> Vec<BodyRuns> {
     let wrapped = format!("(function(){{{source}}})();");
     assert_tier_agrees(&wrapped, tier, Expect::ENGAGED);
-    crate::jit_mode::with_mode(crate::jit_mode::JitMode::Full, || body_runs(&wrapped, names))
+    quench_runtime::jit_mode::with_mode(quench_runtime::jit_mode::JitMode::Full, || body_runs(&wrapped, names))
 }
 
 /// A compiled callee's throw reaches the compiled caller's catch through the native call:
@@ -232,16 +233,16 @@ fn an_uncaught_exception_from_compiled_frames_reports_the_throws_location() {
       for (let i = 0; i <= 40000; i++) total += caller(i);
       print(String(total));
     "#;
-    let location = |mode: crate::ExecutionMode| {
+    let location = |mode: quench_runtime::ExecutionMode| {
         let program = Engine::specialize(source, "catch-tests.js").unwrap();
-        let mut vm = Vm::new(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
-        vm.set_memory_policy(crate::MemoryPolicy::Throughput);
+        let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(Rc::new(RefCell::new(Vec::new()))));
+        vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
-        let error = vm.execute(&program).expect_err("the exception is uncaught");
+        let error = quench_runtime::test_support::execute(&mut vm, &program).expect_err("the exception is uncaught");
         error.source_location().map(|(file, line, column, _)| (file.to_owned(), line, column))
     };
-    assert_eq!(location(crate::ExecutionMode::Compiled), location(crate::ExecutionMode::Interpreted));
+    assert_eq!(location(quench_runtime::ExecutionMode::Compiled), location(quench_runtime::ExecutionMode::Interpreted));
 }
 
 /// `source` wrapped in a function, which compiled equals the interpreter in the lines it

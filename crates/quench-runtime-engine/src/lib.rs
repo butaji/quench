@@ -37,6 +37,28 @@ pub(crate) use quench_runtime::staged;
 /// The differential oracle the engine's tier tests run a program through.
 #[cfg(test)]
 pub(crate) mod test_oracle;
+// Tier tests that run programs through the engine against the interpreter (moved from the core's
+// library tests, which do not link the engine).
+#[cfg(test)]
+mod catch_tests;
+#[cfg(test)]
+mod owner_step_tests;
+#[cfg(test)]
+mod forced_deopt_tests;
+#[cfg(test)]
+mod forced_deopt_corpus_tests;
+#[cfg(test)]
+mod lane_entry_tests;
+#[cfg(test)]
+mod lane_loop_tests;
+#[cfg(test)]
+mod shape_stability_tests;
+#[cfg(test)]
+mod native_frame_tests;
+#[cfg(test)]
+mod osr_retirement_tests;
+#[cfg(test)]
+mod tier_tests;
 
 /// What every layer module sees: the VM core, the layer's modules and its extension traits.
 #[allow(unused_imports)]

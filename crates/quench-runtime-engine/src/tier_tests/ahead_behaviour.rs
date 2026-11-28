@@ -3,8 +3,9 @@
 //! eager image in native-only mode (every function entered through its trampoline over a lane
 //! body, leaving to the per-PC fallback where the body does not lower), and the three must agree
 //! on how it ended and what it printed.
-use super::*;
-use crate::{test_host::TestHost, Engine, ExecutionMode, ResidualProgram};
+use crate::engine_prelude::*;
+use crate::ext_traits::*;
+use quench_runtime::{test_host::TestHost, Engine, ExecutionMode, ResidualProgram, Runtime};
 use std::{sync::mpsc, thread, time::Duration};
 
 const THREW_42: &str = "threw 42";
@@ -21,7 +22,7 @@ struct Shown {
     lines: Vec<String>,
 }
 
-pub fn ended(result: Result<(), crate::JsError>) -> String {
+pub fn ended(result: Result<(), quench_runtime::JsError>) -> String {
     let Err(error) = result else { return RETURNED.into() };
     match error.thrown_value().and_then(|value| value.as_number()) {
         Some(number) => format!("threw {number}"),
@@ -29,8 +30,8 @@ pub fn ended(result: Result<(), crate::JsError>) -> String {
     }
 }
 
-fn compile_image(program: &ResidualProgram) -> crate::NativeJsProgram {
-    crate::NativeJsProgram::publish(program.clone()).unwrap()
+fn compile_image(program: &ResidualProgram) -> quench_runtime::NativeJsProgram {
+    quench_runtime::NativeJsProgram::publish(program.clone()).unwrap()
 }
 
 /// Runs `program` in `mode`, as an eager image where `image` is set.
@@ -66,7 +67,7 @@ macro_rules! fixture_tests {
     ($($test:ident: $file:literal => $ends:expr),+ $(,)?) => {$(
         #[test]
         fn $test() {
-            let source = include_str!(concat!("../../tests/fixtures/ahead/", $file, ".js"));
+            let source = include_str!(concat!("../../../quench-runtime/tests/fixtures/ahead/", $file, ".js"));
             assert_agrees(source, $file, $ends);
         }
     )+};
@@ -107,13 +108,13 @@ fn ahead_bodies_read_dense_captures_across_mutation_and_collection() {
 
 #[test]
 fn packed_field_ranges_keep_boundaries_aliases_and_reentry() {
-    let source = concat!(include_str!("../../tests/fixtures/packed-field-ranges.js"), "\nthrow 42;");
+    let source = concat!(include_str!("../../../quench-runtime/tests/fixtures/packed-field-ranges.js"), "\nthrow 42;");
     assert_agrees(source, "packed-field-ranges", THREW_42);
 }
 
 #[test]
 fn loop_slot_proofs_expire_before_storage_migration() {
-    let source = concat!(include_str!("../../tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
+    let source = concat!(include_str!("../../../quench-runtime/tests/fixtures/loop-slot-lifetime.js"), "\nthrow 42;");
     assert_agrees(source, "loop-slot-lifetime", THREW_42);
 }
 
@@ -166,7 +167,7 @@ fn packed_integer_fields_keep_their_update_across_run_lengths() {
 
 #[test]
 fn packed_field_stores_keep_widening_and_exact_effects() {
-    let half_range = 1_i64 << (crate::value::NarrowLayout::INTEGER_BITS - 1);
+    let half_range = 1_i64 << (quench_runtime::value::NarrowLayout::INTEGER_BITS - 1);
     let source = format!(
         "function step(state, delta) {{ state.count = (state.count + 1) | 0; state.value = state.value + delta; return state.value; }}\n\
          let s = {{count: 0, value: 0}};\n\
@@ -194,7 +195,7 @@ fn packed_field_stores_keep_widening_and_exact_effects() {
 /// The `nonleaf` fixture with the call terminal or not.
 #[test]
 fn nonleaf_inlined_calls_recover_without_replaying_effects() {
-    let source = include_str!("../../tests/fixtures/ahead/nonleaf.js");
+    let source = include_str!("../../../quench-runtime/tests/fixtures/ahead/nonleaf.js");
     let terminal = source
         .replace("let result=callback(input);\n    return result+this.count;", "return callback(input);")
         .replace("!==66", "!==45");
@@ -206,7 +207,7 @@ fn nonleaf_inlined_calls_recover_without_replaying_effects() {
 /// The `exact-gc` fixture with the call terminal and through a bridge frame or not.
 #[test]
 fn materialized_inline_parameters_survive_gc_reflection_and_throw() {
-    let source = include_str!("../../tests/fixtures/ahead/exact-gc.js");
+    let source = include_str!("../../../quench-runtime/tests/fixtures/ahead/exact-gc.js");
     for (terminal, nested) in [(false, false), (false, true), (true, false), (true, true)] {
         let mut source = source.to_owned();
         if terminal {
@@ -266,10 +267,10 @@ fn nested_recovery_admits_the_call_budget_before_prefix_effects() {
         );
         let program = Engine::specialize(&source, "nested-budget.js").unwrap();
         for limit in 1..=6 {
-            let _limit = crate::stack::GuestCallLimitGuard::enter(limit);
-            let before = crate::stack::GuestCallGuard::remaining();
+            let _limit = quench_runtime::stack::GuestCallLimitGuard::enter(limit);
+            let before = quench_runtime::stack::GuestCallGuard::remaining();
             assert_agrees_on(&program, &format!("limit={limit} strict_tail={strict_tail}"), RETURNED);
-            assert_eq!(crate::stack::GuestCallGuard::remaining(), before, "recovered guards must unwind");
+            assert_eq!(quench_runtime::stack::GuestCallGuard::remaining(), before, "recovered guards must unwind");
         }
     }
 }
@@ -289,9 +290,9 @@ fn bounded_entries_split_stop_control_and_keep_generator_parameters() {
 }
 
 fn started(
-    context: &mut crate::NativeContext<'_>, _: crate::RootId, _: &[crate::RootId],
-) -> Result<crate::RootId, crate::RootedError> {
-    context.host_as::<crate::test_host::TestHost>().state::<mpsc::Sender<()>>().send(()).unwrap();
+    context: &mut quench_runtime::NativeContext<'_>, _: quench_runtime::RootId, _: &[quench_runtime::RootId],
+) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
+    context.host_as::<quench_runtime::test_host::TestHost>().state::<mpsc::Sender<()>>().send(()).unwrap();
     Ok(context.undefined())
 }
 
@@ -300,18 +301,18 @@ fn started(
 fn assert_terminates(source: &'static str, name: &'static str) {
     let (ready, entered) = mpsc::channel::<()>();
     let (handles, handle) = mpsc::channel();
-    let worker = thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(move || {
+    let worker = thread::Builder::new().stack_size(quench_runtime::WORKER_STACK_SIZE).spawn(move || {
         let native = compile_image(&Engine::specialize(source, name).unwrap());
         let host = TestHost::default()
-            .with_natives(crate::host_functions![global "started" (0) => started])
+            .with_natives(quench_runtime::host_functions![global "started" (0) => started])
             .with_state(std::rc::Rc::new(ready));
         let mut runtime = Runtime::new(host);
         runtime.set_execution_mode(ExecutionMode::NativeOnly);
         handles.send(runtime.execution_interrupt_handle()).unwrap();
-        let budget = crate::stack::GuestCallGuard::remaining();
+        let budget = quench_runtime::stack::GuestCallGuard::remaining();
         let error = runtime.execute_native(&native).unwrap_err();
         assert!(error.is_execution_terminated(), "{error}");
-        assert_eq!(crate::stack::GuestCallGuard::remaining(), budget);
+        assert_eq!(quench_runtime::stack::GuestCallGuard::remaining(), budget);
     }).unwrap();
     let interrupt = handle.recv_timeout(WAIT).unwrap();
     entered.recv_timeout(WAIT).unwrap();
