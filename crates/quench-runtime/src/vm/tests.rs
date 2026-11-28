@@ -6964,6 +6964,35 @@ fn closure_identity_cache_rejects_reused_function_slots() {
 }
 
 #[test]
+fn a_top_level_function_holds_its_closure_cell_and_a_loop_closure_holds_none() {
+    let program = Engine::specialize(
+        "function f(x) { return x; } var fs = []; for (var i = 0; i < 2; i++) fs.push(function () { return i; }); f(1);",
+        "closure-cell.js",
+    )
+    .unwrap();
+    let named = |text: &str| {
+        (0..program.function_count()).find(|&id| {
+            program.with_record(id, |function| {
+                function.name.is_some_and(|atom| {
+                    let atom: &str = program.atoms[atom as usize].as_ref();
+                    atom == text
+                })
+            })
+        })
+    };
+    let f = named("f").expect("a function named f") as u32;
+    let loop_closure = (0..program.function_count())
+        .find(|&id| program.with_record(id, |function| function.parent.is_some() && function.name.is_none()))
+        .expect("the loop's closure") as u32;
+    let main = super::program_store::ProgramId::MAIN;
+    let mut vm = Vm::new(TestHost::default());
+    vm.execute(&program).unwrap();
+    let function = vm.cached_functions(main, f).next().expect("f's closure is recorded");
+    assert!(vm.programs.closure_cell(main, f) == Some(function));
+    assert!(vm.programs.closure_cell(main, loop_closure).is_none());
+}
+
+#[test]
 fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let mut vm = Vm::new(TestHost::default());
     let program = Engine::specialize("", "finalization-token-reuse.js").unwrap();

@@ -566,6 +566,10 @@ pub enum FactKey {
     Parameter { function: u32, index: u16 },
     /// The `this` of function `0`.
     Receiver(u32),
+    /// The closure cell of body `body` in program `program` (`ProgramStore::closure_cell`): an edge fact, not a solved cell.
+    /// The creation edge of the body's one closure writes it once (`Vm::note_closure_created`), and that write retires the
+    /// code subscribed to the key, since a subscriber was compiled before the closure existed.
+    ClosureCell { program: u32, body: u32 },
 }
 
 #[cfg(test)]
