@@ -88,6 +88,10 @@ pub struct Runtime<H: Host> {
 
 impl<H: Host> Runtime<H> {
     pub fn new(host: H) -> Self { Self { vm: Vm::new(host), host: std::marker::PhantomData } }
+
+    /// What a start that adopted its build's dump redraws: the per-process state a dump must not fix, today the
+    /// `Math.random` seed (`Vm::reseed_random`).
+    pub fn note_adopted(&mut self) { self.vm.reseed_random(); }
     /// A runtime that runs only code its image archived: it installs no JIT or source routes.
     pub fn new_static(host: H) -> Self { Self { vm: Vm::new_static(host), host: std::marker::PhantomData } }
     /// A static runtime that installs only the intrinsic families `builtins` names: an image
