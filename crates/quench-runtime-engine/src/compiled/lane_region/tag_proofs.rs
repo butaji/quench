@@ -53,6 +53,13 @@ impl Lowering<'_, '_> {
         self.cell_before(pc, register).identity == Identity::Builtin(expected)
     }
 
+    /// Whether the solve proves unit register `register` holds the global object just before the unit instruction at `pc`
+    /// (`Identity::GlobalObject`, proven in every run by the closed world). A site that would compare the register with the
+    /// global object at run time emits no compare where this holds.
+    pub(crate) fn proves_global_object(&self, pc: usize, register: Register) -> bool {
+        self.cell_before(pc, register).identity == Identity::GlobalObject
+    }
+
     /// The builtin the value the unit instruction at `defined` reads by name stands for, named from the program's own atoms
     /// in the solver's naming (`BuiltinPath`, `aot_facts::effects`): a name load of global `g` is `{g, None}`, and a field
     /// read `m` off the register a name load of `g` defined is `{g, Some(m)}`. None where the read names no builtin so.
