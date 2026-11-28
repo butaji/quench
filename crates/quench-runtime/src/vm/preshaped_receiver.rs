@@ -295,6 +295,18 @@ impl Vm {
         }
     }
 
+    /// The program and class of the constructor `shape`'s constructed root names (`ShapeTransition::Constructed` with new.target
+    /// that constructor itself, `seed_union_domains`'s root): the class whose union layout the shape's union slots follow. None
+    /// where no such root is on the chain, or the constructor is no user class of this realm.
+    pub fn shape_constructed_class(&self, shape: u32) -> Option<(super::ProgramId, u32)> {
+        if self.shape_is_dictionary(shape) { return None; }
+        let (_, constructed, _) = super::provenance::shape_names(&self.shapes, shape);
+        match constructed {
+            Some((constructor, true)) => self.same_realm_user_target(constructor).map(|(program, class, _)| (program, class)),
+            _ => None,
+        }
+    }
+
     /// The fields a receiver of `constructor` from template shape `start` gets a class cell for: the largest of
     /// its constant layout, what its learned storage reached (`LearnedReceiver::slots`, sampled from the
     /// receivers before it), and the field count of its class's union layout (`AotFacts::class_union_layout`).
