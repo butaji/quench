@@ -8,7 +8,7 @@
 //! static argument that leaves no code), the array backing (`elements::array_backing`) and the
 //! prototype chain holding no index, which is a dependency, not a per-call test.
 
-use super::elements::{Backing, append_element, array_backing, other, recount, resizable_backing};
+use super::elements::{Backing, append_element, other, recount, resizable_backing};
 use super::math::FloatUnary;
 use super::numeric::{Domain, NumericStage};
 use super::region::Region;

@@ -7,9 +7,8 @@
 
 use super::region::Region;
 use super::field_cache_layout::CLASS_KEY;
-use super::{Concrete, Frame, Stage, Step, elements, value};
+use super::{Frame, Stage, Step, elements, value};
 use crate::bytecode::Register;
-use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// Continue where register `register` holds an object, which `RequireIteratorResult` accepts: a
 /// direct object or array record by its own word, else any other object kind the frame's

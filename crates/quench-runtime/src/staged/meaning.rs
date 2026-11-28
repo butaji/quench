@@ -8,7 +8,7 @@
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::frame_arm::{frame_arm, FrameArm};
-use crate::bytecode::{Class, Op, WideInstruction};
+use crate::bytecode::{Class, WideInstruction};
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)]
 use crate::staged::glue_prelude::*;
