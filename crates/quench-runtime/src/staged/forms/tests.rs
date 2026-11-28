@@ -1,6 +1,9 @@
 use super::*;
 use crate::bytecode::{MethodSite, ReceiverPath, SET_THIS_REGISTER};
 use crate::staged::test_words::FACTS;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 fn call_instruction(op: Op, constructs: bool) -> WideInstruction {
     if constructs {

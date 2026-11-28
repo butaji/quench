@@ -15,6 +15,9 @@
 use super::invoke::{invoke, CallFrame};
 use super::{Arguments, Callee, FunctionId, Invocation, PropertyFrame, Receiver, Stage, Step};
 use crate::bytecode::Register;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// Which kind of callee a getter is: a native, or a script function (whose call target the tier
 /// resolves once, `GetterAnswer::target`).

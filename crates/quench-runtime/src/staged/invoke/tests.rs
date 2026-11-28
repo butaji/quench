@@ -1,5 +1,8 @@
 use super::*;
 use crate::staged::{Bound, Concrete, Edge, NoPlans};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 pub(super) const RETURNED: u32 = 3;
 pub(super) const IDENTITY: u64 = 0x1000;

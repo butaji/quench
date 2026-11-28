@@ -6,6 +6,9 @@ use crate::typed_ir::Type;
 use crate::staged::{step, CallOut, Concrete, Constant, Edge, Frame, GlobalBinding, GlobalFrame, NoPlans, NumericFrame, Operation, PropertyFrame, Protocol, Step};
 use crate::Value;
 use crate::staged::Operation as Row;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A register file whose callouts record what they are asked, or decline when `declines`.
 #[derive(Default)]

@@ -14,6 +14,9 @@ use crate::wasm::integer::{
 };
 use crate::wasm::WasmValueScalarExt;
 use crate::{WasmTrap, WasmType, WasmValue};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// Operands at the edges of both widths: zero, signs, shift counts at and past the width,
 /// the extremes and a pattern with every byte distinct.

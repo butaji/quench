@@ -11,6 +11,9 @@ use smallvec::SmallVec;
 use super::{GlobalBinding, NumberOperation, Operation};
 use crate::bytecode::Operand;
 use crate::typed_ir::{BindingTime, Division};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The most operands one staged operation names.
 const MAX_OPERANDS: usize = 8;

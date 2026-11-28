@@ -10,6 +10,9 @@ use crate::bytecode::{FieldBase, Operand};
 use crate::heap::{Heap, Object};
 use crate::typed_ir::Type;
 use crate::{Value, ValueType};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The plans of a test site: `lookup`'s read, cache site `store`'s store.
 struct Plans {

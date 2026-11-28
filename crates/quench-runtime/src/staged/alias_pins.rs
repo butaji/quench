@@ -12,6 +12,9 @@ use super::wasm_simd::VectorOperation;
 use super::wasm_state::WasmStateOperation;
 use super::{Constant, DecodeContext, Operation};
 use crate::bytecode::{Op, WideInstruction};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 type Row = Operation<u64, ()>;
 type Is = fn(&Row) -> bool;

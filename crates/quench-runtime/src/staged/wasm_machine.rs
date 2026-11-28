@@ -17,6 +17,9 @@ use crate::wasm::memory::MemoryStorage;
 use crate::wasm::memory::checked_range;
 use crate::wasm::V128_BYTES;
 use crate::Value;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A stage over a linear memory's bytes, which it reads.
 pub(crate) struct ConcreteBytes<'a> {

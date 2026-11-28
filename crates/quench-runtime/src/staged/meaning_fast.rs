@@ -12,6 +12,9 @@ use super::protocol_literals::LiteralStep;
 use super::protocol_owned::OwnedVarStep;
 use super::protocol_values::ValueStep;
 use super::{DecodeContext, Operation, Protocol};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The staged operation of `instruction`, with no constants or sites resolved (`Operation::decode`).
 #[inline(always)]

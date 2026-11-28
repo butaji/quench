@@ -298,3 +298,6 @@ pub fn copy_across<S: WasmMemoryPair>(
 mod glue;
 #[cfg(not(stencil_build))]
 pub use glue::*;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;

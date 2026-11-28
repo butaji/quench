@@ -13,6 +13,9 @@ use crate::bytecode::{InstructionField, Op, WideInstruction};
 use crate::wasm::V128_BYTES;
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use crate::wasm::simd::{SimdKernel, SimdOperator, bits_of, shuffle, value_of};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 const VECTORS: [u128; 7] = [
     0,

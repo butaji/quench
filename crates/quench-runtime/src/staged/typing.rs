@@ -14,6 +14,9 @@ use crate::typed_ir::arithmetic::number_range;
 use crate::typed_ir::{Cell, Elements, IntRange, Length, StringLength, Type, language_bit};
 use crate::vm::operations::{binary_operator as op, NumberArithmetic, NumberBitwise, NumberRelation, NumberUnary};
 use crate::ValueType;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The cells an operation's operands read: a register's, a program constant's, and the elements no field names.
 /// The solve implements it over the registers before an instruction; a lowering implements it over its own values.

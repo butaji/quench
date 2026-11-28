@@ -2,6 +2,9 @@
 //! operations are the interpreter's, as the stencils run them. Split from `numeric.rs` for its size.
 
 use super::*;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 #[inline(always)]
 fn int32(word: u64) -> i32 { word as u32 as i32 }

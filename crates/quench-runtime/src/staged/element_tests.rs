@@ -10,6 +10,9 @@ use crate::bytecode::Operand;
 use crate::typed_ir::Type;
 use crate::heap::{ArrayObject, Heap, Object};
 use crate::Value;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A frame over a few registers and the heap's array records, whose host paths log their name.
 struct Probe {

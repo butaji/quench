@@ -4,6 +4,9 @@
 
 use super::{NumberOperation, Operation, Register};
 use crate::bytecode::{InstructionField, Op, Traits, WideInstruction};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 impl<W, P> Operation<W, P> {
     /// The registers of a row over registers, locals and `this` (at most two), which the tier

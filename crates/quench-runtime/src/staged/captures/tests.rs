@@ -2,6 +2,9 @@ use super::*;
 use crate::bytecode::{Op, Operand, Register, WideInstruction};
 use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, PropertyFrame};
 use crate::Value;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A register file over a function's capture slots, as the interpreter's access sees them:
 /// an uninitialized slot (`Value::DELETED`, a marker) takes neither a read nor a store.

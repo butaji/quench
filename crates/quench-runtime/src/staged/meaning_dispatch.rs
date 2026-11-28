@@ -8,6 +8,9 @@
 #[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use crate::bytecode::{Class, WideInstruction};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A call through a callee register and a window of arguments (`Op::Call`, with its eval flags).
 #[inline(always)]
