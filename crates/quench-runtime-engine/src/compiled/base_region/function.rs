@@ -68,7 +68,7 @@ pub(crate) struct Body {
     /// Where a run that left a loop region at a PC re-enters it (`resume`); none for a body.
     pub(crate) resumes: ResumeTable,
     /// The registers its rows name past the function's own: its inlined callees' windows and the scratch of its
-    /// `instanceof`/`in` jumps, whose frame slots its recovery room covers (`LaneRecoverySpace::reaching`).
+    /// `in` jumps, whose frame slots its recovery room covers (`LaneRecoverySpace::reaching`).
     pub(crate) scratch: usize,
     /// Whether its inline-cache rows hold shape ids, which a shape compaction renumbers
     /// (`LaneMethod::names_shapes`).

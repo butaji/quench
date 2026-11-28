@@ -41,8 +41,7 @@ pub(super) struct GuardExit {
 }
 
 /// What a step's frame needs beyond its edges: the plans and held read of a named field access,
-/// what a slow case needs of the lowering (`sites`: a call-out's record, a capture access's reach,
-/// an `instanceof`'s prototype link).
+/// what a slow case needs of the lowering (`sites`: a call-out's record, a capture access's reach).
 #[derive(Default)]
 pub(super) struct StepWith<'a> {
     pub(super) access: Option<(&'a LanePlans<'a>, HeldRead)>,

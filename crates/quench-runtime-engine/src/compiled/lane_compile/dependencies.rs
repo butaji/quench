@@ -30,15 +30,13 @@ pub fn subscribe_stable(stable: &lane_region::StableFacts, code: &Rc<dyn quench_
     subscribe_prototype_facts(stable, code, facts) && subscribe_heap_facts(stable, code, facts)
 }
 
-/// The prototype chains it read through, prototype values, and instanceof facts. The chains come
+/// The prototype chains it read through and prototype values. The chains come
 /// first: their walk marks a link that was no prototype yet (`Heap::chain_subjects`), a note a
 /// dependency subscribed before it would take for a change.
 fn subscribe_prototype_facts(stable: &lane_region::StableFacts, code: &Rc<dyn quench_runtime::code_dependencies::DependentCode>,
     facts: &mut quench_runtime::vm::tier_queries::FactWatch<'_>) -> bool {
-    stable.chains.iter().chain(stable.instanceofs.iter().map(|fact| &fact.chain)).all(|chain| facts.subscribe_prototype_chain(*chain, code))
+    stable.chains.iter().all(|chain| facts.subscribe_prototype_chain(*chain, code))
         && stable.holders.iter().all(|holder| quench_runtime::tier_surface::subscribe_prototype_values(*holder, code))
-        && stable.instanceofs.iter().all(|fact| facts.subscribe_slot_observation(fact.slot_dependency(), code)
-            && facts.subscribe_shape(fact.shape, code) && quench_runtime::tier_surface::subscribe_prototype_values(fact.holder, code))
 }
 
 /// Method atoms, shapes held past a call, globals, layouts, slot observations, held typed views and trusted cells.

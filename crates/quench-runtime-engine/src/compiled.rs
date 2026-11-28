@@ -1337,8 +1337,6 @@ pub(crate) struct OnlineFacts<'a> {
     pub(crate) invalidation: usize,
     /// The program's constants as the VM made and roots them (`Vm::active_constant`).
     pub(crate) constants: &'a [Value],
-    /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
-    pub(crate) instanceofs: &'a dyn Fn(Value) -> Option<quench_runtime::code_dependencies::InstanceofFact>,
     /// Whether code may hold an object's exact shape past a call (`Vm::shape_is_stable`).
     pub(crate) shape_stable: &'a dyn Fn(u32) -> bool,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
