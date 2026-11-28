@@ -160,12 +160,11 @@ pub struct AotFacts {
     /// The keys the root writes exactly once, with an immediate, where that store dominates every read of the key
     /// (`frozen::root_stores`), read by `AotFacts::dominated_root_store`. Empty unless the world is closed.
     root_stores: BTreeMap<crate::typed_ir::FactKey, RootStore>,
-    /// The constructed classes whose instances never depart their union layout (`shapes::never_departs`), read by
-    /// `AotFacts::class_never_departs`. Only where the closed world proves the union layout.
-    never_departs: std::collections::BTreeSet<u32>,
-    /// The constructed classes whose instances are fixed cells from birth (`class_fixed_cell`): a union layout, never departed
-    /// (`never_departs`), at most `heap::MAX_CELL_FIELDS` fields, and every construction a direct `new` (`shapes::direct_constructions_only`).
+    /// The constructed classes whose instances are union cells with stable slots from birth (`class_fixed_cell`): a union
+    /// layout, `shapes::Stability::slots`, and every construction a direct `new` (`shapes::direct_constructions_only`).
     fixed_cells: std::collections::BTreeSet<u32>,
+    /// The fixed cells no flag transition reaches either (`class_writable_cell`, `shapes::Stability::flags`).
+    writable_cells: std::collections::BTreeSet<u32>,
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
@@ -215,8 +214,8 @@ impl AotFacts {
             layouts: ClassLayouts::default(),
             unions: BTreeMap::new(),
             root_stores: BTreeMap::new(),
-            never_departs: std::collections::BTreeSet::new(),
             fixed_cells: std::collections::BTreeSet::new(),
+            writable_cells: std::collections::BTreeSet::new(),
             readers: None,
             builtins: None,
             closures_once: std::collections::BTreeSet::new(),
@@ -388,21 +387,33 @@ impl AotFacts {
         self.unions.get(&class)?.fields.iter().find(|(name, _)| *name == atom).map(|(_, field)| field.cell)
     }
 
-    /// Whether instances of class `class` never depart their union layout (`shapes`): in a closed world, no delete, no store
-    /// under a name the analysis cannot list, no builtin that defines or re-describes properties reaches one of them.
-    /// Its shape is then the one its union layout names for good, so an instance's slots are the union's slots.
-    pub fn class_never_departs(&self, class: u32) -> bool {
-        self.never_departs.contains(&class)
-    }
-
-    /// Whether every instance of class `class` is a union cell from birth: the allocator builds the union cell only at a
-    /// construction whose start shape is the class's `Constructed{C, true}` root, so this holds only where every construction
-    /// that reaches the class is a direct `new` whose new_target is the class (`shapes::direct_constructions_only`), and the
-    /// instances never depart the union layout (`class_never_departs`), which the closed world proves (`class_union_layout`).
-    /// Every union field has a domain (`slot_domain`) by construction, so none is checked here. The allocator and the lane
-    /// read this one bit: the allocator builds the fixed cell, and the lane addresses the fields directly.
+    /// Whether every instance of class `class` is a union cell from birth whose slots no change moves or renames: the allocator
+    /// builds the union cell only at a construction whose start shape is the class's `Constructed{C, true}` root, so this holds
+    /// only where every construction that reaches the class is a direct `new` whose new_target is the class
+    /// (`shapes::direct_constructions_only`), and no delete, computed store, Define builtin or wild store reaches an instance
+    /// (`shapes::Stability::slots`), in the closed world that proves the union (`class_union_layout`). Every union field has a
+    /// domain (`slot_domain`) by construction. A union longer than the cell region spills (`spill_from`). The allocator and the
+    /// lane read this one bit for reads: the allocator builds the cell, and the lane addresses the fields directly.
     pub fn class_fixed_cell(&self, class: u32) -> bool {
         self.fixed_cells.contains(&class)
+    }
+
+    /// Whether class `class` is a fixed cell (`class_fixed_cell`) that no flag transition reaches either: no builtin that
+    /// freezes, seals, prevents extensions or redefines a property is handed an instance (`shapes::Stability::flags`). With flags
+    /// as class bits, a flag transition keeps the slots (so reads still trust them) but makes stores fail, so stores trust the
+    /// slots only where this holds. It is what "never departs" means for a departure-free cell.
+    pub fn class_writable_cell(&self, class: u32) -> bool {
+        self.writable_cells.contains(&class)
+    }
+
+    /// The first slot of class `class`'s union that lives in its spill run, or None where the union fits the cell region. The
+    /// region is chosen from the union at allocation, so a proven class spills exactly here: the cell keeps slots below it
+    /// (one load) and reserves its last slot for the spill pointer, so a slot at or past it takes two loads. Union order is slot
+    /// order, so each field's case is known at compile time. Derived from the union's length against the region capacity
+    /// (`heap::MAX_CELL_FIELDS`, referenced, not copied).
+    pub fn spill_from(&self, class: u32) -> Option<u32> {
+        let fields = self.unions.get(&class)?.fields.len();
+        (fields > crate::heap::MAX_CELL_FIELDS).then(|| crate::heap::MAX_CELL_FIELDS as u32 - 1)
     }
 
     /// Whether every instance of class `class` holds field `atom` before any code can read it: the class is a fixed cell
