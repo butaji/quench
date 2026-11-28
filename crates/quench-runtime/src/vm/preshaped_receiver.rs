@@ -263,15 +263,11 @@ impl Vm {
         // instances never depart), the same bit the lane reads for direct addressing.
         if !facts.class_fixed_cell(class) { return None; }
         let layout = facts.class_union_layout(class)?;
-        // `slot_domain` is Some for every union atom by construction (NO-JIT), so no domain check.
-        if self.shape_is_dictionary(start) || self.shapes[start as usize].storage_len() != 0 {
-            return None;
-        }
-        // Only a `Constructed{C, true}` root is fixed: its union chain is seeded where the root is made, so every slot of
-        // a fixed receiver's shape is seeded (the NO-JIT invariant).
-        if super::provenance::shape_names(&self.shapes, start).1 != Some((constructor, true)) {
-            return None;
-        }
+        // `class_fixed_cell` means every instance of the class is a union cell from birth (W35): every `new C()` with
+        // new_target C starts from the empty `Constructed{C, true}` root, and `slot_domain` is Some for every union
+        // atom by construction. So the start is that root, and these are invariants, not decisions.
+        debug_assert!(!self.shape_is_dictionary(start) && self.shapes[start as usize].storage_len() == 0);
+        debug_assert_eq!(super::provenance::shape_names(&self.shapes, start).1, Some((constructor, true)));
         let mut union = FixedUnion::new(start);
         for (slot, &(atom, _)) in layout.fields.iter().enumerate() {
             if self.is_private_name(atom) {
