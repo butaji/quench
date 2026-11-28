@@ -61,6 +61,16 @@ pub(in super::super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, 
             let shape = ic::shape_word(stage, &at);
             arms(stage, list, Reached { shape: Some(shape), ..at }, records, miss)
         }
+        FieldPlan::Classed { classes, rest } => {
+            let records = frame.object_records(stage);
+            // The class of a direct object's live cell; any other word, and a departed object, reads as `DEPARTED_CLASS`,
+            // which no arm names, so `rest` takes it. The cell is addressed only where the object is direct.
+            let direct = value::is_direct_object(stage, object);
+            let class = stage.choose(direct,
+                #[inline(always)] |stage| { let cell = super::super::object::cell_of(stage, object); super::super::object::cell_class(stage, cell) },
+                #[inline(always)] |stage| stage.constant(u64::from(super::super::object_encoding::DEPARTED_CLASS)));
+            classed(stage, frame, (owner, readable), object, (class, classes), (records, *rest), miss)
+        }
         FieldPlan::Inherited { shape, constants, proof } =>
             inherited(stage, frame, (owner, readable), object, (shape, constants, proof), miss),
         FieldPlan::Readable(inner) => read_nested(stage, frame, (owner, true), object, *inner, miss),
@@ -165,6 +175,21 @@ pub(super) fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Wo
     }
     stage.choose_leaving(member, #[inline(always)] |stage| ic::run(stage, arm.ops, shaped, records, miss),
         #[inline(always)] |stage| arms(stage, rest, at, records, miss))
+}
+
+/// The first of `classes` whose class is `class` reads its ops on the live cell `object` is (`Shaped::of_cell`); none
+/// does, `rest` reads. The class is `choose`n once by `read_with`, so each arm costs one compare, as `arms` does for shapes.
+#[inline(always)]
+pub(super) fn classed<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool), object: S::Word,
+    (class, classes): (S::Word, &[ClassArm<'_>]), (records, rest): (Option<S::Word>, FieldPlan<'_>), miss: S::Miss) -> Option<S::Word> {
+    let Some((arm, others)) = classes.split_first() else { return read_nested(stage, frame, (owner, readable), object, rest, miss) };
+    let same = stage.eq_imm(class, u64::from(arm.class));
+    stage.choose_leaving(same,
+        #[inline(always)] |stage| {
+            let cell = super::super::object::cell_of(stage, object);
+            ic::run(stage, arm.ops, Reached { shaped: Some(super::super::Shaped::of_cell(cell)), ..Reached::bare(cell) }, records, miss)
+        },
+        #[inline(always)] |stage| classed(stage, frame, (owner, readable), object, (class, others), (records, rest), miss))
 }
 
 /// A nested lookup: each link reads from the previous link's value, the first from `owner`'s

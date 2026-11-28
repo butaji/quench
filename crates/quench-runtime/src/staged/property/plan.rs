@@ -32,6 +32,14 @@ pub struct Arm<'a> {
     pub holds: Option<u32>,
 }
 
+/// One class arm of a polymorphic read whose sites hold live class cells: the cells of class `class` take `ops`,
+/// which read from the cell the class already matched (`Shaped::of_cell`).
+#[derive(Clone, Copy)]
+pub struct ClassArm<'a> {
+    pub class: u32,
+    pub ops: &'a [IcOp<'a>],
+}
+
 /// Which of the VM's entry lookups a read takes where its plan has no op for the receiver: the
 /// VM's polymorphic entries, its hashed entries, a prototype holder's entry, or an inherited
 /// entry's chain walk. Each is one frame host call (`PropertyFrame::field_entry`).
@@ -77,6 +85,10 @@ pub enum FieldPlan<'a> {
     Hinted { ops: &'a [IcOp<'a>], entry: EntryKind },
     /// The first arm whose shape set holds the receiver's exact shape reads; none leaves.
     Arms(&'a [Arm<'a>]),
+    /// A site whose receivers are live class cells as well as records: a direct object's cell class is dispatched
+    /// over `classes` (the first arm of its class reads), and where no arm takes it, or the receiver is no direct
+    /// object, `rest` reads (the shape plan, `Arms` or `Probed` for the records).
+    Classed { classes: &'a [ClassArm<'a>], rest: &'a FieldPlan<'a> },
     /// A receiver of exact `shape` whose prototype holds the values `constants` pair with the
     /// receiver's prototype link; `proof` says what holds that link to the folded holder.
     Inherited { shape: u32, constants: &'a [(u32, u64)], proof: PrototypeProof },
