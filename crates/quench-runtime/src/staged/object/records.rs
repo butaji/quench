@@ -56,7 +56,6 @@ pub fn cell_at_granule<S: Stage>(stage: &mut S, granule: S::Word) -> S::Word {
 /// granule). Its header is the object's class word (`cell_class`) while the object is live, and
 /// `departed_header` once it departed: a reader tests the class before it takes either path.
 #[inline(always)]
-#[allow(dead_code)] // read by the class readers the R4-D2..D4 callers adopt
 pub fn cell_of<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let granule = super::super::value::direct_object_id(stage, bits);
     cell_at_granule(stage, granule)

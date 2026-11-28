@@ -119,6 +119,7 @@ row_twins! {
         GuardDeclared => none("stencil guard: its cost is the guarded operation's"),
         GuardPrototype => none("stencil guard: its cost is the guarded operation's"),
         GuardShape => none("stencil guard: its cost is the guarded operation's"),
+        GuardClass => none("stencil guard: its cost is the guarded operation's"),
         GuardStores => none("stencil guard: its cost is the guarded operation's"),
         BackEdge => kernel(empty),
         IndexSetHelper => none("helper store: no benchmark op isolates it"),
