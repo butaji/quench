@@ -98,14 +98,14 @@ impl LaneView {
 /// The target of the callee the call at `pc` of `view` last reached itself, by the site's own
 /// record (`site_targets_in_lane`): the entry its record links is another callee's once the
 /// target cache replaced it.
-pub(crate) fn site_target(vm: &super::Vm, view: &LaneView, pc: usize) -> Option<super::ScriptCallTarget> {
-    site_targets(vm, view, pc).next()
+pub(crate) fn site_target(vm: &super::Vm, view: &LaneView, function: u32, pc: usize) -> Option<super::ScriptCallTarget> {
+    site_targets(vm, view, function, pc).next()
 }
 
 /// Every callee the call at `pc` of `view` reached (`site_targets_in_lane`), by its target, the
 /// latest first.
-pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
-    super::site_targets_in_lane(vm, view, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
+pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, function: u32, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
+    super::site_targets_in_lane(vm, view, function, pc as u32).into_iter().filter(|site| site.through().is_none()).filter_map(|site| {
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         vm.script_call_entry(site.identity()?).map(|target| unsafe { *target })
     })
@@ -115,11 +115,11 @@ pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, pc: usize) ->
 /// Whether a first compile of `view` waits, before any planning, for callees that still compile: it
 /// then calls their bodies by their entries (`compiled::DirectCallee`). A callee that only lacks a
 /// body is asked to warm toward one and is not waited for. The fact `admission::route_for_lane` reads.
-pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, body: Option<&quench_runtime::bytecode::Function>) -> bool {
+pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, function: u32, body: Option<&quench_runtime::bytecode::Function>) -> bool {
     let Some(body) = body else { return false };
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
         crate::compiled::meaning_compiled::is_call(body.widened(*packed))
-            && site_target(vm, view, pc).is_some_and(|target| {
+            && site_target(vm, view, function, pc).is_some_and(|target| {
                 // SAFETY: a resolved target's view outlives its program.
                 target.program() == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
             })

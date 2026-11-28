@@ -114,7 +114,7 @@ pub(crate) fn direct_callees_in_lane(vm: &mut Vm, view: &LaneView, function: u32
             return callees;
         }
         let vm: &Vm = vm;
-        callees.extend(body_tier_in_lane::site_targets(vm, view, pc).filter(|_| direct)
+        callees.extend(body_tier_in_lane::site_targets(vm, view, function, pc).filter(|_| direct)
             .filter_map(|target| direct_callee_in_lane(vm, view, function, pc, argc, target)));
         // A site that made a closure of one function per run calls the latest, and rebinds to the next (`BoundClosure`).
         if callees.len() == crate::compiled::tier_policy::POLYMORPHISM && callees.iter().all(|callee| callee.target.function == callees[0].target.function) { callees.truncate(1); }
@@ -148,7 +148,7 @@ pub(crate) fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, i
 /// constructor: the forwarded initializer the site last ran (`construct_keeping_activation_in_lane`)
 /// as the callee, the constructor as the identity it guards and the activation it skips.
 fn construct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16) -> Option<crate::compiled::DirectCallee> {
-    for site in site_targets_in_lane(vm, view, pc as u32) {
+    for site in site_targets_in_lane(vm, view, function, pc as u32) {
         let crate::compiled::CalleeBinding::Forwarded { through, callee } = site.callee else { continue };
         // SAFETY: as `Vm::script_call_entry`; both targets are copied before anything resolves one.
         let (constructor, initializer) = unsafe { (*vm.script_call_entry(through)?, *vm.script_call_entry(callee)?) };

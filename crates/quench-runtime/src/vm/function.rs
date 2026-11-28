@@ -393,7 +393,6 @@ impl Vm {
         mut receiver: Value,
         mut args: A,
     ) -> Option<Forwarded<A>> {
-        let mut through_call = false;
         for depth in 0..CALL_FORWARDING_DEPTH {
             match self.heap.function(callee) {
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionBoundCall), env, .. }) => {
@@ -404,13 +403,12 @@ impl Vm {
                     (callee, receiver) = (target, this);
                 }
                 Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. }) => {
-                    through_call |= depth == 0;
                     callee = receiver;
                     receiver = args.shift();
                 }
                 record => {
                     let kind = record.map(|record| record.kind);
-                    return (depth != 0).then_some(Forwarded { callee, receiver, args, kind, through_call });
+                    return (depth != 0).then_some(Forwarded { callee, receiver, args, kind });
                 }
             }
         }
@@ -518,8 +516,6 @@ pub struct Forwarded<A> {
     pub args: A,
     /// The callee's kind; `None` for a callee that is no function.
     pub kind: Option<FunctionKind>,
-    /// Whether the outermost layer was `Function.prototype.call`.
-    pub through_call: bool,
 }
 
 /// The arguments a forwarded call passes on (`Vm::forwarded_call`).

@@ -219,9 +219,6 @@ const THIS_LEAF: LeafForm = quench_runtime::staged::call_leaf::THIS_LEAF;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneInstruction;
 
-use quench_runtime::vm::engine_types::NOTED_SITE_CALLEES;
-
-
 use quench_runtime::vm::engine_types::NO_CALL_LINK;
 /// The bit of a call link the plain call proved (`script_call_prove_miss`): its target activates
 /// plainly and takes the site's argument count, so `script_call_prove_miss` tests only the callee's
@@ -1277,12 +1274,6 @@ impl Admission {
         (self.0 ^ lane.0) & !(Self::CONDITIONS | Self::DIAGNOSED | Self::UNPROVEN) == 0
     }
 
-    /// Whether `self` was made in the lane's current generation, whatever its program.
-    #[inline(always)]
-    fn of_generation(self, lane: Admission) -> bool {
-        self.generation() == lane.generation()
-    }
-
     /// Whether an entry made under `self` admits a call under the lane's `lane`, proved or
     /// not: every unproved path's test (`Vm::script_call_holds`, the relinks). The proved
     /// call compares the words whole.
@@ -1800,27 +1791,6 @@ impl LaneStack {
     #[inline(always)]
     fn activations_left(&self, pending: usize) -> usize {
         self.activation_limit.get().saturating_sub(self.activation_count() + pending)
-    }
-
-    /// Records `target` as a callee of the call record whose link is `link`, in the order
-    /// first seen. The link names the latest callee, so a callee already recorded changes
-    /// nothing: a polymorphic site's steady state only reads its record.
-    fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: crate::compiled::CallTarget) {
-        let address = std::ptr::from_ref(link).addr();
-        let noted = &self.noted[noted_slot(address, target.function)];
-        if noted.get() == Some((address, target)) {
-            return;
-        }
-        let mut sites = self.call_sites.borrow_mut();
-        let site = sites.entry(address).or_default();
-        if !site.contains(&target) {
-            if site.len() == crate::compiled::tier_policy::POLYMORPHISM {
-                site.remove(0);
-                self.forget_noted();
-            }
-            site.push(target);
-        }
-        noted.set(Some((address, target)));
     }
 
     /// Notes whether the running lane run calls script functions (`LaneContext::script_calls`):
@@ -3917,9 +3887,6 @@ impl Vm {
                 Some(index) => index,
                 None => self.relink_site_closure(callee, linked)?,
             };
-            // The callee in hand joins the site's record (`LaneStack::call_sites`): the entry it
-            // linked may hold another site's callee since, so only the record names its own.
-            self.note_linked_callee(link, index);
             // The entry count stays below `NO_CALL_LINK` (`SCRIPT_CALL_TARGETS`).
             link.set(index as u16);
             index
@@ -3947,34 +3914,6 @@ impl Vm {
             return Some(index);
         }
         self.relink_closure(callee, linked)
-    }
-
-    /// The site record of `link` notes entry `index`'s callee (`Vm::note_site_callee`) where a tier may
-    /// run. A polymorphic site's steady state re-notes the callees it alternates between: one compare of
-    /// `LaneStack::linked` finds them noted, as the interpreter's own link test costs.
-    #[inline(always)]
-    fn note_linked_callee(&self, link: &std::cell::Cell<u16>, index: usize) {
-        if self.execution_mode != quench_runtime::vm::ExecutionMode::Compiled {
-            return;
-        }
-        let address = std::ptr::from_ref(link).addr();
-        // SAFETY: the caller resolved `index` within the cache.
-        let callee = unsafe { self.lane_stack.script_targets.entries.get_unchecked(index) }.callee;
-        if self.lane_stack.linked[noted_slot(address, index as u32)].get() != (address, callee) {
-            self.note_linked_callee_slow(address, link, index);
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn note_linked_callee_slow(&self, address: usize, link: &std::cell::Cell<u16>, index: usize) {
-        let current = &self.lane_stack.script_targets.entries[index];
-        // Where no tier runs, no region reads the record: the pair is marked only.
-        if quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), crate::compiled::admission::Tier::ANY) {
-            self.note_site_callee(link, crate::compiled::CallTarget {
-                callee: crate::compiled::CalleeBinding::Identity(current.callee), function: current.function });
-        }
-        self.lane_stack.linked[noted_slot(address, index as u32)].set((address, current.callee));
     }
 
     /// The entry of a callee of another program than the running one, whose targets
@@ -5094,7 +5033,6 @@ script_handler! {
         // SAFETY: a call record's operand is `call`.
         let link = unsafe { (*ip).operand.call.memo } as usize;
         if vm.script_call_holds(link, r.get(i.c)) && matches!(vm.function_record(r.get(i.b)), Some(FunctionRecord { kind: FunctionKind::Native(Native::FunctionCall), .. })) {
-            if unsafe { (*cx).tiers_run } { note_forwarded_in_lane(vm, i, r.get(i.b), r.get(i.c)); }
             let (receiver, args) = window.split_first().map_or((Value::UNDEFINED, &[][..]), |(first, rest)| (*first, rest));
             resume!(cx, function_call_activation_in_lane(cx, r, ip, i, r.get(i.c), receiver, args))
         }
@@ -5104,10 +5042,9 @@ script_handler! {
             if !list.is_undefined() { resume!(cx, bound_arguments_call_in_lane(cx, r, ip, i)); }
             if vm.script_call_holds(link, target) && !unsafe { (*cx).tiers_run } { resume!(cx, function_call_activation_in_lane(cx, r, ip, i, target, this, window)) }
         }
-        let Some(quench_runtime::vm::function::Forwarded { callee, receiver, args, kind, through_call }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
+        let Some(quench_runtime::vm::function::Forwarded { callee, receiver, args, kind, .. }) = vm.forwarded_call(r.get(i.b), r.get(i.c), window) else {
             resume!(cx, bound_arguments_call_in_lane(cx, r, ip, i));
         };
-        if through_call && unsafe { (*cx).tiers_run } { note_forwarded_in_lane(vm, i, r.get(i.b), callee); }
         if let Some(FunctionKind::Native(native)) = kind {
             if i.a & quench_runtime::bytecode::RETURN_REGISTER != 0 && !returning_call_admitted(cx) { return exit(ip); }
             let value = native_value_in_lane(cx, ip, i, native, callee, receiver, args);
@@ -5483,9 +5420,6 @@ script_handler! {
         {
             // Allocating the receiver can make a collection due.
             note_allocation(vm);
-            // The site notes its callee, which a body reads to keep the receiver as its field values.
-            vm.note_site_callee(unsafe { &(*ip).call_link }, crate::compiled::CallTarget {
-                callee: crate::compiled::CalleeBinding::Identity(callee), function: target.function });
             if i.a & quench_runtime::bytecode::RETURN_REGISTER == 0 {
                 r.set(i.a, this);
                 next!(cx, r, following(ip), Carried::script_in(cx, view))
@@ -7255,8 +7189,6 @@ pub(crate) mod lane_dispatch; use lane_dispatch::dispatch_in_lane;
 
 #[cfg(test)]
 pub(crate) mod instruction_set_tests;
-#[cfg(test)]
-pub(crate) mod call_site_history_tests;
 #[cfg(test)]
 pub(crate) mod update_fusion_tests;
 pub(crate) mod on_demand_metadata;

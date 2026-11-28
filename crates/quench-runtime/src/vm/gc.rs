@@ -1081,8 +1081,7 @@ impl Vm {
             self.retain_live_method_caches();
         }
         self.prune_first_chunks();
-        let heap = &self.heap;
-        self.lane_stack.forget_dead_callees(|value| heap.is_live(value));
+        self.lane_stack.forget_dead_callees();
         // A lane run this collection interrupts continues under the new epoch: what its
         // stack resolved before names cells the sweep freed (`LaneStack::retire_after_collection`).
         let generation_key = (self.cache_epochs.gc, self.realm.globals);
@@ -1193,8 +1192,8 @@ impl Vm {
     /// watches of prototype hints whose holder died.
     fn forget_dead_parked_lanes_and_hints(&mut self) {
         let heap = &self.heap;
-        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees(|value| heap.is_live(value)));
-        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees(|value| heap.is_live(value)));
+        self.lane_roots.iter_mut().for_each(|parked| parked.stack.forget_dead_callees());
+        self.spare_lane_stacks.iter_mut().for_each(|spare| spare.forget_dead_callees());
         self.holder_hints.retire_dead(|holder| heap.is_live(holder));
     }
 
