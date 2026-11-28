@@ -13,7 +13,6 @@ use crate::staged::Operation;
 
 /// The thresholds every tier controller reads.
 pub struct Tiers {
-    pub loops: Loops,
     pub lane_body: LaneBody,
     pub wasm: Wasm,
     pub stitch: Stitch,
@@ -89,29 +88,6 @@ pub struct Priors {
     /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
     /// work, none of which overlaps the program as a compile on the code generator's thread does.
     pub plan_ns_per_ir: u64,
-}
-
-/// The loop tier (OSR regions at backward jumps).
-pub struct Loops {
-    /// The backward jumps a loop takes in the interpreter before the tier model weighs its
-    /// compile (`loop_model`): a resource and correctness floor, enough that the call sites of
-    /// its body have linked their targets (which the region inlines) and its entry facts are
-    /// observed. The model asks more where the compile does not yet pay.
-    pub warmup_taken: u32,
-    /// IR instructions a bytecode of a loop's span compiles to, which prices the compile before
-    /// it runs (its own census replaces the guess in the learned cost per IR instruction).
-    pub ir_per_bytecode: u64,
-    /// The weight of the prior that a site's native entries repay themselves, in entries: the
-    /// site's measured runs outweigh it as they mount (`loop_model::repaid_entries`), and it stops
-    /// entering where its entries cost more than the iterations they ran save.
-    pub prior_runs: u64,
-    /// Runs that leave at one operation before the site compiles again with that operation's
-    /// int32 speculation dropped (`LoopTier::left_at`): a sum that overflows on most runs
-    /// (SHA-256's rounds) is a double's, and one that overflowed once is not.
-    pub widen_after_leaves: u16,
-    /// Compilations a site may make: each after the first widens a value the last one held as
-    /// an `i32`, and a region has few such values.
-    pub max_compilations: u32,
 }
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
@@ -215,7 +191,6 @@ impl crate::vm::Vm {
 /// Each threshold at the least value its controller accepts. Thresholds only price
 /// compilation, so this row must compute what `MEASURED` computes.
 const FLOOR: Tiers = Tiers {
-    loops: Loops { warmup_taken: 2, ..MEASURED.loops },
     lane_body: LaneBody { site_executions: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
     wasm: Wasm { backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
@@ -278,7 +253,6 @@ pub const PERCENT: u64 = 100;
 
 
 const MEASURED: Tiers = Tiers {
-    loops: Loops { warmup_taken: 64, ir_per_bytecode: 8, prior_runs: 128, widen_after_leaves: 4, max_compilations: 16 },
     lane_body: LaneBody {
         site_executions: 400,
         reoptimize_share: 1,

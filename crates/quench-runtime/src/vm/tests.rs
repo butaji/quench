@@ -14790,10 +14790,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
             site.admitted && site.deferred_call,
             "dynamic callback should defer region compilation: {site:?}"
         );
-        assert!(
-            site.tier_threshold_reached
-                && site.lane_backedge_count >= u64::from(crate::vm::tier_policy::TierRows::PROCESS.table().loops.warmup_taken)
-        );
+        assert!(site.tier_threshold_reached);
         assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
         let call_pcs = body

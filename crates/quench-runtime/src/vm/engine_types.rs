@@ -1655,7 +1655,6 @@ pub struct LoopTier {
     /// (`Tiers::lane_body`'s `compile_poll_interval`, as a lane body's).
     pub pending: Option<Box<dyn std::any::Any>>,
     pub wait: u16,
-    pub compilations: u32,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
