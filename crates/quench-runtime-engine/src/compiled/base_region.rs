@@ -21,7 +21,7 @@ use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, OperandKind, Regist
 use quench_runtime::code_dependencies::InstanceofFact;
 use quench_runtime::typed_ir::{Representation, Type};
 use quench_runtime::value::Value;
-use crate::dispatch_fast::operand_feedback::OperandKinds;
+use crate::operand_class::Site;
 use quench_runtime::vm::in_presence::InPresence;
 use oxc_ast::ast::{BinaryOperator, UnaryOperator};
 use super::base_rows::{self, Heap, HeapRow};
@@ -342,7 +342,7 @@ fn note(update: impl FnOnce(&mut Totals, &mut BTreeMap<String, u64>)) {
 }
 
 /// The webs of `decoded`, their representations and homes, and the rows renamed to webs.
-fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<OperandKinds>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
+fn analyze(span: &Span, decoded: &[Decoded], widened: (&[usize], &[Option<Site>]), seen: &[Type]) -> (Reprs, Homes, Webs, Vec<Decoded>) {
     // A register with several webs may not have a web in an int slot, whose writes keep a
     // tagged word's high half; such a register is left whole.
     let mut merged = Bits::default();

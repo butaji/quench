@@ -11,6 +11,7 @@
 
 pub mod dispatch_fast;
 pub(crate) mod ahead_runner;
+pub(crate) mod operand_class;
 pub mod compiled;
 pub mod js_compiled;
 pub mod aot_image;
@@ -296,9 +297,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::native_frames::DispatchFastNativeFramesVm as _;
     pub use crate::dispatch_fast::native_frames::LaneStackOps6 as _;
     pub use crate::dispatch_fast::on_demand_metadata::DispatchFastOnDemandMetadataVm as _;
-    pub use crate::dispatch_fast::operand_feedback::OperandKindsOps1 as _;
-    pub use crate::dispatch_fast::operand_feedback::RecordsOps1 as _;
-    pub use crate::dispatch_fast::operand_feedback::LaneViewOpsX2 as _;
     pub use crate::dispatch_fast::proven_callees::DispatchFastProvenCalleesVm as _;
     pub use crate::dispatch_fast::proxy_traps::DispatchFastProxyTrapsVm as _;
     pub use crate::dispatch_fast::scoped_names::DispatchFastScopedNamesVm as _;
@@ -313,7 +311,6 @@ pub(crate) mod ext_traits {
     pub use crate::lifted::LaneViewLifted648 as _;
     pub use crate::native_program::NativeJsProgramOps1 as _;
     pub use crate::native_program::NativeProgramVm as _;
-    pub use crate::dispatch_fast::operand_feedback::OperandFeedbackVm as _;
 }
 
 /// What the executable and tools call: native object emission for AOT images, the image bundle,

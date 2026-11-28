@@ -11,6 +11,7 @@
 use crate::ext_traits::*;
 use super::{CallSite, ImageTarget, symbols::SymbolTable};
 use quench_runtime::bytecode::ResidualProgram;
+use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::vm::jit_backend::relocatable_code::{PatchKind, RelocatableCode, Relocation};
 
 pub(crate) use quench_runtime::vm::engine_types::BaseImage;
@@ -23,17 +24,18 @@ impl BaseImage {
     pub(crate) fn generic_rows(&self) -> usize { self.generic.len() }
 }
 
-/// The base body of function `id`: the BaseJIT body over the program alone (no profile), its calls
+/// The base body of function `id`: the BaseJIT body over the program and its closed-world `facts` (no profile), its calls
 /// direct where `facts` prove their callee, its helper and call record addresses as `PatchKind::Abs8`
 /// relocations to the symbols the loader resolves; and those calls' sites (`AotImage::calls`).
 pub(crate) fn lower(
     program: &ResidualProgram,
+    facts: &AotFacts,
     target: &ImageTarget,
     id: u32,
     symbols: &mut SymbolTable,
 ) -> Result<(BaseImage, Vec<CallSite>), String> {
     // The body is the target CPU's stencils, not the compiling CPU's.
-    let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, id))?;
+    let built = quench_bjit::rustc::with_library(target.x86_64_v3_stencils(), || crate::compiled::image_body(program, facts, id))?;
     let relocations: Box<[Relocation]> = built.symbols.iter().map(|site| {
         let (namespace, key) = symbols.intern(site.symbol);
         // Apple AArch64 names a helper call as a branch hole; a guard's shape is a 32-bit immediate; a

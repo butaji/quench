@@ -54,7 +54,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, _program: ProgramId, _function: u32, cod
 #[cfg(not(feature = "jit"))]
 fn ahead_lane_view(function: &Function, constants: &[Value]) -> LaneView {
     let count = function.code.len();
-    let records = Records::new(body_records(function, constants), false);
+    let records = Records::new(body_records(function, constants));
     let mut entries = vec![0u64; count.div_ceil(u64::BITS as usize)];
     if let Some(first) = entries.first_mut() { *first = 1; }
     let base = records.base();

@@ -2,6 +2,8 @@
 #![allow(unused_imports)]
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 use super::*;
+use crate::operand_class::{int32_cell, number_cell, object_cell, operand_type};
+use quench_runtime::vm::engine_types::Records;
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Whether the iteration step at `pc` (`iteration_step_in_lane`) is a destructuring step as
@@ -523,8 +525,7 @@ pub(crate) fn derive_lane_view<'live>(
     let (field_records, name_records) = (hinted_records(false), hinted_records(true));
     let string_case_filters = string_case_filter::specialize(heap, constants, &decoded, &mut records);
     if this_trusted { trust_this_rows(&mut records); }
-    let records = Records::new(records, decoded.iter().fold(false, |seen, instruction| seen || has_operand_feedback(instruction.op())));
-    seed_declared_feedback(function, &records);
+    let records = Records::new(records);
     let first = records.base();
     // The first loop closing at a backedge owns it, as a front-to-back search would find it.
     let mut loop_at_backedge: Vec<(u32, u32)> = loops.iter().enumerate().map(|(index, site)| (site.backedge, index as u32)).collect();
@@ -573,29 +574,6 @@ pub(crate) fn derive_lane_view<'live>(
 /// superinstruction writes registers the solve does not follow, so a body with either takes no cell's int32.
 fn int32_projectable(decoded: &[WideInstruction], resolves_names: bool) -> bool {
     !resolves_names && !decoded.iter().any(|instruction| instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::SuperinstructionIndex)
-}
-
-/// The type of register `register` just before the instruction at `pc` of `function`, from the program's one solve
-/// (`FunctionFacts::cell_at`). A register with no cell, and every register without facts, is `Type::ANY`. The operator
-/// records and compare jumps choose their instances from it (`specialize_plain_operators`, `prove_compare_jumps`).
-pub(super) fn operand_type(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32, pc: u32, register: u16) -> quench_runtime::typed_ir::Type {
-    facts.and_then(|facts| facts.function_facts(function).cell_at(pc, register)).map_or(quench_runtime::typed_ir::Type::ANY, |cell| cell.ty)
-}
-
-/// Whether a cell type holds int32s only. `NEVER` (a path leaves the register unset) is a subtype of every type, so it is
-/// excluded: an unset register holds no value the instance may read untagged.
-pub(super) fn int32_cell(ty: quench_runtime::typed_ir::Type) -> bool {
-    ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::INT32)
-}
-
-/// Whether a cell type holds Numbers only, int32s or doubles (`NEVER` excluded, as `int32_cell`).
-pub(super) fn number_cell(ty: quench_runtime::typed_ir::Type) -> bool {
-    ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER)
-}
-
-/// Whether a cell type holds objects only (`NEVER` excluded, as `int32_cell`).
-pub(super) fn object_cell(ty: quench_runtime::typed_ir::Type) -> bool {
-    ty != quench_runtime::typed_ir::Type::NEVER && ty.is_subtype(quench_runtime::typed_ir::Type::language(quench_runtime::ValueType::Object))
 }
 
 /// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`

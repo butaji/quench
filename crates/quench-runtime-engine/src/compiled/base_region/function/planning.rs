@@ -116,18 +116,18 @@ pub(crate) fn interprets(row: &Decoded) -> bool {
 
 /// The plan of row `pc`: nothing where control never reaches it, a leave row, or the row with the
 /// rows before it its kind needs.
-pub(crate) fn plan_row(layout: &Layout, (reprs, kinds): (&Reprs, Option<&OperandKinds>), rows: &[Decoded], reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
+pub(crate) fn plan_row(layout: &Layout, (reprs, site): (&Reprs, Option<Site>), rows: &[Decoded], reached: bool, pc: u32, row: &Decoded, helpers: LaneHelpers) -> Result<Planned, String> {
     if !reached {
         return Ok(skipped());
     }
     if row.step == Some(Step::Switch) {
-        return super::switch::switch_run(layout, (reprs, kinds), rows, pc, row, helpers);
+        return super::switch::switch_run(layout, (reprs, site), rows, pc, row, helpers);
     }
     if leaves(layout, row) {
         return plan_step(&Decoded::step(Step::Leave, None), layout, pc, helpers);
     }
     // The preludes come before the row's own run (a chain's spills): their leaves write the pinned registers back themselves.
-    let mut planned = plan(row, layout, pc, (is_general(row, reprs), variant_of(row.kind, kinds)), helpers)?.after(preludes(layout, row, pc)?);
+    let mut planned = plan(row, layout, pc, (is_general(row, reprs), variant_of(row.kind, site)), helpers)?.after(preludes(layout, row, pc)?);
     if row.completes {
         planned = completing(planned, layout, pc, row.dst)?;
     }

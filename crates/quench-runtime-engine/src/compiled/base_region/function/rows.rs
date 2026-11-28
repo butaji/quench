@@ -4,6 +4,8 @@
 
 #[allow(unused_imports)]
 use quench_runtime::staged::AllocationAllocationExt;
+use crate::operand_class::{chooses_variant, operand_type, Site};
+use quench_runtime::compile::aot_facts::AotFacts;
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, CallRecordFormsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
@@ -167,12 +169,26 @@ pub(crate) fn widened_rows(origins: &[Origin], frames: &[InlinedCall], widened: 
     origins.iter().enumerate().filter(|(_, origin)| widens(origin)).map(|(k, _)| k).collect()
 }
 
-/// What each row's site saw of its operands: the caller's instructions' (`kinds`, from the region's
-/// header), none for the rows of an inlined callee.
-pub(crate) fn row_kinds(region: &LoopRegion, origins: &[Origin], kinds: &[OperandKinds]) -> Vec<Option<OperandKinds>> {
-    origins.iter().map(|origin| match origin {
-        Origin::Caller(pc) => kinds.get((*pc - region.header) as usize).copied(),
-        Origin::Inlined { .. } => None,
+/// What the solver proves of each row's operands, where the row's instruction chooses its variant from them
+/// (`operand_class::chooses_variant`): the caller's instructions from the function's solve (`facts`), an inlined callee's
+/// from its own, its registers named back through the window it was inlined at (`InlinedCall::base`). A register outside
+/// that window, or a row of no such instruction, has no site.
+pub(crate) fn row_sites(facts: Option<&AotFacts>, program: &ResidualProgram, function: u32, origins: &[Origin], frames: &[InlinedCall],
+    rows: &[Decoded]) -> Vec<Option<Site>> {
+    origins.iter().zip(rows).map(|(origin, row)| {
+        let (owner, pc, base) = match *origin {
+            Origin::Caller(pc) => (function, pc, 0),
+            Origin::Inlined { frame, pc } => (frames[frame].target.function, pc, frames[frame].base),
+        };
+        if !chooses_variant(program.function(owner as usize).instruction_at(pc as usize)) {
+            return None;
+        }
+        let ty = |source: Option<Source>| match source {
+            Some(Source::Register(register)) => register.checked_sub(base).map_or(Type::ANY, |local| operand_type(facts, owner, pc, local)),
+            Some(Source::Constant(word) | Source::Value(word)) => Type::immediate(Value::from_bits(word)),
+            None => Type::ANY,
+        };
+        Some(Site::of([ty(row.a), ty(row.b)]))
     }).collect()
 }
 

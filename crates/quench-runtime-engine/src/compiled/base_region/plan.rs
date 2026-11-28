@@ -365,7 +365,7 @@ pub(crate) fn method_read(receiver: Register, cache: u16, scratch: Register) -> 
 }
 
 /// The row of `decoded` at `pc`, which takes general semantics where `general` and the speculation of
-/// its feedback `variant`; a backward jump takes the poll row the layout's ending names.
+/// its `variant`; a backward jump takes the poll row the layout's ending names.
 pub(crate) fn plan(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): (bool, Variant), helpers: LaneHelpers) -> Result<Planned, String> {
     planned_row(decoded, layout, pc, (general, variant), helpers)
 }

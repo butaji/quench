@@ -482,13 +482,6 @@ pub(crate) mod body_calls;
 pub(crate) mod body_forms;
 pub(crate) mod proven_callees;
 pub(crate) use body_calls::{body_call_helper, body_construct_helper};
-#[path = "operand_feedback.rs"]
-pub(crate) mod operand_feedback;
-#[cfg(feature = "jit")]
-use operand_feedback::{has_operand_feedback, seed_declared_feedback};
-#[cfg(feature = "jit")]
-use operand_feedback::Records;
-use operand_feedback::note_operands;
 #[path = "body_tier_in_lane.rs"]
 pub(crate) mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
@@ -3908,8 +3901,6 @@ script_handler! {
         else {
             return exit(ip);
         };
-        // SAFETY: the record is a comparison record of the running view.
-        unsafe { note_operands(cx, ip, left, right) };
         let Some(holds) = relation_other(u32::from(i.a), left, right) else {
             return exit(ip);
         };

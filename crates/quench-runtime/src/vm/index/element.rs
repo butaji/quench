@@ -2,7 +2,6 @@
 //! trap, a typed array, a string or an accessor index before the named-key walk.
 
 use super::*;
-use crate::vm::engine_types::OperandKinds;
 
 impl Vm {
     /// The data element an array holds at `index` (present, not a hole), which a read takes with no
@@ -17,18 +16,12 @@ impl Vm {
     /// typed array's (`dense_element`, `typed_array_number_element`): no guest code, no allocation. `None`
     /// leaves the read to `get_index`, which decides every other case.
     #[inline(always)]
-    pub(in crate::vm) fn element_read_fast(&self, object: Value, key: Value) -> Option<Value> {
-        self.element_read_kind(object, key).map(|(value, _)| value)
-    }
-
-    /// `element_read_fast` with the element kind it read (`DENSE` or `TYPED`), for the site's feedback.
-    #[inline(always)]
-    pub fn element_read_kind(&self, object: Value, key: Value) -> Option<(Value, OperandKinds)> {
+    pub fn element_read_fast(&self, object: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
         if let Some(value) = self.dense_element(object, index) {
-            return Some((value, OperandKinds::DENSE));
+            return Some(value);
         }
-        self.typed_array_number_element(object, index).map(|value| (value, OperandKinds::TYPED))
+        self.typed_array_number_element(object, index)
     }
 
     /// `get_index` of `object` at the array index `index` (the key `key`): the value or error

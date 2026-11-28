@@ -21,6 +21,7 @@ use super::call_plan::{CallForm, CallShape, DirectFacts};
 use super::callees::{chains, Callees};
 use super::super::LaneHelpers;
 use quench_runtime::bytecode::Function;
+use quench_runtime::compile::aot_facts::AotFacts;
 use quench_runtime::tier_surface::GlobalFact;
 use quench_bjit::{padded_holes, HOLES};
 
@@ -131,10 +132,9 @@ pub(crate) struct BodySpec<'a> {
     /// The type each entry register held when the compile observed it, by register (a register past the slice
     /// is no observation: `Type::ANY`).
     pub(crate) seen: &'a [Type],
-    /// What each of the spanned instructions' sites saw of its operands (`OperandKinds`), from the
-    /// header: which variant of row an arithmetic or comparison site takes (`variant_of`) and whether it is
-    /// widened. Empty where nothing was recorded.
-    pub(crate) kinds: &'a [OperandKinds],
+    /// The solve of the function (`FunctionFacts::cell_at`), whose operand types choose the variant of row an arithmetic
+    /// or comparison site takes (`row_sites`, `variant_of`). None where the program has no facts: every operand is `Any`.
+    pub(crate) facts: Option<&'a AotFacts>,
     /// The typed array kind each spanned instruction's interpreter record observed, from the header
     /// (`Observation::typed_rows`); empty where nothing was recorded.
     pub(crate) typed: &'a [Option<quench_runtime::tier_surface::TypedArrayKind>],
@@ -271,11 +271,11 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     }
     let mut rows: Vec<Decoded> = stitched.rows.into_iter().enumerate().map(|(k, row)| if !reached.contains(k) { Decoded::step(Step::Leave, None) } else { row }).collect();
     super::exact::promote(function, &spec.known.program.constants, &stitched.origins, &mut rows);
-    let kinds = row_kinds(region, &stitched.origins, spec.kinds);
+    let operand_sites = row_sites(spec.facts, spec.known.program, spec.function, &stitched.origins, &stitched.frames, &rows);
     typed_rows(region, &stitched.origins, spec.typed, &mut rows);
     let seen = super::declared::seen(function, ending, spec.seen);
-    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), kinds.as_slice()), &seen);
-    feedback_admits(&mut decoded, &kinds, spec.known.fields);
+    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), operand_sites.as_slice()), &seen);
+    direct_admits(&mut decoded, &operand_sites, spec.known.fields);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
     let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
@@ -299,8 +299,8 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
     // A declared Number's rows rely on its entry guard, and an inlined frame's copies run at a leave: those guards stay.
     let kept: Vec<Register> = numbers.iter().copied().chain(stitched.copies.iter().flatten().flat_map(|&(param, arg)| [param, arg])).collect();
-    let entry_reads = numbers::entry_reads(&span, &decoded, &homes, &kinds, &kept);
-    let number_held = numbers::proven_operands(&span, &decoded, &reached, &homes, &webs, &entry_reads, &kinds, ending, &stitched.entries);
+    let entry_reads = numbers::entry_reads(&span, &decoded, &homes, &operand_sites, &kept);
+    let number_held = numbers::proven_operands(&span, &decoded, &reached, &homes, &webs, &entry_reads, &operand_sites, ending, &stitched.entries);
     let ints = numbers::proven_int_operands(&span, &decoded, &reached, &homes, &webs, ending, &stitched.entries);
     for (row, (int_a, int_b)) in decoded.iter_mut().zip(ints) {
         (row.int_a, row.int_b) = (int_a, int_b);
@@ -316,7 +316,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
     let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
-    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, kinds[k].as_ref()), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
+    let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, operand_sites[k]), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
         report_steps(&layout, spec.known.program, &singles);
     }
@@ -385,13 +385,12 @@ fn typed_rows(region: &LoopRegion, origins: &[super::super::lane_unit::Origin], 
     }
 }
 
-/// Admits a packed helper row only where its site's feedback admits its direct arm (`family_helpers::admits`):
-/// a binary site met Number operands only, an element site met a dense or typed element. Another site would
-/// run the general step on every execution. An inlined row has no site of its own, and is not admitted.
-fn feedback_admits(decoded: &mut [Decoded], kinds: &[Option<OperandKinds>], fields: Option<&dyn Fn(u16) -> bool>) {
-    for (row, site) in decoded.iter_mut().zip(kinds) {
+/// Admits a packed helper row only where its direct arm (`family_helpers::admits`) is worth its run: a binary site whose
+/// operands the solver does not type `Any`. A row with no site of its own is not admitted there, as before.
+fn direct_admits(decoded: &mut [Decoded], sites: &[Option<Site>], fields: Option<&dyn Fn(u16) -> bool>) {
+    for (row, site) in decoded.iter_mut().zip(sites) {
         if let Some(words) = row.packed
-            && !crate::dispatch_fast::family_helpers::admits(words, *site, fields)
+            && !crate::dispatch_fast::family_helpers::admits(words, site.map(|site| site.class), fields)
         {
             row.packed = None;
         }

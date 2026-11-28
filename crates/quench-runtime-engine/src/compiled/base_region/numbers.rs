@@ -53,13 +53,13 @@ fn entry_state(span: &Span, homes: &Homes, webs: &Webs, reads: &EntryReads, row:
 
 /// Per row, whether the checked operand of a `checked` row is a Number on every path into it.
 ///
-/// `reached` marks the rows control reaches, `kinds` is each row's site feedback (`variant_of`), `reads`
+/// `reached` marks the rows control reaches, `sites` is each row's site (`variant_of`), `reads`
 /// the entry guards the rows keep (`entry_reads`), and `entries` the first row of each caller PC a resume
 /// stub enters at (none for a body, which only its entry enters).
 pub(crate) fn proven_operands(span: &Span, decoded: &[Decoded], reached: &Bits, homes: &Homes, webs: &Webs,
-    reads: &EntryReads, kinds: &[Option<OperandKinds>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
+    reads: &EntryReads, sites: &[Option<Site>], ending: Ending, entries: &[(u32, u32)]) -> Vec<bool> {
     let state = solve(span, decoded, ending, entries, |row| entry_state(span, homes, webs, reads, row),
-        |k, held| transfer(homes, &decoded[k], kinds.get(k).and_then(Option::as_ref), held));
+        |k, held| transfer(homes, &decoded[k], sites.get(k).copied().flatten(), held));
     decoded.iter().enumerate().map(|(k, row)| {
         let (true, Some(Source::Register(web))) = (reached.contains(k) && row.checked, row.a) else { return false };
         state[k].as_ref().is_some_and(|held| held.contains(usize::from(homes.orig[usize::from(web)])))
@@ -195,7 +195,7 @@ fn int_transfer(homes: &Homes, row: &Decoded, held: &Held) -> Held {
 
 /// The state after `row` from `held`. A copy keeps its source's Number-ness; a numeric row's result is a
 /// Number where the row leaves on any other operand; anything else writes an unknown value.
-fn transfer(homes: &Homes, row: &Decoded, kinds: Option<&OperandKinds>, held: &Held) -> Held {
+fn transfer(homes: &Homes, row: &Decoded, site: Option<Site>, held: &Held) -> Held {
     let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
     let source = |source: Option<Source>| match source {
         Some(Source::Register(web)) => held.contains(slot(web)),
@@ -207,7 +207,7 @@ fn transfer(homes: &Homes, row: &Decoded, kinds: Option<&OperandKinds>, held: &H
     } else if matches!(row.kind, Kind::Move | Kind::Const) {
         source(row.a)
     } else {
-        leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
+        leaves_on_other(row.kind) && variant_of(row.kind, site) != Variant::Concat
     };
     let mut out = held.clone();
     for written in [row.dst, row.also].into_iter().flatten() {
@@ -251,12 +251,12 @@ impl EntryReads {
 /// Whether the row checks each operand it reads, so it reads no fact an entry guard provides: a bare numeric
 /// row (`Decoded::number`, nothing else set) whose stencil leaves on any other operand (`leaves_on_other`), and
 /// which is no `Concat` variant.
-pub(crate) fn self_checking(row: &Decoded, kinds: Option<&OperandKinds>) -> bool {
+pub(crate) fn self_checking(row: &Decoded, site: Option<Site>) -> bool {
     let bare = row.heap.is_none() && row.step.is_none() && row.global.is_none() && row.base.is_none() && row.also.is_none()
         && row.atom.is_none() && row.folded.is_none() && row.instanceof.is_none() && row.lexical.is_none() && row.add.is_none()
         && row.name.is_none() && row.ic.is_none() && row.declined.is_none() && row.holder.is_none() && row.cell.is_none() && !row.class_read
         && !row.proven && !row.checked && !row.admitted && !row.recheck;
-    bare && leaves_on_other(row.kind) && variant_of(row.kind, kinds) != Variant::Concat
+    bare && leaves_on_other(row.kind) && variant_of(row.kind, site) != Variant::Concat
 }
 
 /// The backward problem of `entry_reads`: a row's state is the slots live on entry to the rows after it, and its
@@ -299,7 +299,7 @@ impl<F: Fn(usize, &Held) -> Held> quench_runtime::dataflow::Dataflow for LiveIn<
 /// The entry reads of a region's rows: a backward analysis of the slots a native read reaches before a write.
 /// A self-checking row reads nothing an entry must prove; any other row reads all its registers, and a row writes
 /// its destinations, which end the entry value there.
-pub(crate) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds: &[Option<OperandKinds>], kept: &[Register]) -> EntryReads {
+pub(crate) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, sites: &[Option<Site>], kept: &[Register]) -> EntryReads {
     let count = decoded.len();
     let capacity = homes.orig.len().max(1);
     let slot = |web: Register| usize::from(homes.orig[usize::from(web)]);
@@ -317,7 +317,7 @@ pub(crate) fn entry_reads(span: &Span, decoded: &[Decoded], homes: &Homes, kinds
         for written in [row.dst, row.also].into_iter().flatten() {
             before.remove(slot(written));
         }
-        if !self_checking(row, kinds.get(k).and_then(Option::as_ref)) {
+        if !self_checking(row, sites.get(k).copied().flatten()) {
             for read in row.registers() {
                 before.insert(slot(read));
             }
