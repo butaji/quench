@@ -61,7 +61,7 @@ pub use class_layout::{FieldDefault, Storage, UnionField, UnionLayout};
 pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
-pub use identity::BuiltinPath;
+pub use crate::typed_ir::BuiltinPath;
 pub use globals::GlobalShape;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
