@@ -12,8 +12,11 @@ impl Vm {
         calls_result_once: bool,
     ) -> Result<Value, JsError> {
         let mut prepared = self.prepare_embedding_owned_script(source, name, Some(origin), keep_records, typescript)?;
-        // A program the host shares elsewhere already keeps the facts it was solved with: it stays as it is.
-        if let Some(program) = std::rc::Rc::get_mut(&mut prepared.program) { program.host_calls_result_once = calls_result_once; }
+        // The host's word is data of the program it runs, set on every path (compiled, kept, shared): a shared program is
+        // copied before the flag is set, so the word never depends on who else holds it.
+        if prepared.program.host_calls_result_once != calls_result_once {
+            std::rc::Rc::make_mut(&mut prepared.program).host_calls_result_once = calls_result_once;
+        }
         self.evaluate_embedding_prepared_script(&prepared)
     }
 

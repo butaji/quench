@@ -113,6 +113,8 @@ impl Vm {
         // Legacy reflection reads the frame stack (`Vm::materialize_deferred_lane`).
         self.materialize_deferred_lane();
         let mut caller = self.function_caller(function);
+        // The host's wrapper is no caller reflection hands out, as top-level code is none (`hides_host_wrapper`).
+        if self.hides_host_wrapper(caller) { return Ok(Value::NULL); }
         if caller.as_known_closure().is_some() {
             caller = self.known_closure_function(caller)?;
         }
@@ -134,6 +136,22 @@ impl Vm {
             self.define_instance_prototype(caller, atom, prototype, false, false)?;
         }
         Ok(caller)
+    }
+
+    /// Whether `function` is the closure the host calls once to run a script (the CommonJS loader's wrapper,
+    /// `aot_facts::once_body`): legacy reflection (a `caller` read, a stack trace's `getFunction`) never hands it out, so no
+    /// code can call it again, and the facts solve its body as code that runs once per run.
+    pub(super) fn hides_host_wrapper(&self, function: Value) -> bool {
+        let (program, body) = match function.as_known_closure() {
+            Some((body, _)) => (self.active_program, body),
+            None => match self.heap.function(function).map(|record| record.kind) {
+                Some(FunctionKind::User(program, body)) => (program, body),
+                _ => return false,
+            },
+        };
+        self.programs.get(program).is_some_and(|code| {
+            code.host_calls_result_once && body != 0 && crate::compile::aot_facts::once_body(&code) == body
+        })
     }
 
     /// The function object a call-only closure (`Value::known_closure`) stands for, made when

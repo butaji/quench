@@ -154,7 +154,14 @@ pub(super) fn named_closures(flows: &[FunctionFlow]) -> BTreeSet<u32> {
 /// closures named properties hold (`escapes::mark`: a closure a conversion or the host may call), the escaped functions, and,
 /// for a Module, the functions its root declares (the host imports them).
 pub(super) fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
-    let named = named_closures(flows);
+    let mut seeds = started_seeds(program, flows, census, escaped);
+    seeds.extend(named_closures(flows));
+    seeds
+}
+
+/// The seeds (`seeds`) other than the closures named properties hold: the functions code the call graph does not record may
+/// start whether or not the program has made their closure yet.
+pub(super) fn started_seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
     let root = (0..flows.len()).find(|&id| program.with_record(id, |function| function.parent.is_none())).map(|id| id as u32);
     let module_root = if matches!(program.kind, ProgramKind::Module) { root } else { None };
     let mut seeds: Vec<u32> = (0..flows.len())
@@ -165,7 +172,6 @@ pub(super) fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &
         .collect();
     seeds.extend(escaped.functions.iter().copied());
     seeds.extend(census.accessors.functions());
-    seeds.extend(named);
     seeds
 }
 
