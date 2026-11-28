@@ -66,8 +66,7 @@ impl Lowering<'_, '_> {
         let packed = self.proven_element(pc).is_some_and(|ty| ty.is_subtype(Type::NUMBER));
         let within = self.ranges.in_bounds(pc);
         self.held_view = array.map(|array| self.held_array(array, (packed, within), self.ranges.integral_index(pc)));
-        // A hoisted array's hole leaves, until the read has left often enough to be widened
-        // (`LoopTier::left_at`), whose recompile then takes the VM's read.
+        // A hoisted array's read leaves at a hole (`hole_leaves`).
         self.hole_leaves = array.is_some() && !self.generic.contains(&pc);
         let value = match (array, key.register_index()) {
             // A base no loop array holds, read by a register key: a string's unit (`string_or_row`).

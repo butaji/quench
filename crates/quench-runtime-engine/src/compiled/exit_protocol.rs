@@ -156,7 +156,7 @@ pub(crate) use quench_runtime::vm::engine_types::ExitSite;
 
 pub(crate) use quench_runtime::vm::engine_types::ExitTable;
 
-pub(crate) use quench_runtime::vm::engine_types::{ExitFact, FactMissing};
+pub(crate) use quench_runtime::vm::engine_types::ExitFact;
 
 #[quench_macros::ext(ExitTableOps1)]
 impl ExitTable {
@@ -178,7 +178,6 @@ impl ExitTable {
         }
         table.sigs.shrink_to_fit();
         table.sites.shrink_to_fit();
-        table.crossings = (0..table.sites.len()).map(|_| std::cell::Cell::new(0)).collect();
         table
     }
 
@@ -187,17 +186,7 @@ impl ExitTable {
     pub(crate) fn of_code(code: &[quench_runtime::bytecode::WideInstruction]) -> Self {
         let mut table = Self { sigs: vec![ExitSig { kind: ExitKind::At, live: Box::default() }], ..Self::default() };
         for (pc, instruction) in code.iter().enumerate() { table.add(LaneExit::At(pc), 0, pc, ExitFact::of(instruction)); }
-        table.crossings = (0..table.sites.len()).map(|_| std::cell::Cell::new(0)).collect();
         table
-    }
-
-    /// Counts a run that left at `exit`, and answers its typed edge; a leave at no site (an entry,
-    /// a callee's activation) has none.
-    pub(crate) fn cross(&self, exit: LaneExit) -> Option<FactMissing> {
-        let site = self.site(exit)?;
-        let crossed = self.crossings.get(site.id as usize)?;
-        crossed.set(crossed.get().saturating_add(1));
-        Some(FactMissing { fact: site.fact, site: site.id })
     }
 
 

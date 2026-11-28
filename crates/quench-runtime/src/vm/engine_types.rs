@@ -1500,14 +1500,13 @@ impl BoundClosure {
     }
 }
 
-pub use super::fact_edge::{ExitFact, FactMissing};
-/// A unit's leaves, each place once, ordered by leave word, over its interned sigs, and per site its crossings
-/// (`FactMissing`). Built once per compile and kept by the body it publishes; its tables hold no spare capacity.
+pub use super::fact_edge::ExitFact;
+/// A unit's leaves, each place once, ordered by leave word, over its interned sigs. Built once per compile and kept by
+/// the body it publishes; its tables hold no spare capacity.
 #[derive(Default)]
 pub struct ExitTable {
     pub sigs: Vec<ExitSig>,
     pub sites: Vec<ExitSite>,
-    pub crossings: Box<[std::cell::Cell<u32>]>,
 }
 
 
