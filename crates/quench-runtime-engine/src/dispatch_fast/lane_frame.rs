@@ -48,8 +48,8 @@ pub(crate) enum NameRead {
     Native,
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
-    /// The global object's own data field the record's hint names.
-    Field(quench_runtime::vm::FieldCache),
+    /// The global object's own data field the record's hint named (S7g: the record hint is gone).
+    Field,
     /// The active realm's global lexical binding the record's hint locates by index (`slot`), taken
     /// only while it is the name's and initialized (`Vm::global_lexical_at`). Subsumes the hand
     /// `lane_load_name_lexical`.
@@ -163,8 +163,6 @@ struct Decisions {
     decide: fn(*mut (), u32, Value, Value) -> Option<bool>,
     /// The encoded `prototype` link of a constructor the VM proved Stable (`Vm::instanceof_fact`).
     prototype: fn(*mut (), Value) -> Option<u32>,
-    /// The base of the object record table.
-    records: fn(*mut ()) -> Option<u64>,
     /// `value instanceof constructor` by the VM's published proof of the constructor's chain (`Vm::record_instanceof`),
     /// else the ordinary walk (`Vm::ordinary_instanceof`): neither runs guest code.
     instance: fn(*mut (), Value, Value) -> Option<bool>,
@@ -178,8 +176,6 @@ impl Decisions {
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext>()) }, operator, left, right),
             prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext>()) }.instanceof_fact(constructor)
                 .map(|fact| fact.link),
-            // S7f DESIGN: the object record table is gone; no record table is ever offered.
-            records: |_context| None,
             instance: instance_decision }
     }
 }
@@ -204,14 +200,6 @@ struct FieldStores {
     proved: fn(*mut (), Value, u32, u16, Value) -> bool,
     /// The VM's cached add (`primary_field_add_hit`), noting its allocation.
     primary: fn(*mut (), Value, u32, u16, Value) -> bool,
-    /// The VM's store through the record's hint (`hinted_primary_field_store_hit::<true>`, or the
-    /// narrow store `hinted_narrow_field_store_hit` when `narrow`).
-    hinted: fn(*mut (), Value, u32, Value, quench_runtime::vm::FieldCache, bool) -> bool,
-    /// The VM's store through the record's own hint (`hinted_own_field_store_hit`).
-    hinted_own: fn(*mut (), Value, u32, Value, quench_runtime::vm::FieldCache) -> bool,
-    /// The VM's store through the site's polymorphic entries (`polymorphic_own_field_store_hit`),
-    /// the own entry it hit, which the record's hint takes.
-    polymorphic: fn(*mut (), Value, u32, u16, Value) -> Option<quench_runtime::vm::FieldCache>,
     /// The VM's general cached write (`cached_field_write_hit`) of a public name, noting its
     /// allocation; a private name leaves to its own path.
     general: fn(*mut (), Value, u32, u16, Value) -> bool,
@@ -276,22 +264,6 @@ impl FieldStores {
                     note_allocation(vm);
                 }
                 added
-            },
-            hinted: |context, object, atom, value, hint, narrow| {
-                let vm = unsafe { vm(context.cast::<LaneContext>()) };
-                if narrow { vm.hinted_narrow_field_store_hit(hint, object, atom, value) }
-                else { vm.hinted_primary_field_store_hit::<true>(hint, object, atom, value) }
-            },
-            hinted_own: |context, object, atom, value, hint| {
-                let vm = unsafe { vm(context.cast::<LaneContext>()) };
-                vm.hinted_own_field_store_hit(hint, object, atom, value)
-            },
-            polymorphic: |context, object, atom, site, value| {
-                let cx = context.cast::<LaneContext>();
-                let vm = unsafe { vm(cx) };
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                vm.polymorphic_own_field_store_hit(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden)
             },
             general: |context, object, atom, site, value| {
                 let cx = context.cast::<LaneContext>();
@@ -1327,12 +1299,6 @@ impl<const ACC: u8> Frame<Concrete> for LaneFrame<ACC> {
         true
     }
 
-    #[inline(always)]
-    // S7f DESIGN: the object table the for-in fast arm needs is gone, so the arm declines (see bjit `places.rs`).
-    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> {
-        None
-    }
-
     /// The `typeof` kind of the heap value `word` (`type_of_in_lane`), for a `typeof` row.
     #[inline(always)]
     fn type_of(&mut self, _stage: &mut Concrete, word: u64) -> Option<quench_runtime::staged::value::TypeofKind> {
@@ -1883,9 +1849,10 @@ impl<const ACC: u8> quench_runtime::staged::GlobalFrame<Concrete> for LaneFrame<
 ///
 /// # Safety
 /// `cx` is the running lane's context.
-unsafe fn global_name_store(cx: *mut (), hint: quench_runtime::vm::FieldCache, atom: u32, value: Value) -> bool {
-    let vm = unsafe { vm(cx.cast::<LaneContext>()) };
-    vm.hinted_own_field_store_hit(hint, vm.realm.globals, atom, value)
+// S7f DESIGN: the global object's hinted store (`hinted_own_field_store_hit`) is gone; the store declines until a
+// class-keyed global store is the row's store.
+unsafe fn global_name_store(_cx: *mut (), _hint: quench_runtime::vm::FieldCache, _atom: u32, _value: Value) -> bool {
+    false
 }
 
 impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
@@ -2013,31 +1980,25 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
     }
 
     /// The store through the record's hint, tracked or narrow (`StorePlan::Hinted`).
+    // S7f DESIGN: the record's hint store (`hinted_primary_field_store_hit`) is gone; a hinted store declines
+    // until the class cell's store (`class_store`) is the row's store.
     #[inline(always)]
-    fn field_store_hinted(&mut self, _stage: &mut Concrete, object: u64, atom: u32, _site: u16, value: u64,
-        hint: (u32, u16), narrow: bool) -> Option<()> {
-        let stores = self.stores?;
-        let object = Value::from_bits(object);
-        if object.is_deleted() { return None; }
-        let hint = quench_runtime::vm::FieldCache::own(hint.0, hint.1);
-        (stores.hinted)(stores.context, object, atom, Value::from_bits(value), hint, narrow).then_some(())
+    fn field_store_hinted(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _value: u64,
+        _hint: (u32, u16), _narrow: bool) -> Option<()> {
+        None
     }
 
     /// The store through the record's hint, the site's polymorphic entries, or the proved add
-    /// (`StorePlan::Polymorphic`); the entry a polymorphic store hit is the record's hint.
+    /// (`StorePlan::Polymorphic`). The record's hint and the polymorphic entry hit are gone (S7f/S7g), so the
+    /// proved add answers alone.
+    // S7f DESIGN: a polymorphic store's own-entry hit is retargeted at the class cell; until then only the proved add.
     #[inline(always)]
     fn field_store_polymorphic(&mut self, _stage: &mut Concrete, object: u64, atom: u32, site: u16, value: u64,
-        hint: (u32, u16)) -> Option<()> {
+        _hint: (u32, u16)) -> Option<()> {
         let stores = self.stores?;
         let object = Value::from_bits(object);
         if object.is_deleted() { return None; }
         let value = Value::from_bits(value);
-        let hint = quench_runtime::vm::FieldCache::own(hint.0, hint.1);
-        if (stores.hinted_own)(stores.context, object, atom, value, hint) { return Some(()); }
-        if let Some(own) = (stores.polymorphic)(stores.context, object, atom, site, value) {
-            self.stored = Some(own);
-            return Some(());
-        }
         (stores.proved)(stores.context, object, atom, site, value).then_some(())
     }
 
@@ -2082,12 +2043,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         Some((deleted.to_bits(), Boxing::Value))
     }
 
-    /// The live object record table, which an `instanceof` walk and a planned read address.
-    #[inline(always)]
-    // S7f DESIGN: no object record table exists, so the table is absent.
-    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> {
-        None
-    }
 }
 
 impl<const ACC: u8> quench_runtime::staged::ElementFrame<Concrete> for LaneFrame<ACC> {
@@ -2486,7 +2441,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         let binding = match FLAG {
             FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native)),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
-            FLAG_NAME_GLOBAL | FLAG_NAME_GLOBAL_SCOPED => Some(NameBinding::Read(NameRead::Field(i.field_hint()))),
+            FLAG_NAME_GLOBAL | FLAG_NAME_GLOBAL_SCOPED => Some(NameBinding::Read(NameRead::Field)),
             FLAG_NAME_LEXICAL => Some(NameBinding::Read(NameRead::Lexical(i.field_hint()))),
             FLAG_NAME_INTRINSIC => Some(NameBinding::Read(NameRead::Intrinsic)),
             _ => None,
@@ -4428,7 +4383,9 @@ unsafe fn name_value_in_lane(cx: *mut (), read: NameRead, atom: u32) -> Option<V
             Some(vm.native_value(native))
         }
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
-        NameRead::Field(hint) => vm.global_field_hint_hit(hint),
+        // S7f DESIGN: the global object is a class cell and its record hint is gone (S7g); a global name read
+        // declines to the resolve until a class-keyed global read names its value.
+        NameRead::Field => None,
         NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
     }
 }

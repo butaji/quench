@@ -251,10 +251,6 @@ const INHERITED_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 1;
 /// read (`Vm::holder_hint_hit`), as `INHERITED_HINT` no object's exact shape.
 const HOLDER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 2;
 
-/// The `FieldOperand::shape` of a read's record whose hint is an own constant
-/// (`Vm::own_constant_operands`), as `INHERITED_HINT` no object's exact shape.
-const OWN_CONSTANT_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 3;
-
 #[quench_macros::ext(LaneInstructionOps1)]
 impl LaneInstruction {
     /// The own-field hint of a `GetField` or `SetField` record: an exact receiver shape and the
@@ -2721,22 +2717,8 @@ script_handler! {
         else {
             sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
         };
-        // A register read probes for an own constant (an enum member, a namespace export): the
-        // first object it meets stays unhinted, so the next read comes back here; the same
-        // object again is held
-        if !THIS && !holds_loop_site(ip) && vm.probes_own_constant(ip.addr()) {
-            let first = !vm.own_constant_probed(ip.addr());
-            if let Some(index) = vm.probe_own_constant(ip.addr(), i.imm(), object, value, NO_CALL_LINK) {
-                set_record_hint(ip, OWN_CONSTANT_HINT, index);
-                requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, OWN_CONSTANT_REGISTER));
-                r.set(i.a, value);
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
-            if first {
-                r.set(i.a, value);
-                next!(cx, r, following(ip), Carried::script_in(cx, view))
-            }
-        }
+        // S7f DESIGN: the own-constant probe (`Vm::probes_own_constant`) was record-only and is deleted;
+        // no register read probes, so none is requickened to `OWN_CONSTANT_REGISTER`.
         // The hit proved the entry an own one of the receiver's shape.
         let hint = vm.form_hint(vm.field_cache_entry(i.c), object);
         set_field_hint(ip, hint);
@@ -3049,17 +3031,10 @@ script_handler! {
     /// takes the holder row (`HOLDER_SITE`).
     #[inline(never)]
     fn row_get_field_holder_refresh<THIS: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let Some((object, value)) = (unsafe { known_field_base_in_lane::<THIS>(cx, r, i.b) })
-            .and_then(|object| vm.primary_record_holder_field_hit(code, object, i.c).map(|value| (object, value)))
-        else {
-            sibling!(generated_row!(FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE), r, ip, Carried::script_in(cx, view))
-        };
-        set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), object, value, NO_CALL_LINK));
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        // S7f DESIGN: the record's primary holder entry (`Vm::primary_record_holder_field_hit`) is deleted,
+        // so no hint is made; every read takes the holder row (`HOLDER_SITE`).
+        let _ = i;
+        sibling!(generated_row!(FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE), r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -3075,10 +3050,7 @@ script_handler! {
         // read is `Vm::cached_string_field_hit`'s, whose miss records the site's entry.
         let Some(value) = (unsafe { single_field_base_in_lane(cx, r, i.b) })
             .filter(|object| vm.heap_reads().is_string(*object))
-            .and_then(|object| {
-                vm.string_prototype_field_hit(i.c)
-                    .or_else(|| vm.cached_string_field_hit(unsafe { &*(*cx).code }, object, i.imm(), i.c))
-            })
+            .and_then(|object| vm.cached_string_field_hit(unsafe { &*(*cx).code }, object, i.imm(), i.c))
         else {
             sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
         };
@@ -3093,14 +3065,9 @@ script_handler! {
     /// takes `row_get_field_miss`, which decides the record's tier.
     #[inline(never)]
     fn row_get_field_number_refresh<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let base = r.get(i.b);
-        let Some(value) = base.as_number().is_some().then(|| vm.number_prototype_field_hit(i.c)).flatten() else {
-            sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
-        };
-        set_prototype_hint(ip, |owned| vm.hold_number_hint(owned, i.imm(), value, NO_CALL_LINK));
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        // S7f DESIGN: `Vm::number_prototype_field_hit` is deleted (a record tier); no hint is made here.
+        let _ = i;
+        sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -3110,14 +3077,9 @@ script_handler! {
     /// takes `get_field_string_miss`.
     #[inline(never)]
     fn row_get_field_string_refresh<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let base = r.get(i.b);
-        let Some(value) = vm.heap_reads().is_string(base).then(|| vm.string_prototype_field_hit(i.c)).flatten() else {
-            sibling!(get_field_string_miss, r, ip, Carried::script_in(cx, view))
-        };
-        set_prototype_hint(ip, |owned| vm.hold_string_hint(owned, i.imm(), value, NO_CALL_LINK));
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        // S7f DESIGN: `Vm::string_prototype_field_hit` is deleted (a record tier); no hint is made here.
+        let _ = i;
+        sibling!(get_field_string_miss, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -3128,8 +3090,9 @@ script_handler! {
     #[inline(never)]
     #[cold]
     fn refuse_own_constant_row<>(cx, r, ip, i, view) {
+        // S7f DESIGN: `Vm::refuse_own_constant` is deleted with the own-constant probes; the row's miss
+        // reads as the site's tier decides.
         let _ = i;
-        unsafe { vm(cx) }.refuse_own_constant(ip.addr());
         sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
     }
 }
@@ -3208,7 +3171,7 @@ script_handler! {
     /// form the row does not read (`Vm::array_length_value`), then a string primitive's length
     /// (`Vm::string_length`), whose site takes the string row. Any other receiver `length_read`
     /// answers (an arguments object's or a user function's own `length`, a typed view's geometry)
-    /// takes the host read row (`TYPED_LENGTH_SITE`); the rest reads `row_length_plain`.
+    /// takes the host read row (`TYPED_LENGTH_SITE`); the rest reads `row_get_field_general`.
     #[inline(never)]
     fn row_length_other<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -3229,31 +3192,7 @@ script_handler! {
             r.set(i.a, length);
             next!(cx, r, following(ip), Carried::script_in(cx, view))
         }
-        sibling!(row_length_plain, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `row_length_other`'s last read: a plain object's own `length` data slot (`{ length: n }`), as
-    /// the site's primary entry recorded it; a miss takes the general read, which prepares function
-    /// info.
-    #[inline(never)]
-    fn row_length_plain<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let receiver = r.get(i.b);
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let Some(value) = vm.primary_own_field_hit(code, receiver, i.c) else {
-            sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
-        };
-        // A site that read a plain object's own `length` mostly reads such objects: it takes the
-        // own-field handler, whose misses still reach the general read.
-        if quench_runtime::bytecode::FieldBase(i.b).register_index().is_some() && i.b != quench_runtime::bytecode::FieldBase::NESTED {
-            let own = own_formed_handler::<false>(None);
-            requicken(ip, own);
-        }
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -3436,7 +3375,7 @@ script_handler! {
             let code = unsafe { &*(*cx).code };
             let object = r.get(register);
             vm.specialized_operations_enabled(code).then_some(())?;
-            vm.primary_record_holder_field_hit(code, object, i.c).or_else(|| vm.proved_inherited_field_hit(code, object, i.c))
+            vm.proved_inherited_field_hit(code, object, i.c)
         });
         let Some(value) = quick.or_else(|| unsafe { field_value_in_lane(cx, r, i) }) else {
             if let Some(base) = field_read_beside_activations_in_lane(cx, r, i) {
@@ -5791,22 +5730,13 @@ script_handler! {
     /// from then on.
     #[inline(never)]
     fn store_global_name_miss<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let (atom, globals) = (i.imm(), vm.realm.globals);
-        // A lexical declaration of the name is never withdrawn, so its stores always take the
-        // general path.
-        if !vm.global_name_hintable(atom) {
-            requicken(ip, exit_lane);
-            return exit(ip);
-        }
-        let Some(hint) = vm
-            .own_data_field_hint::<true>(globals, atom)
-            .filter(|hint| vm.hinted_own_field_store_hit(*hint, globals, atom, r.get(i.a)))
-        else {
-            return exit(ip);
-        };
-        set_field_hint(ip, hint);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
+        // S7f DESIGN: the global object is a class cell, so its own data field makes no record hint
+        // (`Vm::own_data_field_hint` and `Vm::hinted_own_field_store_hit` are deleted); every global
+        // store takes the general path.
+        let _ = (cx, i, view);
+        let _ = r;
+        requicken(ip, exit_lane);
+        exit(ip)
     }
 }
 
@@ -6988,9 +6918,14 @@ impl FieldHit {
     /// The hit on `object`; `None` for a miss.
     #[inline(always)]
     fn run(self, vm: &mut Vm, code: &ResidualProgram, object: Value) -> Option<Value> {
+        // S7f DESIGN: the record's primary entries are deleted with the record tier; a quickened
+        // field hit declines and the read takes its general path.
+        let _ = (vm, code, object);
         match self {
-            Self::Own(cache) => vm.primary_own_field_hit(code, object, cache),
-            Self::Holder(cache) => vm.primary_record_holder_field_hit(code, object, cache),
+            Self::Own(cache) | Self::Holder(cache) => {
+                let _ = cache;
+                None
+            }
         }
     }
 }
@@ -7086,7 +7021,8 @@ impl LeafRead {
                     RETURNING_FIELD_OWN => returning_field_hit::<RETURNING_FIELD_OWN>(vm, code, object, cache),
                     // A record prototype's method, read with no call; any other declines the
                     // read, and the activation's own record reads it.
-                    RETURNING_FIELD_HOLDER => vm.primary_record_holder_field_hit(code, object, cache),
+                    // S7f DESIGN: a record prototype's method read (`primary_record_holder_field_hit`) is deleted; it declines.
+                    RETURNING_FIELD_HOLDER => None,
                     _ => returning_field_hit::<RETURNING_FIELD_INHERITED>(vm, code, object, cache),
                 }
             }
@@ -7191,18 +7127,10 @@ impl MemoLeaf {
     /// `arguments` on `this` reads, which its steps just answered: each step then proves its
     /// shapes and storage forms by whole-word compares (`Vm::record_field_formed_hit`).
     fn formed(self, vm: &Vm, arguments: ReadArguments, this: Value) -> Self {
-        let base_of = |base: u16| read_base_in_lane(quench_runtime::bytecode::FieldBase(base), arguments, this);
-        let formed = |field: quench_runtime::vm::FieldCache, base: u16| base_of(base).map_or(field, |object| vm.formed_entry(field, object));
-        match self {
-            Self::Field { base, field } => Self::Field { base, field: formed(field, base) },
-            Self::Element { base, field, index } => Self::Element { base, field: formed(field, base), index },
-            Self::Length { base, field } => Self::Length { base, field: formed(field, base) },
-            Self::Nested { base, field, second } => {
-                let object = base_of(base).and_then(|object| vm.record_field_entry_hit(field, object));
-                let second = object.map_or(second, |object| vm.formed_entry(second, object));
-                Self::Nested { base, field: formed(field, base), second }
-            }
-        }
+        // S7f DESIGN: `Vm::formed_entry` and `Vm::record_field_entry_hit` are deleted with the record
+        // tier; the memo keeps its steps' cache entries as they were read.
+        let _ = (vm, arguments, this);
+        self
     }
 
     /// `LeafRead::run` of the read this memo records, of the step `shape` names (a constant
@@ -7226,17 +7154,9 @@ impl MemoLeaf {
                 let array = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
                 vm.array_length_field(array, vm.length_atom)
             }
-            Self::Nested { base: field_base, field, second } if shape == MEMO_NESTED => {
-                #[cfg(feature = "profile-field-primitives")]
-                vm.profile.field_primitives.hit(quench_runtime::profile::field_primitives::Path::MemoPairAttempt);
-                let object = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
-                #[cfg(feature = "profile-field-primitives")]
-                vm.profile.field_primitives.hit(quench_runtime::profile::field_primitives::Path::MemoPairFirstHit);
-                let value = vm.record_field_formed_hit(second, object);
-                #[cfg(feature = "profile-field-primitives")]
-                if value.is_some() { vm.profile.field_primitives.hit(quench_runtime::profile::field_primitives::Path::MemoPairHit); }
-                value
-            }
+            // S7f DESIGN: the second step's formed read (`Vm::record_field_formed_hit`) is deleted with the
+            // record tier; a nested memo declines and its read takes the general path.
+            Self::Nested { .. } if shape == MEMO_NESTED => None,
             _ => None,
         }
     }
@@ -7440,16 +7360,8 @@ script_handler! {
         let code = unsafe { &*(*cx).code };
         // The row's own hint is stale: the primary own entry answers as the single-entry kind did,
         // and a direct object's hit rebinds the hint the row reads.
-        if let Some(object) = unsafe { single_field_base_in_lane(cx, r, i.b) } {
-            let vm = unsafe { vm(cx) };
-            if let Some(value) = vm.primary_own_field_hit(code, object, i.c) {
-                if object.direct_object_index().is_some() {
-                    // The row compares layout ids (`form_hint`), not the entry's exact shape.
-                    set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
-                }
-                lane_return_value!(cx, ip, value, LEAF);
-            }
-        }
+        // S7f DESIGN: the record's primary own entry (`Vm::primary_own_field_hit`) is deleted; the
+        // row takes the tier below.
         // The single-entry tiers read the object records alone; a receiver in a heap cell
         // keeps the general cached read.
         let cell_receiver = unsafe { single_field_base_in_lane(cx, r, i.b) }
