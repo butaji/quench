@@ -2509,19 +2509,6 @@ impl Vm {
         self.heap.live_class_key(object).unwrap_or(shape)
     }
 
-    /// The hint of a generated own read (`CELL_OWN_SITE`) of `object`, a receiver outside the
-    /// object records, at `site`: the receiver's layout id and the slot, where the site's own
-    /// entry names the receiver's exact shape (`cell_own_field_hit`'s test).
-    pub fn cell_own_hint(&self, object: Value, site: u16) -> Option<(u32, u16)> {
-        let cache = self.field_cache_entry(site);
-        if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
-            return None;
-        }
-        // A spilled slot names a run's word: the generated own read addresses inline words, so no hint.
-        let slot = u16::try_from(cache.slot).ok()?;
-        Some((self.receiver_layout_hint(object)?, slot))
-    }
-
     /// The data field a live class cell's held entry names (`class_held_field_hit`): the read a
     /// class-keyed site answers beside `cell_own_field_hit`.
     #[inline(always)]
@@ -2739,13 +2726,6 @@ impl Vm {
         self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
     }
 
-    /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
-    /// Whether the site cached no entry yet: its first read has not recorded one.
-    pub fn field_site_empty(&self, site: u16) -> bool {
-        let entry = self.field_caches.get(self.field_cache_index(site));
-        entry.receiver == EMPTY_CACHE.receiver && entry.holder == EMPTY_CACHE.holder
-    }
-
     /// Whether the site's primary entry is a prototype's (`FieldSiteTier::Holder`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches.get(self.field_cache_index(site)).holder != NO_FIELD_HOLDER
@@ -2845,14 +2825,6 @@ impl Vm {
     fn hinted_receiver(&self, object: Value) -> Option<&crate::heap::Object> {
         if let Some(record_id) = object.direct_object_index().and_then(|r| self.heap.record_id(r)) { return Some(self.heap.object_record_by_id(record_id)); }
         self.heap.held_other_receiver(object)
-    }
-
-    /// The layout id (`Object::hint_shape`) of any receiver with an object part a hint reads
-    /// (`hinted_receiver`): a direct object or array, a function, a collection, DataView or
-    /// buffer. A generated read row guards it with `IcOp::GuardLayout`, one compare that
-    /// proves the shape, form and prototype link of a function's or cell's record too.
-    pub(super) fn receiver_layout_hint(&self, object: Value) -> Option<u32> {
-        self.hinted_receiver(object).map(crate::heap::Object::hint_shape)
     }
 
     /// Makes `value`, which the immediate prototype of the direct object or array `object`

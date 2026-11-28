@@ -2783,22 +2783,6 @@ pub(crate) const INHERITED_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 5)
 pub(crate) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
 
 
-/// The site fact of an own read of a receiver outside the object records, as a function's static
-/// field (`Strength.REQUIRED`): the record's hint is the receiver's layout id and slot
-/// (`Vm::cell_own_hint`), guarded by one compare of the function's record (`IcOp::GuardLayout`);
-/// one instantiation per base: the register one (`A.x`) is the common read, and a fixed base
-/// saves the base test (5 Ir per read).
-pub(crate) const CELL_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 6);
-pub(crate) const CELL_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 6);
-/// The cell-own sites whose hint layout keeps its slots in an arena run of tagged words (every record
-/// slot is tagged): the row reads the slot untested and undecoded, as an own-field site of that form
-/// does (`OWN_FORMS`), so the read is the slot load past the layout guard.
-pub(crate) const CELL_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 7);
-pub(crate) const CELL_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 7);
-/// The cell-own sites of a run with an extras block where slots hold tagged words: the slot load past the layout guard.
-pub(crate) const CELL_EXTRAS_THIS: u8 = own_site(true, OWN_FORMS.len() + 33);
-pub(crate) const CELL_EXTRAS_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 33);
-
 /// The trusted own-field sites: the load proved the base's class `C` (`trusted_named_read`), so the record reads its
 /// field from `C`'s cell with no class or layout guard. The slot is the record's operand word (`FieldOperand::shape`, set by `derive_lane_view`).
 /// `TRUSTED_OWN_*` is a class whose fields sit in the cell's own words, `TRUSTED_RUN_*` one with fields past its spill
@@ -2813,10 +2797,6 @@ pub(crate) const TRUSTED_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 27
 /// its read leaves at the miss, which takes the general read. Bit 30 is clear in every slot word of a spill slot below
 /// `1 << 14` (`spilled_slot` puts `spill_from` at bits 16 to 30), and `trusted_named_read` declines any other word.
 pub(crate) const TRUSTED_HOLE: u32 = 1 << 30;
-
-/// The site fact of a register read of one object's own constant (`IcOp::OwnConstant`): the record's call link names
-/// the own-constant entry (`Vm::own_constant_word_operands`). No site installs it now.
-pub(crate) const OWN_CONSTANT_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 8);
 
 /// The site facts of a register's `length`: an array's (`IcOp::ArrayLength`) and a string's
 /// (`IcOp::StringLength`); a miss takes `row_length_other`.
@@ -2918,12 +2898,6 @@ pub(crate) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41)
 /// or missing field takes `get_private_field_miss`, the general read.
 pub(crate) const PRIVATE_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 48);
 pub(crate) const PRIVATE_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 48);
-
-/// The site facts of a read the VM's cache answers, of `this` and of a register (`FieldPlan::Host`):
-/// the cached read of the site's atom (`LaneFrame::cached_read`). A miss takes `lane_get_field`,
-/// the general read, which runs the getter and the data lookups.
-pub(crate) const CACHED_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 42);
-pub(crate) const CACHED_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 42);
 
 /// The site facts of a returning own-field read (`RETURNING_FIELD_OWN`'s row, k 50 up: the topmost site facts): the record's own
 /// hint, for `this` and a register, at each leaf form the record returns from (`LeafForm`). The
@@ -3050,19 +3024,6 @@ script_handler! {
         set_prototype_hint(ip, |owned| vm.hold_string_hint(owned, i.imm(), value, NO_CALL_LINK));
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// The own-constant row's miss (`OWN_CONSTANT_REGISTER`): another object, or the object was
-    /// written. The site never holds an own constant again and reads as its tier decides.
-    /// Out of line, so the row's hit path makes no call and saves no register.
-    #[inline(never)]
-    #[cold]
-    fn refuse_own_constant_row<>(cx, r, ip, i, view) {
-        let _ = i;
-        unsafe { vm(cx) }.refuse_own_constant(ip.addr());
-        sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
     }
 }
 

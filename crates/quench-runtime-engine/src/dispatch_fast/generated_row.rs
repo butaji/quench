@@ -69,29 +69,11 @@ view_handler! {
                 std::hint::assert_unchecked(i.c <= quench_runtime::bytecode::REGISTER_MASK);
             }
         }
-        // The cached, private and general reads answer at their record before the staged plan runs: a
-        // direct call of the lane's own read, with no erased host. A miss takes the site's miss.
-        // A private read (its brand check throws) and a general read (it may run a getter) take the record's
+        // The private and general reads answer at their record before the staged plan runs: a
+        // private read (its brand check throws) and a general read (it may run a getter) take the record's
         // address and the lane's helpers, so they leave the row through `field_read_slow_row`.
         if property && const { crate::dispatch_fast::private_field_site(FLAG) || crate::dispatch_fast::general_site(FLAG) } {
             sibling!(field_read_slow_row::<OP, ACC, FLAG>, r, ip, view)
-        }
-        if property && const { crate::dispatch_fast::cached_field_site(FLAG) } {
-            let script: *mut LaneContext = view.memory.bytes.cast();
-            // The base: `this` for a `this` site, else the register the record names.
-            let receiver = if const { crate::dispatch_fast::own_site_this(FLAG) } { r.this() } else { r.get(i.b) };
-            // A deleted `this` is no object for a cached read; the general read takes it as before.
-            if receiver.is_deleted() { property_miss!() }
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*script).code };
-            let read = LaneFrame::<ACC>::cached_read(script, code, receiver, i.imm(), i.c, 0);
-            match read {
-                Some(value) => {
-                    r.set(i.a, value);
-                    next!(script, r, following(ip), Carried::script_in(script, view))
-                }
-                None => property_miss!(),
-            }
         }
         // A record whose result carries flags holds the general step from its edge on (`derive_lane_view`,
         // `requicken`): this row's result is a register, stated so the decode's tests fold.
@@ -230,10 +212,6 @@ view_handler! {
                 // A private name's field of the record, under the brand its site names (`FieldPlan::Private`).
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 frame.plan = Some(RecordPlan::private(i.imm()));
-            } else if const { crate::dispatch_fast::cached_field_site(FLAG) } {
-                // The cached read of the site's atom, which the VM answers (`FieldPlan::Host`).
-                if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::host_read(quench_runtime::staged::property::FieldPlan::Host { atom: i.imm(), site: i.c }));
             } else if const { crate::dispatch_fast::returning_field_site(FLAG) } {
                 // A returning own read of the record's hint (`RecordPlan::own`); the lane's unbound
                 // object records are the miss's to bind.
@@ -251,26 +229,6 @@ view_handler! {
                     slot: word & !crate::dispatch_fast::TRUSTED_HOLE,
                     hole: word & crate::dispatch_fast::TRUSTED_HOLE != 0,
                 }));
-            } else if const { crate::dispatch_fast::cell_own_site(FLAG) } {
-                // A receiver outside the object records (a function) by its layout id; a direct
-                // object, should the site meet one, through the bound records.
-                let machine = unsafe { vm(script) };
-                // The live record table: a direct object receiver proves it reserved.
-                let records = machine.heap_reads().live_object_records() as u64;
-                if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                let hint = i.field_hint();
-                // A fixed form is the hint layout's own (the decision chose the row by it).
-                let form = const { crate::dispatch_fast::own_site_form(FLAG) };
-                frame.plan = Some(if form == HINTED_FORM {
-                    RecordPlan::own_other(hint.receiver, hint.record_slot(), records, std::ptr::from_ref::<Vm>(machine))
-                } else {
-                    RecordPlan::own_other_formed(hint.receiver, form, hint.record_slot(), records, std::ptr::from_ref::<Vm>(machine))
-                });
-            } else if const { crate::dispatch_fast::own_constant_site(FLAG) } {
-                // One object's own constant: its record's address, then the watch on its values.
-                let machine = unsafe { vm(script) };
-                let Some((object, watch, value)) = machine.own_constant_word_operands(i.call_link.get()) else { property_miss!() };
-                frame.plan = Some(RecordPlan::own_constant(object, watch, value));
             } else if const { crate::dispatch_fast::length_site(FLAG) } {
                 // A register's `length`: an array's or a string's, as the site's tier decided.
                 let machine = unsafe { vm(script) };

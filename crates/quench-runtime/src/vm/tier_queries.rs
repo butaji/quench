@@ -254,8 +254,6 @@ heap_reads! {
     fn is_symbol(value: Value) -> bool;
     /// A v128 cell's bytes (`Heap::v128`).
     fn v128(value: Value) -> Option<[u8; crate::wasm::V128_BYTES]>;
-    /// The object part of a function receiver (`Heap::function_receiver`).
-    fn function_receiver(value: Value) -> Option<&'a Object>;
     /// The object part of an array, function or builtin receiver (`Heap::held_other_receiver`).
     fn held_other_receiver(value: Value) -> Option<&'a Object>;
     /// Whether storing `stored` into the array `base` in place needs no store log (`Heap::array_store_unlogged`).
@@ -308,8 +306,6 @@ heap_reads! {
     fn native_layout_epoch() -> u64;
     /// Whether slot representations are tracked (`Heap::tracks_slot_representations`).
     fn tracks_slot_representations() -> bool;
-    /// The held type of a tracked store row through a hint (`Heap::tracked_store_held`).
-    fn tracked_store_held(layout: u32, slot: u16) -> u8;
     /// The typed view directory (`Heap::typed_view_directory`).
     fn typed_view_directory() -> (*const usize, usize);
     /// The Wasm GC record arena's base (`Heap::wasm_gc_record_base`).
