@@ -271,17 +271,20 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
         facts.unions = class_layout::unions_of(program, &settled_flows, &census, &facts);
-        // The departure fact needs the union layout, which holds only in a closed world: no class of an open world keeps one.
-        let never_departs = facts.constructed_classes().into_iter()
-            .filter(|&class| facts.unions.contains_key(&class) && shapes::never_departs(&settled_flows, &census, &scope, class))
-            .collect::<std::collections::BTreeSet<u32>>();
-        // The fixed-cell bit reads the never-departs set, and adds the field bound and the direct-construction conjunct.
-        facts.fixed_cells = facts.constructed_classes().into_iter()
-            .filter(|&class| facts.unions.get(&class).is_some_and(|union| union.fields.len() <= crate::heap::MAX_CELL_FIELDS)
-                && never_departs.contains(&class)
-                && shapes::direct_constructions_only(program, &settled_flows, &census, &scope, &open_escapes, class))
-            .collect();
-        facts.never_departs = never_departs;
+        // The cell facts need the union layout, which holds only in a closed world: no class of an open world keeps one. A fixed
+        // cell's slots are stable and every construction is direct; a writable cell is also reached by no flag transition.
+        let mut fixed = std::collections::BTreeSet::new();
+        let mut writable = std::collections::BTreeSet::new();
+        for class in facts.constructed_classes() {
+            if !facts.unions.contains_key(&class) { continue; }
+            let stable = shapes::stability(&settled_flows, &census, &scope, class);
+            if stable.slots && shapes::direct_constructions_only(program, &census, &scope, &open_escapes, class) {
+                fixed.insert(class);
+                if stable.flags { writable.insert(class); }
+            }
+        }
+        facts.fixed_cells = fixed;
+        facts.writable_cells = writable;
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
         // The closed-world index-accessor fact is read by the signatures' element-read grades, so it is settled first.
