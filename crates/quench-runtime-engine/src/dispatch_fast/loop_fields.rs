@@ -11,8 +11,6 @@ pub(crate) fn loop_field_stores(
     entry: &mut super::compiled::LoopEntry,
 ) -> Option<()> {
     let vm = unsafe { vm(cx) };
-    // SAFETY: the running program outlives this lane's OSR entry setup.
-    let code = unsafe { &*(*cx).code };
     // A raw field slot stays valid for this native run because OSR regions make no calls or
     // allocations, and the receiver is unchanged and rooted in its register. Every miss exits before the
     // store through the interpreter's exact SetField PC.
@@ -31,7 +29,7 @@ pub(crate) fn loop_field_stores(
     for field in &region.field_store_sites {
         let object = receiver(field.receiver)?;
         let writes = region.field_store_type(field);
-        let pointer = vm.cached_field_store_admission(code, object, field.atom, field.cache_site, writes)?;
+        let pointer = vm.cached_field_store_admission(object, field.atom, field.cache_site, writes)?;
         // Numeric cells cannot create heap edges. Reference-capable stores log their
         // owner once at admission; nothing collects before the run ends.
         if !writes.is_subtype(quench_runtime::typed_ir::Type::NUMBER) {

@@ -102,9 +102,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_innermos
 fn quench_engine_vm_run_lane_job(this: &mut Vm, code: &ResidualProgram, job: JobRoot, frame: *const FrameRecord, resume: JobResume) -> Result<JobEnd, JobResume> { <Vm as DispatchFastLaneRootsVm>::run_lane_job(this, code, job, frame, resume) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_run_lane_job = quench_engine_vm_run_lane_job;
 #[unsafe(no_mangle)]
-fn quench_engine_vm_specialized_operations_enabled(this: &Vm, program: &ResidualProgram) -> bool { <Vm as DispatchFastVm2>::specialized_operations_enabled(this, program) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_specialized_operations_enabled = quench_engine_vm_specialized_operations_enabled;
-#[unsafe(no_mangle)]
 fn quench_engine_vm_call_stored_setter(this: &mut Vm, p: &ResidualProgram, site: u16, setter: Value, object: Value, value: Value) -> Result<Value, JsError> { <Vm as DispatchFastSettersVm>::call_stored_setter(this, p, site, setter, object, value) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_call_stored_setter = quench_engine_vm_call_stored_setter;
 #[unsafe(no_mangle)]

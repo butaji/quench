@@ -143,9 +143,6 @@ impl<'a> Compiler<'a> {
 /// can change the instruction count the class reads. A record whose rewrites stay unrun keeps
 /// the class the load settled, which is the one a load that skips them takes.
 pub(crate) fn settle_deferred_rewrite(program: &crate::bytecode::ResidualProgram, id: u32, function: &mut BcFunction) {
-    if !program.specialized {
-        return;
-    }
     let (fields, supers) = (&program.field_sites, &program.superinstructions);
     match rewrite_plan(program, id, Rewrite::Deferred, function.code.len()) {
         RewritePlan::Skip => {}

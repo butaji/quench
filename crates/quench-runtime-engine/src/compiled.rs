@@ -2525,12 +2525,11 @@ pub(crate) use quench_runtime::vm::engine_types::EntryStamp;
 #[quench_macros::ext(EntryStampOps1)]
 impl EntryStamp {
     /// The stamp of the activation an entry runs, its capture view not yet bound (`captures`).
-    fn of(vm: &Vm, (program, function, frame): (ProgramId, u32, usize), lane_context: usize, registers: *mut Value,
-        specialized: bool) -> Self {
+    fn of(vm: &Vm, (program, function, frame): (ProgramId, u32, usize), lane_context: usize, registers: *mut Value) -> Self {
         let (frame_record, locals) = vm.frames.get(frame)
             .map_or((0, 0), |record| (std::ptr::from_ref(record).addr(), record.locals.as_ptr().addr()));
         Self { vm: std::ptr::from_ref(vm).addr(), program, function, frame, frame_record, locals, lane_context,
-            registers: registers.addr(), specialized, captures: (0, 0) }
+            registers: registers.addr(), captures: (0, 0) }
     }
 
     /// Whether `other` is the activation `self` was bound for: the same VM, program and function,
@@ -2639,21 +2638,21 @@ impl CompiledOsrRegion {
                 Some(mut dispatch) => {
                     let vm = &mut *vm;
                     let bound = match self.stamp.get() {
-                        Some(stamp) if stamp.binds(&EntryStamp::of(&*vm, (program, function, frame), lane_context, registers, stamp.specialized)) => Some(stamp),
+                        Some(stamp) if stamp.binds(&EntryStamp::of(&*vm, (program, function, frame), lane_context, registers)) => Some(stamp),
                         _ => None,
                     };
                     let stamp = match bound {
                         Some(stamp) => {
-                            dispatch.rewarm_region(vm, stamp.specialized);
+                            dispatch.rewarm_region(vm);
                             let view = captures_key(vm, frame);
                             if view != stamp.captures { dispatch.refresh_capture_view(vm); }
                             EntryStamp { captures: view, ..stamp }
                         }
                         None => {
                             let Some(residual) = vm.programs.get(program) else { return RegionRun::own(LaneExit::Terminated) };
-                            dispatch.rebind_region(vm, program, &residual, frame, registers);
+                            dispatch.rebind_region(vm, program, frame, registers);
                             osr_lane::bind_frame(&mut dispatch, &residual, vm, (program, function, lane_context), registers, true);
-                            EntryStamp { captures: captures_key(vm, frame), ..EntryStamp::of(vm, (program, function, frame), lane_context, registers, residual.specialized) }
+                            EntryStamp { captures: captures_key(vm, frame), ..EntryStamp::of(vm, (program, function, frame), lane_context, registers) }
                         }
                     };
                     osr_lane::bind_loop(&mut dispatch, region, entry, lane_context);
@@ -2954,17 +2953,17 @@ unsafe fn cached_field_read(vm: u64, residual: u64, receiver: Value, read: u64) 
         return length.to_bits();
     }
     // A string primitive reads as the lane's does: its `length`, else `String.prototype`.
-    if let Some(value) = vm.cached_string_field_hit(residual, receiver, atom, site) { return value.to_bits(); }
+    if let Some(value) = vm.cached_string_field_hit(receiver, atom, site) { return value.to_bits(); }
     // A typed array's geometry, which no field cache records, as the lane's (`LaneFrame::cached_read`).
     if vm.atom_class(atom).contains(quench_runtime::vm::object::AtomClass::VIRTUAL_FIELD)
         && let Some(value) = vm.typed_array_geometry_read(receiver, atom) { return value.to_bits(); }
     // A read native code has no descriptor for is mostly an inherited method's: its proved
     // entry answers without a walk (`Vm::proved_inherited_field_hit`), before the other tiers.
-    if let Some(value) = vm.proved_inherited_field_hit(residual, receiver, site) {
+    if let Some(value) = vm.proved_inherited_field_hit(receiver, site) {
         return value.to_bits();
     }
     // A miss reads a data property as the lane's does (`Vm::field_miss_data_value`).
-    match vm.compiled_field_hit(residual, receiver, site) {
+    match vm.compiled_field_hit(receiver, site) {
         quench_runtime::vm::object::FieldCacheProbe::Hit(value) => value.to_bits(),
         quench_runtime::vm::object::FieldCacheProbe::OrdinaryMiss => vm.field_miss_data_value(receiver, atom, vm.field_cache_index(site)).unwrap_or(Value::DELETED).to_bits(),
         _ => Value::DELETED.to_bits(),
@@ -2997,7 +2996,7 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
     // Only the primary entry's hit proves its slot's representation (`general_store`). A site past one shape
     // stores through the VM's polymorphic entries, which were record-tier and are gone (S7g): it leaves.
     let layout = quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative;
-    let hit = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
+    let hit = vm.primary_own_field_store_hit::<true>(receiver, atom as Atom, value, site as u16, layout);
     if hit { general_store::record_store_class(vm, site as u16, value); }
     #[cfg(feature = "profile-native-ops")]
     quench_runtime::vm::native_op_profile::record_store(hit);
@@ -3047,7 +3046,7 @@ unsafe extern "C" fn take_raised_in_lane(vm: u64, _residual: u64) -> u64 {
 unsafe extern "C" fn global_get_in_lane(vm: u64, residual: u64, atom: u64, site: u64) -> u64 {
     // SAFETY: as `field_get_in_lane`; the read runs no guest code and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
-    vm.global_read_in_lane(residual, atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
+    vm.global_read_in_lane(atom as Atom, site as u16).unwrap_or(Value::DELETED).to_bits()
 }
 
 /// A lane body's strict equality of two distinct heap values of one content-compared family
@@ -3106,14 +3105,14 @@ unsafe extern "C" fn field_add_in_lane(vm: u64, residual: u64, payload: u64, rec
         (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram), &mut *(payload as *mut JsStepDispatch))
     };
     let (atom, site) = ((write >> u16::BITS) as Atom, write as u16);
-    if vm.primary_own_field_store_hit::<true>(residual, receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {
+    if vm.primary_own_field_store_hit::<true>(receiver, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve) {
         return 1;
     }
     if vm.collection_due() {
         return 0;
     }
     // The cached add of the property (the polymorphic own entries it used to try were record-tier, S7g): a miss leaves.
-    if !vm.primary_field_add_hit(residual, receiver, atom, value, site) {
+    if !vm.primary_field_add_hit(receiver, atom, value, site) {
         return 0;
     }
     crate::dispatch_fast::note_allocation(vm);
@@ -3229,8 +3228,8 @@ unsafe extern "C" fn function_capture_read_in_lane(vm: u64, callee: Value, slot:
 impl Vm {
     /// The value a global read of `atom` through cache `site` takes: its global lexical binding's, else
     /// the global object's cached field; none for a binding in its TDZ or a miss.
-    pub(crate) fn global_read_in_lane(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> Option<Value> {
-        match self.global_name_read(code, atom, site) {
+    pub(crate) fn global_read_in_lane(&mut self, atom: Atom, site: u16) -> Option<Value> {
+        match self.global_name_read(atom, site) {
             quench_runtime::vm::field_cache::GlobalNameRead::Value(value) => Some(value),
             quench_runtime::vm::field_cache::GlobalNameRead::Uninitialized | quench_runtime::vm::field_cache::GlobalNameRead::Miss => None,
         }
@@ -3658,7 +3657,7 @@ impl JsStepDispatch {
         let this = if frame.fixed_this { frame.this } else { Value::DELETED };
         // SAFETY: the activation's register file is live for this run, and its header is its own.
         unsafe { set_frame_word(dispatch.native_registers, CONTEXT_THIS, this.to_bits()) };
-        if views { dispatch.refresh_heap_bases(vm, &program); }
+        if views { dispatch.refresh_heap_bases(vm); }
         Some(run(&mut dispatch, vm))
     }
 
@@ -3810,14 +3809,14 @@ impl JsStepDispatch {
     /// `bind_native_storage` bind, the run state the last run left reset to `idle`'s, and the
     /// bases refreshed (`refresh_heap_bases`), which reread only what moved since the last run.
     /// The words the run's binds set (`osr_lane`) are theirs.
-    fn rebind_region(&mut self, vm: &mut Vm, program_id: ProgramId, program: &ResidualProgram, frame: usize, registers: *mut Value) {
+    fn rebind_region(&mut self, vm: &mut Vm, program_id: ProgramId, frame: usize, registers: *mut Value) {
         self.bind_lane_storage(std::ptr::from_mut(vm));
         (self.program_id, self.frame) = (program_id, frame);
         // The window the capture view reads and writes is the run's own, which the parked dispatch
         // last ran in only where the activation is the same; set before the bases are refreshed.
         self.native_registers = registers;
         self.reset_region_run();
-        self.refresh_heap_bases(vm, program);
+        self.refresh_heap_bases(vm);
     }
 
     /// The run state a region's run leaves, reset to `idle`'s.
@@ -3837,17 +3836,17 @@ impl JsStepDispatch {
     /// bases (a compare-only pass while nothing moved), the program's
     /// field entries (a moved cache table moves them) and the store specialization.
     #[inline]
-    fn rewarm_region(&mut self, vm: &mut Vm, program_specialized: bool) {
+    fn rewarm_region(&mut self, vm: &mut Vm) {
         self.bind_run_storage(vm);
         self.reset_region_run();
         self.refresh_object_bases(vm);
         vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
-        self.stores_specialized = usize::from(vm.specialized && program_specialized);
+        self.stores_specialized = 1;
     }
 
     /// Refresh the additional frame and array views read by native code.
-    fn refresh_heap_bases(&mut self, vm: &Vm, program: &ResidualProgram) {
+    fn refresh_heap_bases(&mut self, vm: &Vm) {
         self.refresh_object_bases(vm);
         self.fixed_this_slot = vm.frames.get(self.frame)
             .filter(|frame| frame.fixed_this)
@@ -3855,7 +3854,7 @@ impl JsStepDispatch {
         self.refresh_capture_view(vm);
         vm.frameless.bind(self);
         self.field_entries = vm.program_field_entries(self.program_id).unwrap_or(0);
-        self.stores_specialized = usize::from(vm.specialized && program.specialized);
+        self.stores_specialized = 1;
     }
 
     /// The window's captures word (`CONTEXT_BODY`): the frame's dense capture slots, which generated reads
@@ -4224,7 +4223,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 .get(usize::from(receiver_register))
                 .copied()
         {
-            let probe = vm.cached_field_hit(program, receiver, cache_site);
+            let probe = vm.cached_field_hit(receiver, cache_site);
             if admission::diagnosing(vm) {
                 vm.programs.record_js_jit_field_cache_probe(
                     dispatch.program_id,
@@ -4275,7 +4274,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
             )
         {
             let hit = vm.cached_field_store_hit(
-                program,
                 receiver,
                 instruction.atom_index(),
                 value,
@@ -4447,7 +4445,7 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                         // Only generated code consumes these raw views. A stopped
                         // dispatch discards them, and a batched VM operation will
                         // refresh once at the boundary before native execution.
-                        dispatch.refresh_heap_bases(vm, program);
+                        dispatch.refresh_heap_bases(vm);
                         return Ok(JsCalloutStep::Continue(next));
                     }
 
@@ -9412,7 +9410,7 @@ mod tests {
                         shape as u64, slot as u64, quench_runtime::typed_ir::SlotType::from_type(quench_runtime::typed_ir::Type::NUMBER) as u64),
                     Edge::Store => field_set_in_lane(machine, residual, receiver,
                         store.atom_index() as u64, store.cache_site_index() as u64, Value::number(0.5)),
-                    Edge::Pointer => u64::from(vm.cached_field_store_pointer(&program, receiver,
+                    Edge::Pointer => u64::from(vm.cached_field_store_pointer(receiver,
                         store.atom_index(), store.cache_site_index(), quench_runtime::typed_ir::Type::NUMBER).is_some()),
                 }
             };

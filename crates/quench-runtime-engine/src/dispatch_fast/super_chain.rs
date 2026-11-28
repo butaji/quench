@@ -124,15 +124,13 @@ fn add_chain_stores(
         if *program != vm.active_program {
             enter_program(vm, *program);
         }
-        let Some(code) = vm.programs.residual(*program).map(std::ptr::from_ref) else {
+        if vm.programs.residual(*program).is_none() {
             added = false;
             break;
-        };
-        // SAFETY: the program store keeps a residual for as long as the VM runs it.
-        let code = unsafe { &*code };
+        }
         // Each class's atoms name its own program's fields, which the running program's facts do not
         // settle, so every chain store is kept.
-        added = add_stores_in_lane(vm, code, this, std::slice::from_ref(store), argument, |_| true, fixed, |_, _| None, &mut *each);
+        added = add_stores_in_lane(vm, this, std::slice::from_ref(store), argument, |_| true, fixed, |_, _| None, &mut *each);
         if !added {
             break;
         }

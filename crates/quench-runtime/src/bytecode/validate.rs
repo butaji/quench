@@ -1384,7 +1384,6 @@ mod tests {
 
     fn program(function: Function) -> ResidualProgram {
         ResidualProgram {
-            specialized: true,
             kind: crate::bytecode::ProgramKind::Script,
             module_requests: Vec::new(),
             module_imports: Vec::new(),

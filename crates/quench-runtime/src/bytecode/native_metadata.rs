@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn shared_metadata_preserves_prefix_ids_source_and_deferred_functions() {
-        let mut compiler = crate::NativeJsCompiler::new(true);
+        let mut compiler = crate::NativeJsCompiler::new();
         let first = compiler
             .compile_script(
                 "function earlier() { return globalThis.earlier; }",

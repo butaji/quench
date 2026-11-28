@@ -148,7 +148,7 @@ impl Vm {
     pub(crate) fn kept_native_module_program(
         &mut self, module: &quench_runtime::ModuleSource,
     ) -> Result<Option<ProgramId>, JsError> {
-        let parts = [self.specialization_part(), module.compilation_goal(), &module.source];
+        let parts = [module.compilation_goal(), &module.source];
         let Some(native) = self.resolve_native_program(&module.name, &parts).map_err(|error| JsError::validation(error.to_string()))? else {
             return Ok(None);
         };
@@ -182,9 +182,6 @@ impl Vm {
     }
 
     fn validate_native_namespace(&self, native: &NativeJsProgram) -> Result<(), JsError> {
-        if native.program.specialized != self.specialized {
-            return Err(JsError::validation("native script specialization does not match runtime".into()));
-        }
         if !self.atom_sequence.proves_prefix(&native.program.atoms)
             && (native.program.atoms.len() > self.atom_sequence.len()
             || native.program.atoms.iter().enumerate().any(|(id, name)| {

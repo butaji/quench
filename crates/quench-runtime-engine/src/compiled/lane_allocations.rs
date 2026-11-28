@@ -234,7 +234,7 @@ pub(crate) unsafe extern "C" fn new_closure_in_lane(vm: u64, residual: u64, payl
     let closure = vm.closure(program, id as u32, env).unwrap_or(Value::DELETED);
     super::dispatch_fast::note_allocation(vm);
     // The allocation moves only the record bases; the frame's views change where this closure first captured it.
-    if captured { dispatch.refresh_object_bases(vm) } else { dispatch.refresh_heap_bases(vm, program) }
+    if captured { dispatch.refresh_object_bases(vm) } else { dispatch.refresh_heap_bases(vm) }
     closure.to_bits()
 }
 

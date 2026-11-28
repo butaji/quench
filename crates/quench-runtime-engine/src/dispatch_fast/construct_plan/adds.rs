@@ -23,7 +23,7 @@ pub(crate) fn add_initializer_fields_in_lane(
     let Some(stores) = code.function(function as usize).initializer_stores(&code.constants) else {
         return false;
     };
-    add_stores_in_lane(vm, code, this, stores, argument, read, fixed, nested, each)
+    add_stores_in_lane(vm, this, stores, argument, read, fixed, nested, each)
 }
 
 /// `add_initializer_fields_in_lane` of `stores`, a body's or a class chain's (`chain_stores`). A store to a field
@@ -32,7 +32,6 @@ pub(crate) fn add_initializer_fields_in_lane(
 #[inline(always)]
 pub(crate) fn add_stores_in_lane(
     vm: &mut Vm,
-    code: &ResidualProgram,
     this: Value,
     stores: &[quench_runtime::bytecode::InitializerStore],
     argument: impl Fn(u16) -> Value,
@@ -54,7 +53,7 @@ pub(crate) fn add_stores_in_lane(
         };
         // A fixed class's receiver is its union cell, which has no add cache: its stores are written by slot by the
         // caller (`initialize_stores_in_lane`), so no hit is made (`fixed`).
-        if !fixed && (!vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(code, this, store.atom, value, store.site)) {
+        if !fixed && (!vm.field_add_atom_eligible(store.atom) || !vm.primary_field_add_hit(this, store.atom, value, store.site)) {
             return false;
         }
         each(store, value);

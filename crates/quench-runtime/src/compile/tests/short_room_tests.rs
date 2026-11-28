@@ -31,7 +31,7 @@ fn a_replay_short_of_reserved_site_room_runs_unrewritten_code_and_later_replays_
     assert_eq!(run(&short), run(&normal));
 }
 
-/// Atoms numbered from zero, for programs that run specialized, as a host's do.
+/// Atoms numbered from zero, as a host's do.
 struct SpecializedAtoms;
 
 impl crate::compile::AtomPrefix for SpecializedAtoms {
@@ -46,9 +46,6 @@ impl crate::compile::AtomPrefix for SpecializedAtoms {
     }
     fn table(&self) -> crate::bytecode::AtomTable {
         crate::bytecode::AtomTable::default()
-    }
-    fn specialized(&self) -> bool {
-        true
     }
 }
 

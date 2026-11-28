@@ -652,7 +652,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
                 return Some(value);
             }
             vm.prepare_named_function_info_lookup(object, atom);
-            vm.cached_field_hit(code, object, site)
+            vm.cached_field_hit(object, site)
         };
         match probe {
             super::object::FieldCacheProbe::Hit(value) => Some(value),
@@ -704,12 +704,12 @@ impl<const ACC: u8> LaneFrame<ACC> {
                 .array_length_field(object, atom)
                 // The entries of a site past one shape, whose handler may be a nested site's or a
                 // local base's, as the hashed row reads them.
-                .or_else(|| vm.polymorphic_field_hit(code, object, site))
+                .or_else(|| vm.polymorphic_field_hit(object, site))
                 .or_else(|| vm.cell_polymorphic_holder_hit(object, site))
                 .or_else(|| vm.probed_field_miss_value(object, atom, site)),
             super::object::FieldCacheProbe::Ineligible => vm
                 .array_length_field(object, atom)
-                .or_else(|| vm.cached_string_field_hit(code, object, atom, site))
+                .or_else(|| vm.cached_string_field_hit(object, atom, site))
                 .or_else(|| vm.cached_primitive_field_hit(object, atom)),
         }
         // A collection's `size` or a buffer view's field, which no cache records

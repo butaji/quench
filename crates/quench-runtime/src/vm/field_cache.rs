@@ -55,13 +55,13 @@ impl Vm {
 
     /// A global name read: an initialized global lexical binding of the name, else the site's cached
     /// field of the global object.
-    pub fn global_name_read(&mut self, code: &ResidualProgram, atom: Atom, site: u16) -> GlobalNameRead {
+    pub fn global_name_read(&mut self, atom: Atom, site: u16) -> GlobalNameRead {
         let globals = self.realm.globals;
         if self.realm.global_lexical_declarations.contains(&atom) {
             return self.realm.global_lexical_bindings.get(&atom).copied().filter(|value| !value.is_deleted())
                 .map_or(GlobalNameRead::Uninitialized, GlobalNameRead::Value);
         }
-        match self.cached_field_hit(code, globals, site) {
+        match self.cached_field_hit(globals, site) {
             object::FieldCacheProbe::Hit(value) => GlobalNameRead::Value(value),
             _ => GlobalNameRead::Miss,
         }
