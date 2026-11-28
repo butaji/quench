@@ -118,8 +118,7 @@ pub(crate) fn skipped() -> Planned {
     Planned::single(&EMPTY, [0; HOLES], None, None)
 }
 
-/// What a body is built for: its function and registers, the rows whose int32 speculation failed
-/// (`widened`, by caller PC), the types its entry held by register (`seen`, its declared Numbers joining as Number types), and what
+/// What a body is built for: its function and registers, the types its entry held by register (`seen`, its declared Numbers joining as Number types), and what
 /// the program holds Stable (`Known`), whose invalidation word its code reads where a call may
 /// have changed a fact it folded, and the realm its inlined callees belong to (`RealmProof`).
 pub(crate) struct BodySpec<'a> {
@@ -128,7 +127,6 @@ pub(crate) struct BodySpec<'a> {
     pub(crate) known: Known<'a>,
     /// The realm the body proves active at its entry; none where it folds nothing realm-bound (an image's body).
     pub(crate) realm: Option<RealmProof>,
-    pub(crate) widened: &'a [usize],
     /// The type each entry register held when the compile observed it, by register (a register past the slice
     /// is no observation: `Type::ANY`).
     pub(crate) seen: &'a [Type],
@@ -246,15 +244,6 @@ fn with_native_holders(mut body: Body, callees: &Callees) -> Body {
     body
 }
 
-/// The bit of a widened key that says the instruction is an inlined callee's (`inlined_exit_key`).
-const INLINED_KEY: usize = 1 << (usize::BITS - 1);
-
-/// The key a leave inside an inlined callee is counted and widened by: the callee's instruction `pc`
-/// of the frame whose call is at the caller's PC `call`.
-pub(crate) fn inlined_exit_key(call: u32, pc: u32) -> usize {
-    INLINED_KEY | (call as usize) << u32::BITS | pc as usize
-}
-
 fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: LaneHelpers) -> Result<Body, String> {
     let (ending, callees, function) = (sites.ending, sites.targets, sites.function);
     // The class-typed receivers the entry checks, as `build` limited them (`Known::classes`): the same list the rows fold on.
@@ -274,7 +263,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let operand_sites = row_sites(spec.facts, spec.known.program, spec.function, &stitched.origins, &stitched.frames, &rows);
     typed_rows(region, &stitched.origins, spec.typed, &mut rows);
     let seen = super::declared::seen(function, ending, spec.seen);
-    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, (widened_rows(&stitched.origins, &stitched.frames, spec.widened).as_slice(), operand_sites.as_slice()), &seen);
+    let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, operand_sites.as_slice(), &seen);
     direct_admits(&mut decoded, &operand_sites, spec.known.fields);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
     // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).

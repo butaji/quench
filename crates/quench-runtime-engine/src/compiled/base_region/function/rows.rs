@@ -159,16 +159,6 @@ pub(crate) fn cover(region: &LoopRegion, pc: u32, sites: &Sites, instruction: Wi
     What::Row(Decoded { completes: returning, ..row })
 }
 
-/// The rows whose int32 speculation failed: those of the caller's instructions at the `widened` PCs,
-/// and of the inlined callees' at the `widened` keys (`inlined_exit_key`).
-pub(crate) fn widened_rows(origins: &[Origin], frames: &[InlinedCall], widened: &[usize]) -> Vec<usize> {
-    let widens = |origin: &Origin| match origin {
-        Origin::Caller(pc) => widened.contains(&(*pc as usize)),
-        Origin::Inlined { frame, pc } => widened.contains(&inlined_exit_key(frames[*frame].call, *pc)),
-    };
-    origins.iter().enumerate().filter(|(_, origin)| widens(origin)).map(|(k, _)| k).collect()
-}
-
 /// What the solver proves of each row's operands, where the row's instruction chooses its variant from them
 /// (`operand_class::chooses_variant`): the caller's instructions from the function's solve (`facts`), an inlined callee's
 /// from its own, its registers named back through the window it was inlined at (`InlinedCall::base`). A register outside

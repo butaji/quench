@@ -304,7 +304,7 @@ impl Vm {
         let typed: Vec<_> = facts.as_deref()
             .map(|aot| { let facts = aot.function_facts(function); (region.header..=region.backedge).map(|pc| facts.element_view(pc)).collect() })
             .unwrap_or_default();
-        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &[], seen: &seen, facts: facts.as_deref(), typed: &typed };
+        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), seen: &seen, facts: facts.as_deref(), typed: &typed };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
@@ -400,7 +400,7 @@ pub(crate) fn image_body(program: &ResidualProgram, facts: &AotFacts, function: 
         program, stitch: &super::tier_policy::STITCH, stores: None, reads: None, adds: None, names: None,
         invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
-    let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], facts: Some(facts), typed: &[] };
+    let spec = BodySpec { function, registers: body.registers, known, realm: None, seen: &[], facts: Some(facts), typed: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
     let built = unsafe { build_body(&region, &spec, &callees, LaneHelpers::Ahead) }?;
     let calls = image_calls(&built)?;
