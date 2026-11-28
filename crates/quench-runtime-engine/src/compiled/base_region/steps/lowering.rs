@@ -2,6 +2,8 @@
 //! its step carries (`fast_arm`), and the decoded row of a step (`decode_step`). Planning the step's chain is
 //! `steps`' own.
 
+#[allow(unused_imports)]
+use quench_runtime::staged::AllocationAllocationExt;
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;

@@ -14,7 +14,7 @@ fn class_field_address<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) ->
 /// `value` into field `slot` of the live class cell `cell`, once its gate admitted the store. The gate
 /// leaves no constant mark standing: a constant-marked class has no key (`Heap::live_class_key`).
 #[inline(always)]
-pub(crate) fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, value: S::Word) {
+pub fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, value: S::Word) {
     let address = class_field_address(stage, cell, slot);
     stage.store_u64(Region::ObjectSlots.mutable(), address, 0, value);
 }
@@ -22,7 +22,7 @@ pub(crate) fn class_store<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word,
 /// Guards that the live class cell `cell` holds the class key the own entry `entry` stores in its receiver
 /// word (stored complemented: `key = complement - stored`), by `class_key_matches`, the one class guard.
 #[inline(always)]
-pub(super) fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<()> {
+pub fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<()> {
     let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
     let complement = stage.constant(u64::from(ENTRY.receiver_complement));
     let key = stage.sub(complement, stored);
@@ -33,7 +33,7 @@ pub(super) fn class_matches<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Wo
 /// `class_matches` with the key as an operand, where the entry's complemented word is not read. A departed
 /// cell's `DEPARTED_CLASS` gives a word past u32, which equals no key.
 #[inline(always)]
-pub(crate) fn class_key_matches<S: Stage>(stage: &mut S, cell: S::Word, key: S::Word, miss: S::Miss) -> Option<()> {
+pub fn class_key_matches<S: Stage>(stage: &mut S, cell: S::Word, key: S::Word, miss: S::Miss) -> Option<()> {
     // `class + CLASS_KEY` in the 64-bit word: a live class (below `LAYOUT_CAPACITY`) gives `class | CLASS_KEY`;
     // `DEPARTED_CLASS` (u32::MAX) gives a word past u32, which equals no key. So this compare is the whole guard.
     let class = super::super::object::cell_class(stage, cell);
@@ -47,7 +47,7 @@ pub(crate) fn class_key_matches<S: Stage>(stage: &mut S, cell: S::Word, key: S::
 /// its granule: the receiver of a class-keyed row. `None` (leaving at `miss`) where the word is no direct
 /// object or its cell is of another class.
 #[inline(always)]
-pub(crate) fn class_key_cell<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
+pub fn class_key_cell<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
     let direct = super::super::value::is_direct_object(stage, object);
     stage.guard(direct, miss)?;
     let granule = super::super::value::direct_object_id(stage, object);
@@ -58,7 +58,7 @@ pub(crate) fn class_key_cell<S: Stage>(stage: &mut S, object: S::Word, key: S::W
 
 /// The own field at `slot` (a field index) of the class-keyed receiver `object` (`class_key_cell`), as `cell_own_field` reads it.
 #[inline(always)]
-pub(crate) fn class_own_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn class_own_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let (_, cell) = class_key_cell(stage, object, key, miss)?;
     cell_own_field(stage, cell, slot, miss)
 }
@@ -67,7 +67,7 @@ pub(crate) fn class_own_field<S: Stage>(stage: &mut S, object: S::Word, key: S::
 /// granule): the class fixes the prototype link and a departed holder resets the field caches, as
 /// `class_held_value`, so the value is one load after the cell lookup.
 #[inline(always)]
-pub(crate) fn class_held_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, holder: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn class_held_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, holder: S::Word, miss: S::Miss) -> Option<S::Word> {
     class_key_cell(stage, object, key, miss)?;
     let holder = super::super::object::cell_at_granule(stage, holder);
     Some(cell_field(stage, holder, slot))
@@ -76,7 +76,7 @@ pub(crate) fn class_held_field<S: Stage>(stage: &mut S, object: S::Word, key: S:
 /// The field at `slot` of the live class cell `cell`: its fields are one flat run at `fields_offset`,
 /// so the value is one load.
 #[inline(always)]
-pub(crate) fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
+pub fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) -> S::Word {
     let address = class_field_address(stage, cell, slot);
     stage.load_u64(Region::ObjectSlots.mutable(), address, 0)
 }
@@ -84,7 +84,7 @@ pub(crate) fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) 
 /// The value at `slot` of the live class cell `cell` that the own entry `entry` names. The class key
 /// guards the cell, so the value is one load: no record, no payload test and no shape guard.
 #[inline(always)]
-pub(super) fn class_own_value<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn class_own_value<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     class_matches(stage, cell, entry, miss)?;
     let slot = entry_slot(stage, entry);
     cell_own_field(stage, cell, slot, miss)
@@ -95,7 +95,7 @@ pub(super) fn class_own_value<S: Stage>(stage: &mut S, cell: S::Word, entry: S::
 /// filled from an instance that holds it meets one that does not. The hole leaves for the prototype walk; it is a value
 /// state, not a representation test.
 #[inline(always)]
-pub(crate) fn cell_own_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn cell_own_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
     let value = cell_field(stage, cell, slot);
     let hole = stage.eq_imm(value, super::super::value_encoding::TAG_DELETED);
     let present = stage.not(hole);
@@ -109,7 +109,7 @@ pub(crate) fn cell_own_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Wo
 /// prototype link, so there is no link guard, and a departed holder resets the field caches
 /// (`Vm::drop_departed_holder_entries`), so there is no holder guard.
 #[inline(always)]
-pub(super) fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let granule = super::super::value::direct_object_id(stage, object);
     let cell = super::super::object::cell_at_granule(stage, granule);
     class_matches(stage, cell, entry, miss)?;
@@ -123,7 +123,7 @@ pub(super) fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: 
 /// key's `CLASS_KEY` bit is clear in the stored word. It is a fact of the entry, never a test of the
 /// object: a class key's read goes to the class cell, a shape key's to the record (`object_record_of`).
 #[inline(always)]
-pub(super) fn entry_keys_class<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
+pub fn entry_keys_class<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
     let stored = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.receiver_offset as i32);
     let bit = stage.and_imm(stored, u64::from(CLASS_KEY));
     stage.eq_imm(bit, 0u32)

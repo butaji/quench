@@ -33,13 +33,6 @@ pub const STITCH: Stitch = Stitch {
     max_depth: 3,
 };
 
-/// The most entries between looks for a compiling body's code, which start one entry apart
-/// and double (`LaneBody::Compiling`). A look costs a channel poll
-/// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
-/// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
-/// most this many entries once ready.
-pub const COMPILE_POLL_INTERVAL: u16 = 64;
-
 /// The prototype links a specializer unrolls a staged walk over (`Stage::walk_prototypes`): an
 /// instance, its class chain and `Object.prototype` end within it, and each link is a block of
 /// code, so a longer chain is the VM's residual rather than more code.

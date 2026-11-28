@@ -5,7 +5,7 @@ use super::*;
 /// The address of value zero of the wide run a plain object's `payload` word names outside
 /// inline storage: `None` (leaving at `miss`) for a narrow run, whose words are halves.
 #[inline(always)]
-pub(crate) fn flat_run<S: Stage>(stage: &mut S, payload: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn flat_run<S: Stage>(stage: &mut S, payload: S::Word, miss: S::Miss) -> Option<S::Word> {
     let narrow = narrow_run(stage, payload);
     let wide = stage.not(narrow);
     stage.guard(wide, miss)?;
@@ -14,18 +14,17 @@ pub(crate) fn flat_run<S: Stage>(stage: &mut S, payload: S::Word, miss: S::Miss)
 
 /// Whether a plain object's payload word, outside inline storage, names a narrow run.
 #[inline(always)]
-pub(crate) fn narrow_run<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
+pub fn narrow_run<S: Stage>(stage: &mut S, payload: S::Word) -> S::Cond {
     let tag = stage.and_imm(payload, OBJECT.narrow_run_tag);
     stage.ne_imm(tag, 0u32)
 }
 
-#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// Value `slot` of an object of `layout`, which holds it, as the word its owner's `rep` encodes:
 /// a `Value`'s bits for `Representation::Tagged` and `Representation::Int32`, the IEEE double for `Representation::Float64`
 /// (`value_word` makes a `Value` of either). Only an arena slot holds a raw double: a packed or
 /// narrow slot holds a narrow value whatever its owner's type, and reads as one, a `Value`.
 #[inline(always)]
-pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Representation) -> S::Word {
+pub fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Representation) -> S::Word {
     debug_assert!(usize::from(slot) < layout.storage_len);
     match layout.slots {
         Slots::Flat(base) => flat_read(stage, base, slot, rep),
@@ -53,7 +52,7 @@ pub(crate) fn read_slot<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond
 /// The `Value` bits of the word `read_slot` read at `slot` of `layout` in `rep`: a raw double
 /// of an arena run boxed as a raw double word (`Stage::box_raw_number`), any other word as it is.
 #[inline(always)]
-pub(crate) fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Representation) -> S::Word {
+pub fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, slot: u16, rep: Representation) -> S::Word {
     match (rep, layout.slots) {
         (Representation::Float64, Slots::Flat(_)) => { let number = read_slot(stage, layout, slot, rep); stage.box_raw_number(super::super::Float64::of_row(number)) }
         (Representation::Float64, Slots::Either { packed, inline, flat }) => stage.choose(inline,
@@ -67,7 +66,7 @@ pub(crate) fn read_slot_value<S: Stage>(stage: &mut S, layout: Layout<S::Word, S
 /// of `layout`, which the caller proved holds it (`index < layout.storage_len`), as the word
 /// its owner's `rep` encodes.
 #[inline(always)]
-pub(crate) fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, index: S::Word, rep: Representation) -> S::Word {
+pub fn read_slot_at<S: Stage>(stage: &mut S, layout: Layout<S::Word, S::Cond>, index: S::Word, rep: Representation) -> S::Word {
     match layout.slots {
         Slots::Flat(base) => flat_read_at(stage, base, index, rep),
         Slots::Packed(packed) => packed_read_at(stage, packed, index, rep),

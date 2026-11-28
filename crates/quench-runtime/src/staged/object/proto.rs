@@ -17,18 +17,18 @@ const RECORD_LINKS: u32 = OBJECT.proto_record_end - OBJECT.proto_record_base;
 const _: () = assert!(RECORD_LINKS.is_power_of_two() && OBJECT.proto_record_base.is_multiple_of(RECORD_LINKS));
 
 /// The link of a `null` prototype: the all-ones link field (`ProtoLink::NULL`).
-pub(super) const NULL_LINK: u32 = OBJECT.proto_mask;
+pub const NULL_LINK: u32 = OBJECT.proto_mask;
 
 /// Whether `link` names an object record (`ProtoLink::object_record_id`).
 #[inline(always)]
-pub(crate) fn proto_names_record<S: Stage>(stage: &mut S, link: S::Word) -> S::Cond {
+pub fn proto_names_record<S: Stage>(stage: &mut S, link: S::Word) -> S::Cond {
     let high = stage.and_imm(link, !u64::from(RECORD_LINKS - 1));
     stage.eq_imm(high, u64::from(OBJECT.proto_record_base))
 }
 
 /// The id of the object record `link` names, which `proto_names_record` proved it names.
 #[inline(always)]
-pub(crate) fn proto_record_id<S: Stage>(stage: &mut S, link: S::Word) -> S::Word {
+pub fn proto_record_id<S: Stage>(stage: &mut S, link: S::Word) -> S::Word {
     stage.and_imm(link, u64::from(RECORD_LINKS - 1))
 }
 

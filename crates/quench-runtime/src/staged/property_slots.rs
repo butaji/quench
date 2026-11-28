@@ -14,7 +14,7 @@ use super::{Owner, PropertyFrame};
 /// read does (`object::formed_own_layout`); the frame keeps the shape and the run. Only a direct
 /// object's record keeps those bits current: a function's record is read through `kept_slot`.
 #[inline(always)]
-pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
+pub fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct, shape): (Owner, bool, u32),
     object: S::Word, at: &Reached<S::Word, S::Cond>, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     // The word the receiver's header read, where it read one.
     let word = at.auxiliary.unwrap_or_else(#[inline(always)] || super::super::object::header_u32(stage, super::super::region::Region::ShapeWord.mutable(), at.record,
@@ -32,7 +32,7 @@ pub(super) fn formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &
 /// The value at `slot` of `owner`'s object of exact `shape`, through the layout the frame kept
 /// where it covers the slot, else the one this read proves and keeps.
 #[inline(always)]
-pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, shape): (Owner, u32), object: S::Word,
+pub fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, shape): (Owner, u32), object: S::Word,
     at: &Reached<S::Word, S::Cond>, (slot, form, storage_len, rep): (u16, Form, usize, Representation), miss: S::Miss) -> Option<S::Word> {
     let layout = match frame.kept_layout(owner, object, shape).filter(|layout| usize::from(slot) < layout.storage_len) {
         Some(layout) => layout,
@@ -51,7 +51,7 @@ pub(super) fn kept_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 /// read keeps, testing no form bit. The layout id proves the exact shape, and the slot's type is
 /// the dependency the compiled code holds on it (`NativeFieldLoad::slot_dependency`).
 #[inline(always)]
-pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), object: S::Word,
+pub fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), object: S::Word,
     at: &Reached<S::Word, S::Cond>, word: u32, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     let shape = ic::layout_shape(word);
     if frame.proven_shape(stage, owner).map(|(proven, _)| proven) == Some(shape)
@@ -73,7 +73,7 @@ pub(super) fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, fra
 /// compared once with the id the loader resolved, which proves the shape, the form and the link
 /// together, and the proof is kept under `id`.
 #[inline(always)]
-pub(in crate::staged) fn guard_receiver_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
+pub fn guard_receiver_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<super::super::Shaped<S::Word>> {
     if let Some((proven, fact)) = frame.proven_shape(stage, owner) && proven == id { return Some(super::super::Shaped::by_fact(at.record, fact)); }
     let shaped = ic::guard_image_layout(stage, at, id & !ic::SYMBOLIC_SHAPE, miss)?;
@@ -84,7 +84,7 @@ pub(in crate::staged) fn guard_receiver_layout<S: Stage, F: PropertyFrame<S>>(st
 /// The value at `slot` of `owner`'s object of the ahead image's layout `id` (`guard_receiver_layout`):
 /// through the run the frame kept, else the arena run the layout proves, which the frame keeps.
 #[inline(always)]
-pub(super) fn image_layout_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool), object: S::Word,
+pub fn image_layout_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool), object: S::Word,
     at: &Reached<S::Word, S::Cond>, key: u32, (slot, rep, storage_len): (u16, Representation, usize), miss: S::Miss) -> Option<S::Word> {
     let (owner, id) = (owned.0, key | ic::SYMBOLIC_SHAPE);
     if frame.proven_shape(stage, owner).map(|(proven, _)| proven) == Some(id)

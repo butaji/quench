@@ -130,13 +130,5 @@ pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, body: Option<&q
     calls(LaneView::compiling)
 }
 
-/// Whether a compiling `body` lets this entry pass without looking for its code, counting it
-/// down: a compile takes milliseconds and a hot loop enters at each backward jump.
-fn awaits_look(body: &LaneBody) -> bool {
-    let LaneBody::Compiling { wait, .. } = body else { return false };
-    let left = wait.get();
-    wait.set(left.saturating_sub(1));
-    left > 0
-}
 
 

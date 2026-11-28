@@ -2,6 +2,8 @@
 //! the bindings and properties it writes, and the cells and sources its registers hold at each point (`RegisterCells`).
 //! `FunctionFlow` is the record's result.
 
+#[allow(unused_imports)]
+use crate::staged::AllocationAllocationExt;
 use super::effects::{Ctx, Events, decoded, is_global_load, root_this, runs_guest_code, settled, this_fact};
 use super::escapes::method_atom;
 use super::quiet::{self, Quiet};
