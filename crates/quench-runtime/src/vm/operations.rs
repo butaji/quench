@@ -711,7 +711,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         match self.native_table.entry(native) {
             Some(entry) => entry(self, p, native, this, args),
-            None => Err(JsError("native has no entry in this runtime's table".into())),
+            None => Err(JsError(format!("native {native:?} has no entry in this runtime's table").into())),
         }
     }
 

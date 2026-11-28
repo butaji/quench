@@ -402,6 +402,14 @@ impl Vm {
         Ok(())
     }
 
+    /// The initializer of `holder`'s pending lazy member `key`: the function its materialization runs.
+    pub(super) fn lazy_initializer(&self, holder: Value, key: PropertyKey) -> Option<Value> {
+        let group = self.lazy_data_group(holder, key)?;
+        (self.lazy_group_state(group) == GroupState::Pending)
+            .then(|| self.heap.environment_slot(group, GroupSlot::Initializer as usize))
+            .flatten()
+    }
+
     fn materialize_lazy_group(&mut self, p: &ResidualProgram, group: Value) -> Result<(), JsError> {
         let slot = |vm: &Self, slot: GroupSlot| {
             vm.heap

@@ -524,7 +524,8 @@ pub fn finish(
     if !same_layout {
         return Err("two dumping runs left different memory layouts".into());
     }
-    let mut stray: Vec<(String, usize)> = dump.foreign.iter().map(|(_, _, name)| (name.clone(), 0)).collect();
+    // Each foreign mapping with the count of words into it and the places of the first few, so a refusal names them.
+    let mut stray: Vec<(String, usize, Vec<String>)> = dump.foreign.iter().map(|(_, _, name)| (name.clone(), 0, Vec::new())).collect();
     let in_keep = |address: u64, keep: &[(u64, u64)]| keep.iter().any(|&(start, end)| (start..end).contains(&address));
     let mut check = |base: u64, a: &[u8], b: &[u8], kept: &dyn Fn(u64) -> bool| {
         for (index, (x, y)) in a.chunks_exact(8).zip(b.chunks_exact(8)).enumerate() {
@@ -534,6 +535,7 @@ pub fn finish(
             let word = u64::from_le_bytes(x.try_into().unwrap_or_default());
             if let Some(found) = dump.foreign.iter().position(|&(start, end, _)| (start..end).contains(&word)) {
                 stray[found].1 += 1;
+                if stray[found].2.len() < 4 { stray[found].2.push(format!("{:#x}", base + 8 * index as u64)); }
             }
         }
     };
@@ -581,7 +583,7 @@ pub fn finish(
         changed(0, bytes, &keep, &|start, length| tls_initial(size - start, length))
             .into_iter().map(|(at, patch)| (size - at, patch)).collect::<Vec<_>>()
     }).collect();
-    stray.retain(|(_, count)| *count != 0);
+    stray.retain(|(_, count, _)| *count != 0);
     if !stray.is_empty() {
         return Err(format!("dumped words point into the dumping process's own memory: {stray:?}"));
     }
