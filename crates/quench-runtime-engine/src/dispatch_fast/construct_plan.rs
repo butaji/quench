@@ -525,8 +525,8 @@ pub(crate) fn initialize_stores_in_lane(
     if let Some(index) = plan_index
         && let Some(layout) = vm.function_prototype_layout(callee)
     {
-        // The fixed cell's slots: where the stores name union slots in order (`FixedUnion::cell_slots`). Otherwise the
-        // plan does not hold, and the receiver stays the record the adds made.
+        // The fixed cell's slots: each store's union slot, whatever the order of the stores (`FixedUnion::cell_slots`).
+        // A store naming no union slot leaves the plan unheld, and the receiver stays the record the adds made.
         let fixed = match union {
             None => None,
             Some(union) => match union.cell_slots(&atoms[..usize::from(plan.fields)]) {
