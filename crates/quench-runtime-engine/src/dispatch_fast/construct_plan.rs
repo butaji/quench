@@ -9,6 +9,7 @@ pub(crate) use adds::{add_initializer_fields_in_lane, add_stores_in_lane};
 pub(crate) use nested::{finish_forwarded_in_lane, nested_construction, nested_root_holds};
 
 pub(crate) use quench_runtime::vm::engine_types::ConstructPlan;
+use quench_runtime::vm::engine_types::FixedCellPlan;
 
 pub(crate) use quench_runtime::vm::engine_types::ConstructPlanKind;
 
@@ -109,7 +110,11 @@ impl ConstructPlan {
     /// it alone; the first construction of an unrecorded class records it (`record_unrecorded`).
     #[inline(always)]
     fn allocate_receiver(&self, vm: &mut Vm, values: &[Value; CONSTRUCT_PLAN_FIELDS], fields: usize) -> Value {
-        let this = vm.allocate_planned_object(self.header, self.prototype, values, fields);
+        let this = match self.fixed {
+            // A fixed class's instance is its union cell, each field at its slot (`Vm::allocate_fixed_cell`).
+            Some(fixed) => vm.allocate_fixed_cell(fixed.shape, self.prototype, &fixed.slots[..fields], &values[..fields]),
+            None => vm.allocate_planned_object(self.header, self.prototype, values, fields),
+        };
         if !self.recorded {
             self.record_unrecorded(vm, this);
         }
@@ -479,6 +484,9 @@ pub(crate) fn initialize_stores_in_lane(
     let template = vm.inline_construct_template_by(callee, constructor)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
     let this = vm.allocate_object(template);
+    // A fixed class's union (R4-F, the decision `Vm::fixed_union` makes for the construction's receiver): the plan
+    // then allocates the instance as that union's cell, gathering the fields the adds stored.
+    let union = vm.fixed_union(constructor, source_shape);
     let mut planned = Some(ConstructPlan {
         callee,
             callee_layout: (0, 0),
@@ -486,6 +494,9 @@ pub(crate) fn initialize_stores_in_lane(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
+    // Each plan field's store name and value, in field order.
+    let mut atoms = [0; CONSTRUCT_PLAN_FIELDS];
+    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
     let nested = std::cell::Cell::new(None);
     let added = adds(vm, this,
         &mut |vm, construct| {
@@ -494,28 +505,55 @@ pub(crate) fn initialize_stores_in_lane(
             Some(value)
         },
         &mut |store, value| {
-            planned = planned.and_then(|plan| match store.value {
-                quench_runtime::bytecode::InitializerValue::Construct(_) => plan.with_nested(nested.take()?),
-                _ => plan.with_field(store, value),
+            planned = planned.and_then(|plan| {
+                let field = usize::from(plan.fields);
+                let plan = match store.value {
+                    quench_runtime::bytecode::InitializerValue::Construct(_) => plan.with_nested(nested.take()?)?,
+                    _ => plan.with_field(store, value)?,
+                };
+                atoms[field] = store.atom;
+                values[field] = value;
+                Some(plan)
             });
         });
     if !added {
         return Some((this, false));
     }
-    if let Some(mut plan) = planned
-        && let Some(index) = plan_index
+    let Some(mut plan) = planned else {
+        return Some((this, true));
+    };
+    if let Some(index) = plan_index
         && let Some(layout) = vm.function_prototype_layout(callee)
     {
+        // The fixed cell's slots: where the stores name union slots in order (`FixedUnion::cell_slots`). Otherwise the
+        // plan does not hold, and the receiver stays the record the adds made.
+        let fixed = match union {
+            None => None,
+            Some(union) => match union.cell_slots(&atoms[..usize::from(plan.fields)]) {
+                Some(slots) => Some(FixedCellPlan { shape: union.shape, slots }),
+                None => return Some((this, true)),
+            },
+        };
         plan.callee_layout = layout;
-        plan.shape = vm.heap_reads().object(this).map_or(source_shape, |object| object.shape());
-        // A nested field's root is read at each construction (`defaulted_construction_in_lane`).
-        if plan.nested.is_some() {
+        plan.shape = match fixed {
+            Some(fixed) => fixed.shape,
+            None => vm.heap_reads().object(this).map_or(source_shape, |object| object.shape()),
+        };
+        plan.fixed = fixed;
+        // A nested field's root is read at each construction (`defaulted_construction_in_lane`), and a fixed
+        // cell's fields are gathered into its slots there (`allocate_receiver`).
+        if plan.nested.is_some() || fixed.is_some() {
             plan.kind = ConstructPlanKind::Defaulted;
         }
         vm.lane_stack.construct_plans[index] = plan.finish();
         watch_construct_plan(vm, index, true, &[callee, plan.prototype]);
         if let Some(nested) = plan.nested {
             watch_construct_plan(vm, index, false, nested.held());
+        }
+        if fixed.is_some() {
+            // The instance is the cell the stored plan allocates, in place of the record the adds grew.
+            let stored = vm.lane_stack.construct_plans[index];
+            return Some((stored.allocate_values(vm, &values), true));
         }
     }
     Some((this, true))

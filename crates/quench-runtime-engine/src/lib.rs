@@ -282,7 +282,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::lane_frames::SidePayloadOps1 as _;
     pub use crate::dispatch_fast::lane_frames::SideOps1 as _;
     pub use crate::dispatch_fast::lane_frames::LaneStackOps3 as _;
-    pub use crate::dispatch_fast::lane_leaves::LaneLeavesOps1 as _;
     pub use crate::dispatch_fast::lane_roots::LaneRootOps1 as _;
     pub use crate::dispatch_fast::lane_roots::LaneContextOps1 as _;
     pub use crate::dispatch_fast::lane_roots::DispatchFastLaneRootsVm as _;

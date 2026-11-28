@@ -265,8 +265,6 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
         let slot = vm.lane_stack.records_mut().slot(depth);
         // SAFETY: a linked frame holds its prefix; its callee outlives the run.
         let (callee, body, window) = unsafe { let prefix = &*slot; (prefix.callee, prefix.body, prefix.window) };
-        // The leave inside the callee's body counts on its cell's word, which no handler entry notes.
-        unsafe { &*(*callee).target.view }.note_native_leave();
         unsafe { (*slot).callee = std::ptr::null() };
         // Its skipped constructor, its descriptor's until now, rides in its side record from
         // here on (`LaneStack::record_sided`); the frames are the innermost, outermost first.
@@ -287,7 +285,6 @@ fn advance_into_native_frames(cx: *mut LaneContext) -> Option<(&'static LaneView
             let side_at = unsafe { (*stack.sides.get()).len() } - 1 - above;
             let side = unsafe { &mut (&mut *stack.sides.get())[side_at] };
             let desc = unsafe { &*(stack.native_table[index] as *const crate::compiled::DirectCallee) };
-            unsafe { &*desc.target.view }.note_native_leave();
             let frame = (desc as *const DirectCallee, stack.body_table[index], window.0.addr());
             if let Some(skipped) = desc.forwarder { side.payload = super::lane_frames::SidePayload::Forwarder(skipped); }
             side.native = super::lane_frames::NO_NATIVE;

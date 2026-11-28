@@ -3191,6 +3191,12 @@ impl Lowering<'_, '_> {
         emit_js_guard(&mut self.builder, admitted, exit);
     }
 
+    /// Whether the store `instruction` at unit pc `unit_pc` needs no run-time admission of `writes`: its receiver's proven class
+    /// seeds the slot (`tag_proofs::store_seeded`). Where it does not, the admission (`admit_slot_writes`) stays the slow path.
+    pub(crate) fn store_proven(&self, unit_pc: usize, instruction: WideInstruction, writes: Type) -> bool {
+        self.vm.facts.is_some_and(|facts| tag_proofs::store_seeded(facts, self.unit, self.function_id, unit_pc, instruction, writes))
+    }
+
     fn slot_writes_admitted(&mut self, shape: ir::Value, slot: ir::Value, writes: Type) -> (ir::Value, Type) {
         let domain = quench_runtime::typed_ir::SlotType::from_type(writes);
         let encoded = self.raw_const(Lane::I64, domain as i64);
@@ -4663,9 +4669,11 @@ impl Lowering<'_, '_> {
                     let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
                         &mut self.builder, self.payload, site, exit, None));
                     if number {
-                        let shape = self.raw_unary(Unary::ZeroExtend(Lane::I64), binding.receiver);
-                        let slot = binding.slot.read(&mut self.builder);
-                        self.admit_slot_writes((shape, slot), Type::NUMBER, exit);
+                        if !self.store_proven(store, instruction, Type::NUMBER) {
+                            let shape = self.raw_unary(Unary::ZeroExtend(Lane::I64), binding.receiver);
+                            let slot = binding.slot.read(&mut self.builder);
+                            self.admit_slot_writes((shape, slot), Type::NUMBER, exit);
+                        }
                     } else {
                         self.admit_field_writes(&mut binding, Type::INT32, exit);
                     }
@@ -4735,14 +4743,17 @@ impl Lowering<'_, '_> {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, self.array_access(), exit);
                     if self.int32_loop(array) {
-                        // An int32 loop keeps the backing's exact count of others, which is zero: guarded here
+                        // An int32 loop keeps the backing's exact count of others, which is zero: a backing the solve
+                        // proves plain (`proven_plain_backing`) has that count by its fact; any other is guarded here
                         // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.
-                        let others = {
-                            let mut stage = super::object_slots::emit(&mut self.builder);
-                            stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
-                        };
-                        let none = self.raw_compare_imm(Relation::Equal, others, 0);
-                        emit_js_guard(&mut self.builder, none, exit);
+                        if !self.proven_plain_backing(header, array.source) {
+                            let others = {
+                                let mut stage = super::object_slots::emit(&mut self.builder);
+                                stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
+                            };
+                            let none = self.raw_compare_imm(Relation::Equal, others, 0);
+                            emit_js_guard(&mut self.builder, none, exit);
+                        }
                     } else {
                         // Stores through the hoisted view then write the element alone.
                         if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }

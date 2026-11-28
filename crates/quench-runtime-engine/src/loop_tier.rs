@@ -11,14 +11,6 @@ pub(crate) use quench_runtime::vm::engine_types::LoopTier;
 
 #[quench_macros::ext(LoopTierOps1)]
 impl LoopTier {
-    /// A callee its code calls by the helper got a body after it compiled (`record_late_call`): the
-    /// code goes where a compilation remains, and the next one calls the callee by its entry.
-    pub(crate) fn late_callee(&mut self, tiers: &Tiers) -> bool {
-        let retires = self.compilations < tiers.loops.max_compilations && self.code.is_some();
-        if retires && let Some(code) = self.code.take() { code.retire(); }
-        retires
-    }
-
     /// Whether published code can re-enter `region` at `pc` (`CompiledOsrRegion::can_run_from`).
     pub(crate) fn resumable(&self, region: &LoopRegion, pc: u32) -> bool {
         self.code.as_ref().and_then(|code| code.lease()).is_some_and(|code| code.can_run_from(region, pc))
