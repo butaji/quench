@@ -295,10 +295,10 @@ extern "C" fn report() {
     );
     let rows = (totals.covered + totals.exits).max(1);
     eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);
-    let [entered, left, declined, compiled, bodies, recurrent, planned, published, compiling, unpaid, short, body_declined, stale, deferred, base] =
+    let [entered, left, declined, compiled, bodies, planned, published, compiling, unpaid, body_declined, stale, deferred] =
         std::array::from_fn::<u64, EVENT_COUNT, _>(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
     eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies} inlined_sites={}", inlined_sites());
-    eprintln!("lane-body-attempts started={bodies} recurrent={recurrent} planned={planned} published={published} compiling={compiling} unpaid={unpaid} short={short} declined={body_declined} stale={stale} deferred={deferred} base={base}");
+    eprintln!("lane-body-attempts started={bodies} planned={planned} published={published} compiling={compiling} unpaid={unpaid} declined={body_declined} stale={stale} deferred={deferred}");
     if let Ok(leaves) = LEAVES.lock() {
         let mut ranked: Vec<_> = leaves.iter().collect();
         ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));

@@ -14,7 +14,6 @@ use super::base_region::call_plan::planned;
 use super::base_region::function::{build_body, Body, BodySpec, ClassProto};
 use super::base_region::{Known, RealmProof, SymbolSite};
 use super::lane_facts::bind_callees;
-use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use quench_runtime::code_dependencies::Invalidation;
 use quench_runtime::vm::global_facts::GlobalTable;
@@ -130,7 +129,7 @@ impl LaneMethod {
             recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch,
-            direct, proven_calls: false, closed, _records: body.records, constructors: body.constructors, inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
+            direct, proven_calls: false, closed, _records: body.records, constructors: Box::default(), inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
         })
     }
 }
@@ -269,7 +268,8 @@ impl Vm {
         // The region keeps the function's whole code (a function's span is all of it), which the rest reads back.
         let Some(region) = LoopRegion::of_function(code, self.programs.constants(self.active_program), masks) else { return LaneBodyOutcome::Declined };
         let seen = observed(parameters);
-        let callees = self.stitch_callees(program, function, region.instructions(), &direct(&mut *self));
+        let candidates = direct(&mut *self);
+        let callees = self.stitch_callees(program, function, region.instructions(), &candidates);
         let invalidation = Invalidation::default();
         // The code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
         let SiteFacts { presences, globals } = self.site_facts(program, function, region.instructions(), body);

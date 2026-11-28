@@ -7,6 +7,7 @@
 use crate::ext_traits::*;
 use std::collections::BTreeMap;
 use cranelift_codegen::ir::{self, AliasRegion, AliasRegionData, MemFlagsData};
+use cranelift_codegen::entity::EntityRef;
 
 use quench_runtime::staged::region::{Access, Mutability, Region};
 use quench_runtime::staged::elements::BackingAccess;

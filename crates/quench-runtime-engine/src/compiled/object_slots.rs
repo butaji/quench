@@ -9,7 +9,7 @@ use crate::ext_traits::*;
 use super::*;
 use crate::compiled::regions;
 use quench_runtime::tier_surface::PlainPropertyStorage;
-use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineFlow, MachineScalar, Relation, Unary};
+use quench_runtime::staged::machine::{Binary, Lane, MachineScalar, Relation, Unary};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectHeader {
@@ -53,7 +53,7 @@ impl ObjectRecord {
     }
 
     /// The record's address, or a fixed class's cell (which holds no record).
-    pub(crate) fn address(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
+    pub(crate) fn address(self) -> ir::Value {
         match self {
             Self::Address(address) | Self::FixedCell { cell: address, .. } => address,
         }
@@ -78,7 +78,7 @@ impl ObjectRecord {
     }
 
     pub(crate) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
-        let address = self.address(builder);
+        let address = self.address();
         // A fixed class's cell holds no record: no shape or storage form is read from it, and its class is the fact.
         if let Self::FixedCell { .. } = self {
             return ObjectHeader { record: self, address, shape: None, inline: None, word: None, auxiliary: None, shape_fact: None };

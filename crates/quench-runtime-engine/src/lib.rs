@@ -201,7 +201,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::lane_compile::CompiledLaneCompileVm as _;
     pub use crate::compiled::lane_compile::CompiledLaneCompileVm2 as _;
     pub use crate::compiled::lane_compile::PendingLaneMethodOps1 as _;
-    pub use crate::compiled::lane_compile::LaneMethodOps4 as _;
     pub use crate::compiled::lane_compile::dependencies::LaneDependenciesOps1 as _;
     pub use crate::compiled::lane_region::ElementViewsOps1 as _;
     pub use crate::compiled::lane_region::kept_shapes::StateOps2 as _;

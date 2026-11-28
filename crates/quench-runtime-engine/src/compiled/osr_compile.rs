@@ -12,7 +12,7 @@ use super::lane_compile::LaneDependencies;
 use super::lane_region::StableFacts;
 use quench_runtime::code_dependencies::Invalidation;
 pub(crate) mod calls;
-pub(crate) use calls::{CallCode, RegionCalls};
+pub(crate) use calls::CallCode;
 use quench_runtime::bytecode::ResidualProgram;
 use quench_runtime::vm::global_facts::GlobalTable;
 use super::DirectCallee;

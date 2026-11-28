@@ -334,13 +334,6 @@ pub(crate) fn nop_record() -> WideInstruction {
     quench_runtime::staged::Operation::<u64, ()>::encode_nop()
 }
 
-/// The plain call record: callee in `b`, result in `a`, receiver and arguments from `c` as the
-/// immediate `imm` lays them out (`Call`).
-#[inline(always)]
-pub(crate) fn call_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {
-    quench_runtime::staged::Operation::<u64, ()>::encode_call(a, b, c, imm)
-}
-
 /// The construct record over the same operands as the original construction (`Construct`).
 #[inline(always)]
 pub(crate) fn construct_record(a: Register, b: u16, c: u16, imm: u32) -> WideInstruction {

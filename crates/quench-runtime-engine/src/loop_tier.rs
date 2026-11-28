@@ -4,7 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use crate::compiled::{LoopEntry, LoopRegion};
+use crate::compiled::LoopRegion;
 
 pub(crate) use quench_runtime::vm::engine_types::LoopTier;
 
