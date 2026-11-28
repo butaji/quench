@@ -1037,12 +1037,11 @@ impl ProtoLink {
         self.0
     }
 
-    /// The class id (layout id) of an ordinary object linked here, of exact shape `shape`, with no
-    /// flags (`heap::layouts::intern_class`). The one a construction of more fields than inline
-    /// storage held makes, which an ahead image's guard names as a link-time immediate
-    /// (`Symbol::GuardLayout`).
-    pub fn class(self, shape: u32) -> u32 {
-        super::layouts::intern_class(shape, self, 0)
+    /// The class id (layout id) of a class cell of region `region` linked here, of exact shape `shape`, with no
+    /// flags (`heap::layouts::intern_class`). The one a construction of more fields than inline storage held makes,
+    /// which an ahead image's guard names as a link-time immediate (`Symbol::GuardLayout`).
+    pub fn class(self, shape: u32, region: u32) -> u32 {
+        super::layouts::intern_class(shape, self, 0, region)
     }
 
     /// The window link naming the ordinary object whose stub granule is `granule`; `None` past the
