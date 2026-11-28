@@ -150,7 +150,6 @@ pub(in super::super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
     if cross {
         enter_program_in_lane(cx, target.body.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
     let start = if constructs { base } else { unsafe { (*target.body.view).start() } };
     Ok((callee_registers, start))
 }

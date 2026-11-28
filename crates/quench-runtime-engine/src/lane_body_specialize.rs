@@ -34,7 +34,6 @@ impl LaneView {
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         let outcome = match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized => {
-                crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
                 work(crate::compiled::LaneBodyWork::Start { caller: self })
             }
             LaneBody::Compiling { pending } => work(crate::compiled::LaneBodyWork::Poll(pending)),
@@ -64,13 +63,6 @@ impl LaneView {
     /// The body a view's compile work came to (`LaneBodyOutcome`) makes of it; a compile still
     /// in flight is polled again at the view's next entry.
     fn body_after(&self, outcome: crate::compiled::LaneBodyOutcome, tier: Option<quench_runtime::vm::tier_policy::Tier>, entry: Handler) -> LaneBody {
-        {
-            use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
-            count(match &outcome {
-                O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
-                O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
-            });
-        }
         match outcome {
             crate::compiled::LaneBodyOutcome::Compiling(pending) => {
                 LaneBody::Compiling { pending }

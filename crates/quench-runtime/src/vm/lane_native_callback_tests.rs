@@ -72,7 +72,6 @@ fn run_source(mode: crate::ExecutionMode, source: &str) -> Vec<String> {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(mode);
-    vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     vm.execute(&program).unwrap();
     let printed = output.borrow().clone();

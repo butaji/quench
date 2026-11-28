@@ -306,8 +306,6 @@ pub struct LaneView {
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
     pub accumulator_registers: Box<[u16]>,
-    pub plain_backward_jump_sites: usize,
-    pub osr_rejections: Option<Box<[(RegionRejection, usize)]>>,
     /// The `GetField`, `SetField` and `LoadCapture` records past its sites' loop headers, whose own-field hints a shape compaction clears.
     pub field_records: Box<[u32]>,
     /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
@@ -999,19 +997,6 @@ pub struct LoopSite {
     /// The sites of the function whose loops enclose this one (`install_loop_sites`), set once the
     /// sites are boxed: the same storage the records name the sites by, which lives as long as the lane view.
     pub enclosing: std::cell::OnceCell<Box<[*const LoopSite]>>,
-    /// Whether this VM requested OSR diagnostics when its lane view was derived.
-    pub diagnostics: bool,
-    pub lane_backedge_count: std::cell::Cell<u64>,
-    pub native_entry_attempts: std::cell::Cell<u64>,
-    pub native_region_runs: std::cell::Cell<u64>,
-    /// Bodies published for this loop (`plan_loop_body`) and runs of them (`run_loop_body`).
-    pub tier_ups: std::cell::Cell<u64>,
-    pub body_runs: std::cell::Cell<u64>,
-    pub entry_guard_misses: std::cell::Cell<u64>,
-    pub native_exits: std::cell::Cell<u64>,
-    pub widenings: std::cell::Cell<u64>,
-    pub compile_attempts: std::cell::Cell<u64>,
-    pub compile_successes: std::cell::Cell<u64>,
     pub tier: std::cell::RefCell<LoopTier>,
     /// The function's lane body planned to start at this loop's header (`run_loop_body`).
     pub body: std::cell::RefCell<LoopBody>,
@@ -2568,54 +2553,6 @@ pub struct Activation {
 /// Where the kind's tag lies in an activation.
 pub const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
 
-#[derive(Debug, Default)]
-pub struct OsrDiagnostics {
-    pub plain_backward_jump_sites: usize,
-    pub admitted_sites: usize,
-    pub promotion_only_sites: usize,
-    pub compile_attempts: u64,
-    pub compile_successes: u64,
-    pub currently_compiled_sites: usize,
-    pub native_entry_attempts: u64,
-    pub native_region_runs: u64,
-    pub tier_ups: u64,
-    pub body_runs: u64,
-    pub entry_guard_misses: u64,
-    pub exits: u64,
-    pub widenings: u64,
-    pub analysis_rejections: Vec<(RegionRejection, usize)>,
-    pub sites: Vec<OsrSiteDiagnostics>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OsrSiteDiagnostics {
-    pub header_pc: u32,
-    pub backedge_pc: u32,
-    pub status: OsrSiteStatus,
-    pub failure: Option<RegionAnalysisFailure>,
-    pub admitted: bool,
-    pub deferred_call: bool,
-    pub tier_threshold_reached: bool,
-    pub lane_backedge_count: u64,
-    pub analysis_rejection: Option<RegionRejection>,
-    pub call_boundary_pcs: Vec<u32>,
-    pub compile_attempts: u64,
-    pub compile_successes: u64,
-    pub native_entry_attempts: u64,
-    pub native_region_runs: u64,
-    pub entry_guard_misses: u64,
-    pub exits: u64,
-    pub widenings: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OsrSiteStatus {
-    Admitted,
-    CallBoundary,
-    PromotionOnly,
-    Rejected,
-}
-
 /// The words a VM frame's register file keeps spare past its environment window for the windows of the
 /// callees a loop region inlines (`base_region::function::inline_base`), which start past that window:
 /// the stitch policy's window and the context words around it.
@@ -4018,65 +3955,6 @@ impl LaneView {
         self.start.set(self.records());
     }
 
-    /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
-    pub fn osr_diagnostics(&self) -> OsrDiagnostics {
-        let mut sites = self.loops.iter().map(|site| {
-            let call_boundary_pcs = site.active_region().map_or_else(
-                || site.call_boundary_pcs.to_vec(),
-                LoopRegion::call_boundary_pcs,
-            );
-            let deferred_call = !call_boundary_pcs.is_empty();
-            OsrSiteDiagnostics {
-                header_pc: site.header,
-                backedge_pc: site.backedge,
-                status: if site.promotion_only {
-                    OsrSiteStatus::PromotionOnly
-                } else if site.analysis_failure.is_some_and(|failure| failure.is_call_boundary()) {
-                    OsrSiteStatus::CallBoundary
-                } else if site.analysis_failure.is_some() {
-                    OsrSiteStatus::Rejected
-                } else {
-                    OsrSiteStatus::Admitted
-                },
-                failure: site.analysis_failure,
-                call_boundary_pcs,
-                admitted: site.is_admitted(),
-                deferred_call,
-                tier_threshold_reached: site.is_hot(),
-                lane_backedge_count: site.lane_backedge_count.get(),
-                analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
-                compile_attempts: site.compile_attempts.get(),
-                compile_successes: site.compile_successes.get(),
-                native_entry_attempts: site.native_entry_attempts.get(),
-                native_region_runs: site.native_region_runs.get(),
-                entry_guard_misses: site.entry_guard_misses.get(),
-                exits: site.native_exits.get(),
-                widenings: site.widenings.get(),
-            }
-        }).collect::<Vec<_>>();
-        sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
-        OsrDiagnostics {
-            plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.iter().filter(|site| site.is_admitted()).count(),
-            promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
-            compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
-            compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
-            currently_compiled_sites: self.loops.iter().filter(|site| site.tier.borrow().is_published()).count(),
-            native_entry_attempts: self.loops.iter().map(|site| site.native_entry_attempts.get()).sum(),
-            native_region_runs: self.loops.iter().map(|site| site.native_region_runs.get()).sum(),
-            entry_guard_misses: self.loops.iter().map(|site| site.entry_guard_misses.get()).sum(),
-            tier_ups: self.loops.iter().map(|site| site.tier_ups.get()).sum(),
-            body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
-            exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
-            widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
-            analysis_rejections: self
-                .osr_rejections
-                .as_deref()
-                .unwrap_or_default()
-                .to_vec(),
-            sites,
-        }
-    }
 }
 
 impl NativeJsProgram {
@@ -4230,7 +4108,7 @@ impl Admission {
     /// admission fails, and the paths that resolve again decide.
     pub const REFUSED: u64 = 1 << 63;
     /// The program's bits above `PROGRAM_SHIFT`, below the flag bits.
-    pub const PROGRAM_MASK: u64 = (1 << (Self::DIAGNOSED.trailing_zeros() - Self::PROGRAM_SHIFT)) - 1;
+    pub const PROGRAM_MASK: u64 = (1 << (Self::UNPROVEN.trailing_zeros() - Self::PROGRAM_SHIFT)) - 1;
 }
 
 impl AheadImages {
@@ -4522,16 +4400,6 @@ pub struct ActivationView {
     pub payload: SidePayload,
 }
 
-impl Admission {
-    /// A bit the lane's admission carries while the tier's diagnostics count every entry
-    /// (`LaneStack::set_diagnosed`), which a proved call does not: no entry proved before they
-    /// were enabled admits a proved call, and none is proved while they are. Unlike the
-    /// conditions, targets made under them carry it too, so the unproved paths still hit.
-    pub const DIAGNOSED: u64 = 1 << 60;
-    /// The bits the lane's admission takes from `LaneStack::refused`.
-    pub const LANE_BITS: u64 = Self::CONDITIONS | Self::DIAGNOSED;
-}
-
 impl AheadImages {
 
     #[inline]
@@ -4722,6 +4590,8 @@ impl ActivationView {
 impl Admission {
     /// Every bit only the lane's admission carries.
     pub const CONDITIONS: u64 = Self::REFUSED | Self::NO_SCRIPT_CALLS;
+    /// The bits the lane's admission takes from `LaneStack::refused`.
+    pub const LANE_BITS: u64 = Self::CONDITIONS;
 
     #[inline(always)]
     pub const fn program(self) -> ProgramId {

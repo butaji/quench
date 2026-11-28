@@ -84,7 +84,7 @@ pub(in super::super) fn push_passed_in_lane<const GENERAL: bool, const SETTLES: 
     debug_assert_eq!(SETTLES, target.body.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None)
+    enter_window_of_in_lane::<GENERAL, SETTLES>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None)
 }
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
@@ -165,7 +165,6 @@ pub(in super::super) fn native_call_in_lane(cx: *mut LaneContext, target: &Scrip
 /// registers and records are the context's, the caller's are the leaf's; the entry is counted.
 #[inline(always)]
 pub(in super::super) fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
-    unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
     // SAFETY: the running lane's context, and the callee's view outlives its program.
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
     // environment, all the callee's in `CONTEXT_LEAF`.
@@ -234,5 +233,5 @@ pub(in super::super) fn enter_window_in_lane<const GENERAL: bool, const SETTLES:
     this: Value, constructs: bool,
     kept: Option<u16>,
 ) -> (Registers, Ip) {
-    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, kept)
+    enter_window_of_in_lane::<GENERAL, SETTLES>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, kept)
 }

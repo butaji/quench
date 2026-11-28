@@ -12,14 +12,8 @@ const ARRAY_INDEX_GET_SPARSE: usize = 1;
 pub fn mutable_array_elements(
     elements: &mut crate::heap::ArrayElements,
 ) -> &mut crate::heap::UniqueElements {
-    if quench_runtime_trace_on() && elements.len() == 16900 {
-        let caller = std::panic::Location::caller();
-        eprintln!("MUTABLE-ARRAY double={} at {}:{}", elements.is_double(), caller.file(), caller.line());
-    }
     elements.make_mut()
 }
-
-fn quench_runtime_trace_on() -> bool { crate::trace::Channel::JsJit.on() }
 
 /// `elements`' value at `index`, below its length, set in place where the backing takes it —
 /// a Number into a double one (`replace_in_place`), which keeps it double — and by a copy

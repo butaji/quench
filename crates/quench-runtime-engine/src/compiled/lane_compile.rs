@@ -202,7 +202,6 @@ impl Vm {
         let pick = self.lane_pick(program, function);
         if quench_runtime::vm::tier_policy::lane_body_tier(pick).is_none() { return Err(Unstarted::Unpaid) }
         let Some(graph) = self.call_graph_of(program) else { return Err(Unstarted::Declined) };
-        super::base_region::count(super::base_region::Event::BodyPlanned);
         // A body whose key a published body holds is known before its lowering. A member of the cycle is called, not inlined: inlined, its call back to `function`
         // leaves the body (a direct call runs only from the body's own frame), while called it
         // is a direct call of its own body once one exists, as `function`'s self calls are.
@@ -233,7 +232,7 @@ impl Vm {
             global_reads.clone(), direct_sites, captures, invalidation.address(), entry_at);
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), callee_summaries };
-        let census = crate::compiled::admission::diagnosing(self).then(|| Census {
+        let census = quench_runtime::trace::Channel::JsJit.on().then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
             direct: direct.len(), closed });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation };

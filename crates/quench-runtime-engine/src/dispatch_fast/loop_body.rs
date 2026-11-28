@@ -80,7 +80,7 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     };
     let outcome = vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
     *body = LoopBody::after(outcome);
-    if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+    if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm); }
     }
 }
 
@@ -122,7 +122,6 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     let resume = if exit.entered_nothing() { LaneExit::At(site.header as usize) } else { exit };
     let resumed = body_left_in_lane(cx, r, own, &method, resume);
     drop(method);
-    if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
     Some(loop_attempt(cx, ip, resumed))
 }
 

@@ -10,126 +10,12 @@ use residual::{EncodedResidual, Residual};
 pub mod lane_publication;
 mod chunks;
 mod eval_cache;
-mod js_jit_report;
 mod loops;
 mod residual;
 mod root_constants;
 mod snapshot;
-mod tier_census;
 mod wasm_tier;
 pub(super) use wasm_tier::WasmTierState;
-
-#[derive(Default)]
-struct JsJitCounters {
-    source_name: Option<Box<str>>,
-    function_name: Option<Box<str>>,
-    parameter_count: u16,
-    instruction_count: u32,
-    guard_conditional_branches: u32,
-    guard_typeof_ops: u32,
-    guard_strict_comparisons: u32,
-    guard_relational_comparisons: u32,
-    entries: u64,
-    lane_entries: u64,
-    numeric_entries: u64,
-    promotions: u64,
-    compile_attempts: u64,
-    compile_successes: u64,
-    rejection_reason: Option<&'static str>,
-    native_entries: u64,
-    field_cache_probes: u64,
-    field_cache_hits: u64,
-    field_cache_sites: FxHashMap<u16, (u64, u64)>,
-    field_store_cache_probes: u64,
-    field_store_cache_hits: u64,
-    field_return_candidate_entries: u64,
-    field_return_fixed_this_entries: u64,
-    field_return_fast_entries: u64,
-    field_increment_candidate_entries: u64,
-    field_increment_fixed_this_entries: u64,
-    field_increment_fast_entries: u64,
-    captured_store_fast_entries: u64,
-    numeric_find_fast_entries: u64,
-    fallback_entries: u64,
-    opcode_counts: Vec<(u16, u32)>,
-    call_sites: Vec<JsJitCallSiteCounters>,
-    code_bytes: usize,
-}
-
-#[derive(Default)]
-struct JsJitCallSiteCounters {
-    pc: u32,
-    opcode: u16,
-    attempts: u64,
-    direct_target: Option<(u32, u32)>,
-    direct_target_calls: u64,
-    alternate_target_calls: u64,
-    other_target_calls: u64,
-    outcomes: [u64; JsJitCallOutcome::COUNT],
-}
-
-#[cfg(feature = "native-execution")]
-impl JsJitCallSiteCounters {
-    /// Counts one call by where it went: the site's first direct target, a later call to it,
-    /// a call to another direct target, or a target that is not a direct callee.
-    fn note_target(&mut self, direct_target: Option<(u32, u32)>) {
-        match direct_target {
-            Some(target) => match self.direct_target {
-                None => {
-                    self.direct_target = Some(target);
-                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
-                }
-                Some(first) if first == target => {
-                    self.direct_target_calls = self.direct_target_calls.saturating_add(1);
-                }
-                Some(_) => {
-                    self.alternate_target_calls = self.alternate_target_calls.saturating_add(1);
-                }
-            },
-            None => {
-                self.other_target_calls = self.other_target_calls.saturating_add(1);
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-#[repr(usize)]
-pub enum JsJitCallOutcome {
-    Continue = 0,
-    TailCall = 1,
-    PushFrame = 2,
-    Return = 3,
-    Await = 4,
-    Yield = 5,
-    Error = 6,
-}
-
-impl JsJitCallOutcome {
-    const COUNT: usize = Self::Error as usize + 1;
-
-    const ALL: [Self; Self::COUNT] = [
-        Self::Continue,
-        Self::TailCall,
-        Self::PushFrame,
-        Self::Return,
-        Self::Await,
-        Self::Yield,
-        Self::Error,
-    ];
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Continue => "continue",
-            Self::TailCall => "tail_call",
-            Self::PushFrame => "push_frame",
-            Self::Return => "return",
-            Self::Await => "await",
-            Self::Yield => "yield",
-            Self::Error => "error",
-        }
-    }
-}
 
 use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MAX_TIER_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES};
 // Tier observations include dynamically generated functions across all retained
@@ -137,9 +23,7 @@ use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM
 // metadata bound large enough to observe that workload without changing the
 // independent compiled-artifact or executable-memory budgets.
 const JS_JIT_MAX_TRACKED_FUNCTIONS: usize = 2048;
-const JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS: usize = 4096;
 const JS_JIT_MAX_REJECTED_FUNCTIONS: usize = 4096;
-const JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES: u64 = 32;
 /// The least an artifact holds in the code zone.
 const JIT_MIN_ARTIFACT_BYTES: usize = crate::vm::engine_types::CODE_GRANULE;
 
@@ -614,7 +498,6 @@ pub struct ProgramStore {
     /// Shared JS/Wasm executable-code cache admission and accounting.
     jit_code_cache: JitCodeCacheBudget,
     /// Allocated only when opt-in JavaScript JIT diagnostics are requested.
-    js_jit_diagnostics: Option<FxHashMap<(u32, u32), JsJitCounters>>,
     /// Whether the lane prologue specializes a declined function into a frameless lane
     /// body (`Vm::compile_lane_method`).
     js_jit_lane_methods_enabled: bool,
@@ -653,7 +536,6 @@ impl Default for ProgramStore {
             jit_code_cache: JitCodeCacheBudget::default(),
             // TOD-191's correctness oracle may force hot candidates past the payback model so
             // guarded exits can be tested independently of profitability (diagnostic only).
-            js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
             js_jit_lane_methods_enabled: false,
             #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
@@ -1108,9 +990,6 @@ impl ProgramStore {
         self.js_jit_tracked_functions = 0;
         self.js_jit_rejected_functions = 0;
         self.jit_code_cache = JitCodeCacheBudget::default();
-        if let Some(diagnostics) = &mut self.js_jit_diagnostics {
-            diagnostics.clear();
-        }
         let module = main.is_module();
         let id = self.insert_shared(main).unwrap_or(ProgramId::MAIN);
         if module && let Some(entry) = self.entry_mut(id) {
@@ -1882,26 +1761,6 @@ impl ProgramStore {
         self.js_jit_lane_methods_enabled
     }
 
-    #[inline]
-    pub fn js_jit_diagnostics_enabled(&self) -> bool {
-        self.js_jit_diagnostics.is_some()
-    }
-
-    #[quench_macros::test_visible]
-    /// Records the counters `QUENCH_TRACE=js-jit` enables, for a test to read.
-    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
-    pub(super) fn enable_js_jit_diagnostics(&mut self) {
-        self.js_jit_diagnostics.get_or_insert_with(FxHashMap::default);
-    }
-
-    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
-    pub(super) fn js_jit_field_cache_probes(&self, id: ProgramId, function: u32) -> Option<u64> {
-        self.js_jit_diagnostics
-            .as_ref()?
-            .get(&(id.raw(), function))
-            .map(|counters| counters.field_cache_probes)
-    }
-
     /// Whether an entry of `function` of program `id` compiles it now (`JitTierManager::note_js_entry`).
     /// A compile is due where a compile may start (`tier_policy::may_compile`) and the model picks a compiled tier for
     /// the function (`compiled_tier`), within the tracking and code budgets.
@@ -1921,416 +1780,7 @@ impl ProgramStore {
             self.js_jit_tracking_exhaustions = self.js_jit_tracking_exhaustions.saturating_add(1);
             return false;
         }
-        if compile {
-            self.record_js_jit_promotion(id, function);
-        }
         compile
-    }
-
-    /// Memoize an unsupported bytecode shape separately from tier candidates.
-    /// Cold bootstrap helpers therefore cannot consume the hot-function
-    /// promotion table. Return its accumulated count only once diagnostic
-    /// reporting becomes useful.
-    pub(super) fn reject_js_function(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        reason: &'static str,
-    ) -> Option<u64> {
-        let can_reject = self.js_jit_rejected_functions < JS_JIT_MAX_REJECTED_FUNCTIONS;
-        let entry = self.entry_mut(id)?;
-        let mut inserted = false;
-        let count = if let Some(JsTierState::Rejected { entries, .. }) =
-            entry.jit_tiers.js_mut(function)
-        {
-            *entries = entries.saturating_add(1);
-            *entries
-        } else {
-            if !can_reject {
-                return None;
-            }
-            inserted = entry
-                .jit_tiers
-                .js_insert(function, JsTierState::Rejected { entries: 1, reason });
-            if !inserted {
-                return None;
-            }
-            1
-        };
-        if inserted {
-            self.js_jit_rejected_functions += 1;
-        }
-        (count >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some(count)
-    }
-
-    pub(super) fn note_js_rejected_entry(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-    ) -> Option<(u64, &'static str)> {
-        let JsTierState::Rejected { entries, reason } = self
-            .entry_mut(id)?
-            .jit_tiers
-            .js_mut(function)?
-        else {
-            return None;
-        };
-        *entries = entries.saturating_add(1);
-        (*entries >= JS_JIT_REJECTION_DIAGNOSTIC_ENTRIES).then_some((*entries, *reason))
-    }
-
-    /// Counts, in the diagnostics report, an entry of a function no tier path claims: its entries
-    /// and, once rejected, its reason. The entry takes its general path whatever this finds.
-    pub fn observe_unclaimed_entry(&mut self, program: &ResidualProgram, id: ProgramId, function: u32, parameters: &[Value]) {
-        if self.js_jit_diagnostics.is_none() { return; }
-        let Some(body) = program.function_get(function as usize) else { return };
-        let Some(arguments) = parameters.get(..usize::from(body.params)) else { return };
-        let numeric = arguments.iter().all(|value| value.as_number().is_some());
-        let rejected = matches!(self.js_tier_ref(id, function), Some(JsTierState::Rejected { .. })).then(|| self.note_js_rejected_entry(id, function)).flatten();
-        let reported = match rejected {
-            Some(rejection) => Some(rejection),
-            None if self.js_tier_ref(id, function).is_none() => {
-                let reason = crate::vm::engine_calls::candidate_rejection_reason(program, function);
-                self.reject_js_function(id, function, reason).map(|entries| (entries, reason))
-            }
-            None => None,
-        };
-        if let Some((entries, reason)) = reported {
-            self.record_js_jit_entry(id, function, numeric, body.params);
-            self.record_js_jit_rejection(id, function, reason, entries);
-        }
-    }
-
-    pub fn record_js_jit_entry(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        numeric: bool,
-        parameter_count: u16,
-    ) {
-        self.record_js_jit_counter_entry(id, function, Some(numeric), parameter_count);
-    }
-
-    #[inline(always)]
-    pub fn record_js_jit_lane_entry(&mut self, id: ProgramId, function: u32) { if self.js_jit_diagnostics.is_some() { self.record_diagnosed_lane_entry(id, function); } }
-
-    #[inline(never)] fn record_diagnosed_lane_entry(&mut self, id: ProgramId, function: u32) {
-        let params = self.entry(id).and_then(|entry| entry.residual.function_get(function as usize)).map_or(0, |body| body.params);
-        self.record_js_jit_counter_entry(id, function, None, params);
-    }
-
-    fn record_js_jit_counter_entry(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        numeric: Option<bool>,
-        parameter_count: u16,
-    ) {
-        let key = (id.raw(), function);
-        let Some(diagnostics) = self.js_jit_diagnostics.as_ref() else {
-            return;
-        };
-        if diagnostics.contains_key(&key) {
-            if let Some(counters) = self
-                .js_jit_diagnostics
-                .as_mut()
-                .and_then(|diagnostics| diagnostics.get_mut(&key))
-            {
-                counters.parameter_count = parameter_count;
-                if let Some(numeric) = numeric {
-                    counters.entries = counters.entries.saturating_add(1);
-                    counters.numeric_entries = counters
-                        .numeric_entries
-                        .saturating_add(u64::from(numeric));
-                } else {
-                    counters.lane_entries = counters.lane_entries.saturating_add(1);
-                }
-            }
-            return;
-        }
-        if diagnostics.len() >= JS_JIT_MAX_DIAGNOSTIC_FUNCTIONS {
-            return;
-        }
-        let (source_name, function_name, instruction_count, opcode_counts, guard_census) = self
-            .entry(id)
-            .map(|entry| {
-                let slot = entry.residual.functions.get(function as usize);
-                let function_code = slot.and_then(|slot| slot.record());
-                let function_name = slot
-                    .and_then(|slot| slot.header().name.or_else(|| slot.header().inferred_name))
-                    .and_then(|atom| {
-                        let index = atom as usize;
-                        (index < entry.residual.atoms.len())
-                            .then(|| entry.residual.atoms[index].to_owned())
-                    })
-                    .unwrap_or_default();
-                let instruction_count = function_code.map_or(0, |function| {
-                    u32::try_from(function.code.len()).unwrap_or(u32::MAX)
-                });
-                let mut opcode_counts = vec![0_u32; crate::bytecode::OPCODE_COUNT];
-                if let Some(function) = function_code {
-                    for instruction in &function.code {
-                        let opcode = instruction.as_wide().op() as usize;
-                        opcode_counts[opcode] = opcode_counts[opcode].saturating_add(1);
-                    }
-                }
-                let opcode_counts = opcode_counts
-                    .into_iter()
-                    .enumerate()
-                    .filter(|&(_opcode, count)| count != 0).map(|(opcode, count)| (u16::try_from(opcode).unwrap_or(u16::MAX), count))
-                    .collect();
-                // This is a bytecode-site census, not a claim that a site is
-                // pure, redundant, or safe to remove. Predicate purity and
-                // path implication need separate proofs before optimization.
-                let mut guard_census = (0_u32, 0_u32, 0_u32, 0_u32);
-                if let Some(function) = function_code {
-                    for instruction in &function.code {
-                        let instruction = instruction.as_wide();
-                        let op = instruction.op();
-                        // merge: the guard census counts conditional jumps (JumpFalse, JumpTrue, JumpBinaryFalse) and their comparison operator, as HEAD's JumpIf/CompareJump arms did.
-                        if crate::staged::conditional_jump(op) {
-                            guard_census.0 = guard_census.0.saturating_add(1);
-                            if crate::staged::compare_jump(op) {
-                                count_comparison_guard(&mut guard_census, instruction.binary_operator_field())
-                            }
-                        } else if crate::staged::computes_unary(op)
-                            && instruction.unary_operator() == crate::operator::UnaryOperator::Typeof as u32
-                        {
-                            guard_census.1 = guard_census.1.saturating_add(1);
-                        } else if crate::staged::binary(op) {
-                            count_comparison_guard(&mut guard_census, instruction.binary_operator())
-                        }
-                    }
-                }
-                (
-                    entry.residual.source_name.clone(),
-                    function_name,
-                    instruction_count,
-                    opcode_counts,
-                    guard_census,
-                )
-            })
-            .unwrap_or_default();
-        if let Some(diagnostics) = self.js_jit_diagnostics.as_mut() {
-            let counters = diagnostics.entry(key).or_default();
-            counters.source_name = Some(source_name.into_boxed_str());
-            counters.function_name = Some(function_name.into_boxed_str());
-            counters.parameter_count = parameter_count;
-            counters.instruction_count = instruction_count;
-            counters.opcode_counts = opcode_counts;
-            counters.guard_conditional_branches = guard_census.0;
-            counters.guard_typeof_ops = guard_census.1;
-            counters.guard_strict_comparisons = guard_census.2;
-            counters.guard_relational_comparisons = guard_census.3;
-            if let Some(numeric) = numeric {
-                counters.entries = counters.entries.saturating_add(1);
-                counters.numeric_entries = counters
-                    .numeric_entries
-                    .saturating_add(u64::from(numeric));
-            } else {
-                counters.lane_entries = counters.lane_entries.saturating_add(1);
-            }
-        }
-    }
-
-    fn record_js_jit_promotion(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.promotions = counters.promotions.saturating_add(1);
-        }
-    }
-
-    pub fn record_js_jit_compile(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        code_bytes: usize,
-        installed: bool,
-        rejection: Option<&'static str>,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.compile_attempts = counters.compile_attempts.saturating_add(1);
-            counters.compile_successes = counters
-                .compile_successes
-                .saturating_add(u64::from(installed));
-            counters.code_bytes = counters.code_bytes.saturating_add(code_bytes);
-            if rejection.is_some() {
-                counters.rejection_reason = rejection;
-            }
-        }
-    }
-
-    pub(super) fn record_js_jit_rejection(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        reason: &'static str,
-        entries: u64,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.rejection_reason = Some(reason);
-            counters.entries = entries;
-        }
-    }
-
-    pub fn record_js_jit_native_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.native_entries = counters.native_entries.saturating_add(1);
-        }
-    }
-
-    #[cfg(feature = "native-execution")]
-    pub fn record_js_jit_field_cache_probe(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        cache_site: u16,
-        hit: bool,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_cache_probes = counters.field_cache_probes.saturating_add(1);
-            counters.field_cache_hits = counters
-                .field_cache_hits
-                .saturating_add(u64::from(hit));
-            let site = counters.field_cache_sites.entry(cache_site).or_default();
-            site.0 = site.0.saturating_add(1);
-            site.1 = site.1.saturating_add(u64::from(hit));
-        }
-    }
-
-    #[cfg(feature = "native-execution")]
-    pub fn record_js_jit_field_store_cache_probe(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        hit: bool,
-    ) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.field_store_cache_probes =
-                counters.field_store_cache_probes.saturating_add(1);
-            counters.field_store_cache_hits = counters
-                .field_store_cache_hits
-                .saturating_add(u64::from(hit));
-        }
-    }
-
-    /// Count call instructions handled by a compiled function's VM islands.
-    /// Rows are bounded by that function's static Call/CallArray PCs and only
-    /// exist when the opt-in diagnostics map has been allocated.
-    #[cfg(feature = "native-execution")]
-    pub fn record_js_jit_call_site(
-        &mut self,
-        id: ProgramId,
-        function: u32,
-        pc: usize,
-        opcode: crate::bytecode::Op,
-        direct_target: Option<(u32, u32)>,
-        outcome: JsJitCallOutcome,
-    ) {
-        let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        else {
-            return;
-        };
-        let Ok(pc) = u32::try_from(pc) else {
-            return;
-        };
-        let key = (pc, opcode as u16);
-        let index = match counters
-            .call_sites
-            .binary_search_by_key(&key, |site| (site.pc, site.opcode))
-        {
-            Ok(index) => index,
-            Err(index) => {
-                counters.call_sites.insert(
-                    index,
-                    JsJitCallSiteCounters {
-                        pc,
-                        opcode: key.1,
-                        ..JsJitCallSiteCounters::default()
-                    },
-                );
-                index
-            }
-        };
-        let site = &mut counters.call_sites[index];
-        site.attempts = site.attempts.saturating_add(1);
-        site.note_target(direct_target);
-        let outcome_count = &mut site.outcomes[outcome as usize];
-        *outcome_count = outcome_count.saturating_add(1);
-    }
-
-    #[cfg(any(all(test, not(quench_profiled)), feature = "test-support"))]
-    pub(super) fn js_jit_call_site_counts(
-        &self,
-        id: ProgramId,
-        function: u32,
-    ) -> Option<Vec<(
-        u32,
-        u16,
-        u64,
-        [u64; JsJitCallOutcome::COUNT],
-        Option<(u32, u32)>,
-        u64,
-        u64,
-        u64,
-    )>> {
-        self.js_jit_diagnostics
-            .as_ref()?
-            .get(&(id.raw(), function))
-            .map(|counters| {
-                counters
-                    .call_sites
-                    .iter()
-                    .map(|site| {
-                        (
-                            site.pc,
-                            site.opcode,
-                            site.attempts,
-                            site.outcomes,
-                            site.direct_target,
-                            site.direct_target_calls,
-                            site.alternate_target_calls,
-                            site.other_target_calls,
-                        )
-                    })
-                    .collect()
-            })
-    }
-
-    pub fn record_js_jit_fallback_entry(&mut self, id: ProgramId, function: u32) {
-        if let Some(counters) = self
-            .js_jit_diagnostics
-            .as_mut()
-            .and_then(|diagnostics| diagnostics.get_mut(&(id.raw(), function)))
-        {
-            counters.fallback_entries = counters.fallback_entries.saturating_add(1);
-        }
     }
 
     pub fn install_js_tier(
@@ -2681,35 +2131,6 @@ impl ProgramStore {
     }
 }
 
-impl ProgramStore {
-    /// Whether dropping the store reports something (`QUENCH_TRACE=js-jit`).
-    pub fn reports_on_drop(&self) -> bool {
-        self.js_jit_diagnostics.is_some()
-    }
-}
-
-/// The diagnostics report's ratios are parts per million.
-const PARTS_PER_MILLION: u128 = 1_000_000;
-
-/// `part` of `whole` in parts per million, capped at the whole; zero of nothing is zero.
-fn parts_per_million(part: u64, whole: u64) -> u64 {
-    if whole == 0 {
-        return 0;
-    }
-    (u128::from(part) * PARTS_PER_MILLION / u128::from(whole)).min(PARTS_PER_MILLION) as u64
-}
-
-impl Drop for ProgramStore {
-    fn drop(&mut self) {
-        let census = crate::trace::Channel::Census.on();
-        if census && self.js_jit_diagnostics.is_some() {
-            eprintln!("{}", self.tier_census().render());
-        }
-        if !census || crate::trace::Channel::JsJit.on() {
-            self.report_js_jit();
-        }
-    }
-}
 
 fn write_json_string(output: &mut impl std::io::Write, value: &str) -> std::io::Result<()> {
     write!(output, "\"")?;
@@ -2898,37 +2319,6 @@ impl LaneViews {
 
 // Profiled builds deliberately disable JS function tiers (`Vm::tier_may_run`).
 #[cfg(all(test, not(quench_profiled)))]
-mod lane_diagnostic_tests {
-    #[test]
-    fn plain_lane_calls_remain_visible_after_numeric_tier_rejection() {
-        let program = crate::Engine::compile(crate::ExecutionRequest::script(
-            r#"
-                function label(value) { return value + '!'; }
-                function drive(count) {
-                    let result;
-                    for (let index = 0; index < count; index++) result = label(index);
-                    return result;
-                }
-                for (let round = 0; round < 4; round++) {
-                    if (drive(2000) !== '1999!') throw Error('lane call result');
-                }
-            "#,
-            "lane-diagnostic-entries.js",
-        )).unwrap();
-        let mut vm = crate::vm::Vm::new(crate::test_host::TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
-        vm.execute(&program).unwrap();
-        let counters = vm.programs.js_jit_diagnostics.as_ref().unwrap().values()
-            .find(|counters| counters.function_name.as_deref() == Some("label"))
-            .expect("the called function must have diagnostic counters");
-        assert!(counters.lane_entries > 1000,
-            "hot plain calls must stay visible after tier rejection: {} tier entries, {} lane entries",
-            counters.entries, counters.lane_entries);
-    }
-}
-
-#[cfg(test)]
 mod jit_code_cache_tests {
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
@@ -3027,25 +2417,6 @@ fn zeroed_entry_facts(len: usize) -> Box<[std::cell::OnceCell<Rc<crate::vm::engi
     // SAFETY: the allocation is `len` words, the layout of `len` cells of one pointer each
     // (asserted above), zeroed, so every cell is empty; the box alone owns it.
     unsafe { Box::from_raw(cells) }
-}
-
-/// Counts a comparison in the guard census: strict (in)equality in its third column, an
-/// order (`<`, `<=`, `>`, `>=`) in its fourth.
-fn count_comparison_guard(census: &mut (u32, u32, u32, u32), operator: u32) {
-    use crate::operator::BinaryOperator;
-    const STRICT: [BinaryOperator; 2] = [BinaryOperator::StrictEquality, BinaryOperator::StrictInequality];
-    const ORDER: [BinaryOperator; 4] = [
-        BinaryOperator::LessThan,
-        BinaryOperator::LessEqualThan,
-        BinaryOperator::GreaterThan,
-        BinaryOperator::GreaterEqualThan,
-    ];
-    let named = |operators: &[BinaryOperator]| operators.iter().any(|&named| named as u32 == operator);
-    if named(&STRICT) {
-        census.2 = census.2.saturating_add(1);
-    } else if named(&ORDER) {
-        census.3 = census.3.saturating_add(1);
-    }
 }
 
 /// `len` zero counts on zero pages: a program's per-function counts take a slot for each

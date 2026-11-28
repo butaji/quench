@@ -284,7 +284,7 @@ pub(crate) mod fault_handler;
 pub use fault_handler::NativeFaultHandler;
 pub(crate) use osr_loop::{
     FieldReceiver, FieldUse, CalleeSource, InlineCallee, LoopEntry, LoopRegion,
-    MethodCalls, RegionAnalysisFailure, RegionRejection,
+    MethodCalls, RegionAnalysisFailure,
 };
 
 pub(crate) use quench_runtime::staged::Domain as NumberRelationDomain;
@@ -4190,14 +4190,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 .copied()
         {
             let probe = vm.cached_field_hit(receiver, cache_site);
-            if admission::diagnosing(vm) {
-                vm.programs.record_js_jit_field_cache_probe(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    cache_site,
-                    matches!(&probe, quench_runtime::vm::object::FieldCacheProbe::Hit(_)),
-                );
-            }
             if let quench_runtime::vm::object::FieldCacheProbe::Hit(value) = probe {
                 let frame = &mut vm.frames[dispatch.frame];
                 if instruction.returns_from_frame() {
@@ -4245,13 +4237,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 value,
                 instruction.cache_site_index(),
             );
-            if admission::diagnosing(vm) {
-                vm.programs.record_js_jit_field_store_cache_probe(
-                    dispatch.program_id,
-                    vm.frames[dispatch.frame].function,
-                    hit,
-                );
-            }
             if hit {
                 let frame = &mut vm.frames[dispatch.frame];
                 frame.pc = next_pc;
@@ -4268,22 +4253,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
         loop {
             let layout = current_instruction.op().control_flow_layout();
             let is_call = meaning_compiled::is_ordinary_call(current_instruction);
-            let diagnostics_enabled = is_call && admission::diagnosing(vm);
-            let direct_call_target = if diagnostics_enabled && is_call {
-                vm.frames[dispatch.frame]
-                    .registers
-                    .get(usize::from(current_instruction.register_b()))
-                    .copied()
-                    .and_then(|callee| vm.function_record(callee))
-                    .and_then(|record| match &record.kind {
-                        quench_runtime::tier_surface::FunctionKind::User(program, function) => {
-                            Some((program.raw(), *function))
-                        }
-                        _ => None,
-                    })
-            } else {
-                None
-            };
             let capture = if matches!(quench_runtime::staged::Operation::<u64, ()>::of(current_instruction),
                 Some(quench_runtime::staged::Operation::LoadCapture { .. })) {
                 vm.cached_direct_capture(
@@ -4302,7 +4271,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
                 None
             };
             // A pushed call is the shared frame transition however it then completes.
-            let pushed = diagnostics_enabled && matches!(in_loop_call, Some(Ok(quench_runtime::vm::StepResult::PushFrame { .. })));
             let in_loop_call = in_loop_call.map(|step| vm.complete_pushed_call(program, dispatch.frame, current_instruction, step));
             let step = if let Some(value) = capture {
                 let destination = vm.frames[dispatch.frame]
@@ -4334,38 +4302,6 @@ pub unsafe fn js_semantic_callout_with<const SINGLE_OPERATION: bool>(
             let step = if meaning_compiled::is_construct(current_instruction) && dispatch.allow_inline_calls {
                 vm.complete_pushed_call(program, dispatch.frame, current_instruction, step)
             } else { step };
-            if is_call && diagnostics_enabled {
-                let outcome = match &step {
-                    _ if pushed => quench_runtime::vm::program_store::JsJitCallOutcome::PushFrame,
-                    Ok(quench_runtime::vm::StepResult::Continue) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Continue
-                    }
-                    Ok(quench_runtime::vm::StepResult::TailCall) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::TailCall
-                    }
-                    Ok(quench_runtime::vm::StepResult::PushFrame { .. } | quench_runtime::vm::StepResult::ResumeFrames(_)) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::PushFrame
-                    }
-                    Ok(quench_runtime::vm::StepResult::Return(_)) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Return
-                    }
-                    Ok(quench_runtime::vm::StepResult::Suspend(quench_runtime::vm::Suspended::Await { .. })) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Await
-                    }
-                    Ok(quench_runtime::vm::StepResult::Suspend(quench_runtime::vm::Suspended::Yield { .. })) => {
-                        quench_runtime::vm::program_store::JsJitCallOutcome::Yield
-                    }
-                    Err(_) => quench_runtime::vm::program_store::JsJitCallOutcome::Error,
-                };
-                vm.programs.record_js_jit_call_site(
-                    dispatch.program_id,
-                    frame_function,
-                    current_pc,
-                    current_instruction.op(),
-                    direct_call_target,
-                    outcome,
-                );
-            }
             match step {
                 Ok(quench_runtime::vm::StepResult::Continue) => {
                     if next >= body.code.len() {
@@ -7173,11 +7109,7 @@ impl Vm {
             parameters: parameters.iter().copied().collect(),
             facts: self.programs.js_entry_facts(id, function)?,
         };
-        let entered = self.js_jit_at_entry(program, &entry);
-        if entered.is_none() {
-            self.programs.record_js_jit_fallback_entry(id, function);
-        }
-        entered
+        self.js_jit_at_entry(program, &entry)
     }
 
     /// The callee's depth-0 capture under the same environment binding as the lane.
@@ -7291,9 +7223,6 @@ impl Vm {
         // Most entries are of functions no tier path can take.
         let facts = self.programs.js_entry_facts(program_id, function)?;
         let at_entry = self.frames[frame].pc == 0;
-        if !facts.candidate && at_entry {
-            self.programs.observe_unclaimed_entry(program, program_id, function, &self.frames[frame].registers);
-        }
         let entry = self.frames.get(frame).filter(|_| facts.candidate && at_entry).and_then(|record| {
             let params = program.function_get(record.function as usize)?.params;
             Some(TierEntry {
@@ -7310,7 +7239,6 @@ impl Vm {
             self.frames[frame].registers[usize::from(return_register)] = value;
             return Some(return_pc);
         }
-        self.programs.record_js_jit_fallback_entry(program_id, function);
         None
     }
 
@@ -7335,7 +7263,6 @@ impl Vm {
         if !self.programs.js_entry_specializations_enabled() { return None; }
         // Most entries are of functions no entry path can claim.
         if !facts.candidate {
-            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let tier = self.programs.js_tier(program_id, function_id);
@@ -7343,13 +7270,11 @@ impl Vm {
             tier.as_ref(),
             Some(quench_runtime::vm::program_store::JsTierState::Unsupported | quench_runtime::vm::program_store::JsTierState::Rejected { .. })
         ) {
-            self.programs.observe_unclaimed_entry(program, program_id, function_id, &entry.parameters);
             return None;
         }
         let params = usize::from(function.params);
         let arguments = entry.parameters.get(..params)?;
         let numeric = arguments.iter().all(|value| value.as_number().is_some());
-        self.programs.record_js_jit_entry(program_id, function_id, numeric, function.params);
         let compiled = match tier {
             Some(quench_runtime::vm::program_store::JsTierState::Compiled(compiled)) => {
                 if !numeric {
@@ -7371,7 +7296,6 @@ impl Vm {
         if compiled.params() != params {
             return None;
         }
-        self.programs.record_js_jit_native_entry(program_id, function_id);
         let poll_page = self.compiled_poll_page();
         let value = compiled.call(arguments, &self.execution_interrupt, poll_page)?;
         let last_pc = function.code.len().checked_sub(1)?;
@@ -7407,40 +7331,10 @@ impl Vm {
             );
         }
         self.host.after_native_compilation();
-        let artifact_failed = artifact.is_none();
         let compiled = artifact.and_then(CompiledJsFunction::from_artifact).map(Rc::new);
-        let compile_rejection = Self::js_tier_compile_rejection(&residual, function_id, artifact_failed, compiled.is_none());
         let installed = self.programs.install_js_tier(program_id, function_id, compiled.clone());
-        if admission::diagnosing(self) {
-            let rejection = if !installed && compiled.is_some() { Some("shared-code-cache-budget-exhausted") } else { compile_rejection };
-            self.record_js_tier_compile(program_id, function_id, compiled.as_deref().filter(|_| installed), rejection);
-        }
         installed.then_some(())?;
         compiled
-    }
-
-    /// Why a compile installed nothing: the specializer declined the candidate
-    /// (`artifact_failed`), or executable memory could not be allocated for its artifact.
-    fn js_tier_compile_rejection(residual: &ResidualProgram, function_id: u32, artifact_failed: bool,
-        unallocated: bool) -> Option<&'static str> {
-        if artifact_failed {
-            Some(crate::js_compiled::candidate_rejection_reason(residual, function_id))
-        } else {
-            unallocated.then_some("executable-memory-allocation-failed")
-        }
-    }
-
-    /// Records a compile for the diagnostics: the installed code's size, and why nothing was
-    /// installed.
-    fn record_js_tier_compile(&mut self, program_id: ProgramId, function_id: u32,
-        installed: Option<&CompiledJsFunction>, rejection: Option<&'static str>) {
-        self.programs.record_js_jit_compile(
-            program_id,
-            function_id,
-            installed.map_or(0, CompiledJsFunction::mapped_bytes),
-            installed.is_some(),
-            rejection,
-        );
     }
 
     /// The JavaScript tier's direct entry of a plain call of a same-program user function,
@@ -7463,7 +7357,6 @@ impl Vm {
         {
             return None;
         }
-        let diagnostics = admission::diagnosing(self);
         let (programs, interrupt) = (&mut self.programs, &self.execution_interrupt);
         let function = program.function_get(function_id as usize)?;
         let native_result = {
@@ -7477,10 +7370,6 @@ impl Vm {
             }
             direct_call(compiled, arguments, interrupt)
         };
-        if diagnostics {
-            programs.record_js_jit_entry(program_id, function_id, true, function.params);
-            programs.record_js_jit_native_entry(program_id, function_id);
-        }
         native_result
     }
 
@@ -7522,9 +7411,6 @@ impl Vm {
     ) -> Option<(usize, quench_runtime::bytecode::Register, Value)> {
         let compiled = entry.compiled.upgrade()?;
         let value = direct_call(&compiled, parameters, &self.execution_interrupt)?;
-        let (program, function) = entry.function;
-        self.programs.record_js_jit_entry(program, function, true, entry.params);
-        self.programs.record_js_jit_native_entry(program, function);
         Some((entry.return_pc, entry.return_register, value))
     }
 

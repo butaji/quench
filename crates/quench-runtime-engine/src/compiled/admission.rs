@@ -149,11 +149,6 @@ pub(crate) use quench_runtime::vm::tier_policy::Tier;
 #[inline]
 pub(crate) fn lane_bodies_enrolled(vm: &Vm) -> bool { quench_runtime::vm::tier_policy::lane_bodies_claim(&vm.programs) }
 
-/// Whether the JIT diagnostics (`QUENCH_TRACE=js-jit`) record their counters. Diagnostics only: no tier
-/// decision reads it.
-#[inline]
-pub(crate) fn diagnosing(vm: &Vm) -> bool { vm.programs.js_jit_diagnostics_enabled() }
-
 /// The unit of a loop region that `policy` lets compile: the policy's loop tier, through `specialize`.
 pub(crate) fn region_unit_under(policy: quench_runtime::MemoryPolicy) -> Option<CompiledUnit> {
     specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default() })
