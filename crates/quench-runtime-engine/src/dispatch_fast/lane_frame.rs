@@ -4184,13 +4184,13 @@ script_handler! {
 }
 
 /// `operator_row`'s operand forms: any operands (`binary_operation`); two registers; a register and a
-/// constant on the right; a register and an int32 constant on the right; an int32 constant with any
-/// other operand (`int32_binary_operation` for the two int32 forms).
+/// constant on the right; a register and an int32 constant on the right (`int32_binary_operation`, installed only where
+/// the solve proves the register an int32 and the result within int32). Form 4 is retired: an int32 constant with an
+/// operand no fact types is the generic form.
 pub(crate) const OPERANDS_ANY: u8 = 0;
 pub(crate) const OPERANDS_REGISTERS: u8 = 1;
 pub(crate) const OPERANDS_REGISTER_CONSTANT: u8 = 2;
 pub(crate) const OPERANDS_REGISTER_INT32: u8 = 3;
-pub(crate) const OPERANDS_INT32: u8 = 4;
 /// Two registers the solve's int32 cells prove int32s (`int32_cell`): read with no tag test.
 pub(crate) const OPERANDS_PROVEN: u8 = 5;
 /// A register the solve's int32 cells prove an int32 and an int32 constant on the right.
@@ -4234,7 +4234,7 @@ script_handler! {
             sibling!(operator_row::<OP, ACC, OPERATOR, OPERANDS_REGISTERS> as Handler, r, ip, view)
         }
         let (left, right) = (Operand(i.b), Operand(i.c));
-        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
+        let number = if const { FORM == OPERANDS_REGISTER_INT32 || FORM == OPERANDS_PROVEN_INT32 } {
             quench_runtime::staged::numeric::int32_binary_operation(OPERATOR as u32, i.a, left, right)
         } else {
             quench_runtime::staged::numeric::binary_operation(OPERATOR as u32, i.a, left, right)

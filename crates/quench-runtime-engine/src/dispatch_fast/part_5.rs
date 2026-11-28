@@ -793,7 +793,7 @@ fn value_operator_row(code: u32) -> Option<Handler> {
 pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants: &[Value], records: &mut [LaneInstruction], accumulator_free: bool,
     types: &dyn Fn(u32, u16) -> quench_runtime::typed_ir::Type) {
     use quench_runtime::bytecode::OperandKind::{Constant, Register};
-    use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_INT32, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
+    use lane_frame::{OPERANDS_ANY, OPERANDS_GUARDED, OPERANDS_PROVEN, OPERANDS_PROVEN_INT32, OPERANDS_REGISTERS, OPERANDS_REGISTER_CONSTANT, OPERANDS_REGISTER_INT32};
     macro_rules! row_at {
         ($acc:expr) => {
             generated_row!(quench_runtime::staged::BINARY_ROW, $acc, FLAG_UNREAD) as Handler as *const ()
@@ -815,7 +815,6 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
             (Some(Register), Some(Register)) => OPERANDS_REGISTERS,
             (Some(Register), Some(Constant)) if int32_constant(right) => OPERANDS_REGISTER_INT32,
             (Some(Register), Some(Constant)) => OPERANDS_REGISTER_CONSTANT,
-            _ if int32_constant(left) || int32_constant(right) => OPERANDS_INT32,
             _ => OPERANDS_ANY,
         };
         // A register operand's cell type before this record; a constant has none (`ANY`).
@@ -827,12 +826,14 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
         let result_in_int32 = instruction.defined_register().is_some_and(|result| int32_result_cell(types(pc as u32 + 1, result)));
         // The proven forms: two register operands the cells prove int32s (`OPERANDS_PROVEN`, the Number operation over
         // them). The int32 operation (`OPERANDS_PROVEN_INT32`) needs its result to stay within int32 (or be a Boolean, a
-        // relation's). A proven register with an int32 constant whose result may leave int32 takes the constant form,
-        // which tags the register.
+        // relation's). An int32 form the solver does not prove is no form at all: it would decline on every double and take
+        // the generic step each time, since execution never rewrites the record. So an unproven register with an int32
+        // constant takes the constant form (the checked Number operation over any Number pair); any other unproven pair
+        // takes the generic form.
         let (form, proven_form) = match kind_form {
             OPERANDS_REGISTERS if acc == 0 && proven(left) && proven(right) => (OPERANDS_REGISTERS, Some(OPERANDS_PROVEN)),
             OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) && result_in_int32 => (OPERANDS_REGISTER_INT32, Some(OPERANDS_PROVEN_INT32)),
-            OPERANDS_REGISTER_INT32 if acc == 0 && proven(left) => (OPERANDS_REGISTER_CONSTANT, None),
+            OPERANDS_REGISTER_INT32 => (OPERANDS_REGISTER_CONSTANT, None),
             _ => (kind_form, None),
         };
         // The int32 form's constant, folded into the record (`operator_row` reads it from `mode`, which
@@ -846,7 +847,6 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
                     OPERANDS_REGISTERS => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTERS> as Handler,
                     OPERANDS_REGISTER_INT32 => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_INT32> as Handler,
                     OPERANDS_REGISTER_CONSTANT => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_REGISTER_CONSTANT> as Handler,
-                    OPERANDS_INT32 => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_INT32> as Handler,
                     _ => operator_row::<{ quench_runtime::bytecode::BINARY_ROW as u16 }, { $acc }, { $op as u8 }, OPERANDS_ANY> as Handler,
                 }
             };
