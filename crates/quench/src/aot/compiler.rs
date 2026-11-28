@@ -255,7 +255,7 @@ pub fn demand_report(demand: &Demand) -> Value {
         "needs_source_text": demand.needs_source_text,
         "needs_stack_positions": demand.needs_stack_positions,
         "execution_table": {
-            "interpret": table.interpret, "tier_up": table.tier_up, "compile_source": table.compile_source,
+            "run_lane": table.run_lane, "interpret": table.interpret, "tier_up": table.tier_up, "compile_source": table.compile_source,
             "link_live": table.link_live, "wasm": table.wasm,
         },
     })

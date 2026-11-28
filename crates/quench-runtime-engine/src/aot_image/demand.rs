@@ -51,7 +51,11 @@ pub struct Demand {
 /// `None` in the linked image, and reaching it at run time is a typed abort.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExecutionTableSpec {
-    /// The interpreter runs a generic record.
+    /// The lane entry (`ExecutionTable::interpret`): every image body is entered there, the script's
+    /// top body first, so every image binds it. An execution-only runtime binds it to the image-body
+    /// runner (`run_ahead_frame`), not the record interpreter.
+    pub run_lane: bool,
+    /// The interpreter runs a generic record, and reports a native body it declined.
     pub interpret: bool,
     /// The tier policy takes over a frame that leaves its closed body.
     pub tier_up: bool,
@@ -78,6 +82,7 @@ impl Demand {
     /// a dynamic source, and a `None` reached at run time is an abort.
     pub fn execution_table(&self) -> ExecutionTableSpec {
         ExecutionTableSpec {
+            run_lane: true,
             interpret: self.needs_interpreter(),
             tier_up: self.needs_exits,
             compile_source: true,
