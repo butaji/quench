@@ -4,6 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{Edges, EmitFrame, FRAME};
+use super::tag_proofs::{decides_flat_strings, state_flat};
 use super::super::{emit_js_guard, emit_js_payload_word, emit_js_property_values, emit_lane_helper_call,
     register_offset, CheckedObject, Emit, JsStepDispatch, LaneHelper, ObjectRecord, LANE_CALL_COMPLETED, LANE_CALL_HOLDS, LANE_CALL_MISSED};
 use crate::compiled::object_slots::inline_storage;
@@ -92,8 +93,12 @@ pub(crate) fn site_step(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, sit
 fn decide_words(frame: &mut EmitFrame<'_>, stage: &mut Emit<'_, '_>, operands: [Register; 2], operator: u32,
     miss: ir::Block) -> (ir::Value, RegisterFact) {
     let answer = decide_answer(frame, stage, operands, operator);
-    let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
-    emit_js_guard(stage.builder, decided, miss);
+    // Two flat strings under an operator the helper answers for strings (`decides_flat_strings`) are a Boolean: no leave.
+    let flat_pair = decides_flat_strings(operator) && operands.iter().all(|&register| state_flat(&*frame.state, register));
+    if !flat_pair {
+        let decided = stage.ne_imm(answer, Value::DELETED.to_bits());
+        emit_js_guard(stage.builder, decided, miss);
+    }
     (answer, RegisterFact::definition(Type::language(quench_runtime::ValueType::Boolean), Representation::Tagged))
 }
 

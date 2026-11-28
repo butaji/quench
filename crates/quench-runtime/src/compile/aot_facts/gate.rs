@@ -132,10 +132,9 @@ pub(super) fn reached(program: &ResidualProgram, flows: &[FunctionFlow], facts: 
     reached
 }
 
-/// The functions code the call graph does not record may start: the program's roots, its class constructors, accessors, the
-/// closures named properties hold (`escapes::mark`: a closure a conversion or the host may call), the escaped functions, and,
-/// for a Module, the functions its root declares (the host imports them).
-pub(super) fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
+/// The closures the program stores under a named property (`Member`, `MemberOn`, `MemberAny`): code the call graph does not
+/// record may call them, as a host reads a property and calls what it holds.
+pub(super) fn named_closures(flows: &[FunctionFlow]) -> BTreeSet<u32> {
     let materialized: BTreeSet<u32> = flows.iter().flat_map(|flow| flow.closures.iter().copied()).collect();
     let mut named = BTreeSet::new();
     for flow in flows {
@@ -145,6 +144,14 @@ pub(super) fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &
             }
         }
     }
+    named
+}
+
+/// The functions code the call graph does not record may start: the program's roots, its class constructors, accessors, the
+/// closures named properties hold (`escapes::mark`: a closure a conversion or the host may call), the escaped functions, and,
+/// for a Module, the functions its root declares (the host imports them).
+pub(super) fn seeds(program: &ResidualProgram, flows: &[FunctionFlow], census: &Census, escaped: &Escapes) -> Vec<u32> {
+    let named = named_closures(flows);
     let root = (0..flows.len()).find(|&id| program.with_record(id, |function| function.parent.is_none())).map(|id| id as u32);
     let module_root = if matches!(program.kind, ProgramKind::Module) { root } else { None };
     let mut seeds: Vec<u32> = (0..flows.len())

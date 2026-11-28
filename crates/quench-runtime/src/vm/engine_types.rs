@@ -432,7 +432,7 @@ pub struct CompiledProgram {
     pub table: Box<[usize]>,
     /// Each function's entry address, which stitched rows call through (`World`).
     pub _entry_cells: Box<[std::cell::Cell<usize>]>,
-    /// The compiled functions in index order: a selective tier holds a few of a module's
+    /// The compiled functions in index order: a root artifact holds a few of a module's
     /// thousands, so only `positions` is as long as the module.
     pub functions: Box<[CompiledFunction]>,
     /// Each module function's place in `functions`; `NOT_COMPILED` where it has none.
@@ -447,11 +447,6 @@ pub struct CompiledProgram {
     /// back to the interpreter.
     pub fixed_base: Option<i32>,
     pub diagnostics: Option<WasmJitDiagnostics>,
-    /// How often the VM's callout resolved each target at each actual compiled `call_indirect`
-    /// site.
-    pub indirect_hits: SiteHits,
-    /// The owner, bytecode PC and table binding of each site `indirect_hits` counts.
-    pub reference_cache_sites: Vec<(usize, usize, u32)>,
 }
 
 /// Publication owns future entry; active runs and direct callers own code leases.
@@ -551,9 +546,6 @@ pub struct DirectTierEntry {
 /// The set is the lane stack's own (`LaneStack::setter_sites`): a plain load per store, no
 /// thread-local access or borrow.
 pub const SETTER_SITE_BITS: usize = 1 << 16;
-
-/// Per call site, the targets resolved there, ordered by function index.
-pub struct SiteHits(pub RefCell<Vec<Vec<TargetHits>>>);
 
 /// The callee word each in-place native row admits (`staged::call_native::admit_identity`), one
 /// slot per row: the function the lane proved, from its record, to be the row's native, `UNPROVEN`
@@ -1720,13 +1712,6 @@ pub struct SkippedForwarder {
     pub method: crate::bytecode::ForwardedThisMethod,
 }
 
-/// A target function and how often the callout resolved it at a site.
-#[derive(Clone, Copy)]
-pub struct TargetHits {
-    pub function: u32,
-    pub hits: u64,
-}
-
 /// How a call of a `ScriptCallTarget` binds `this`, one byte so the entry stays one cache
 /// line: the receiver as is (strict), the receiver boxed or the global for nullish
 /// (sloppy), or for an arrow its environment's `this` (`ScriptCallTarget::lexical_this`),
@@ -2374,6 +2359,58 @@ pub struct ConstructPlan {
     /// Whether the class's header is recorded (`Vm::record_class_header`), set at that edge: a
     /// construction of a recorded class allocates its receiver alone.
     pub recorded: bool,
+    /// Where a fixed class (R4-F) allocates its receivers as class cells of its union shape: each field's
+    /// union slot (`FixedCellPlan`). `None` for any other plan, whose receivers are records of `shape`.
+    pub fixed: Option<FixedCellPlan>,
+}
+
+/// A fixed class's union (R4-F), as `Vm::fixed_union` derives it: the shape its instances' cells have, and the
+/// names of the class's union layout in slot order, `atoms()`.
+#[derive(Clone, Copy)]
+pub struct FixedUnion {
+    pub shape: u32,
+    atoms: [crate::bytecode::Atom; crate::heap::MAX_CELL_FIELDS],
+    len: usize,
+}
+
+impl FixedUnion {
+    /// The union's names in slot order.
+    pub fn atoms(&self) -> &[crate::bytecode::Atom] {
+        &self.atoms[..self.len]
+    }
+
+    /// The union slot of each of `names`, in order, as `FixedCellPlan::slots` holds them: `None` where a name
+    /// is no union name or the names are not in slot order, where the cell's key order would differ from the
+    /// stores' (the plan does not hold then).
+    pub fn cell_slots(&self, names: &[crate::bytecode::Atom]) -> Option<[u8; CONSTRUCT_PLAN_FIELDS]> {
+        let mut slots = [0; CONSTRUCT_PLAN_FIELDS];
+        let mut next = 0;
+        for (field, name) in names.iter().enumerate() {
+            let slot = next + self.atoms()[next..].iter().position(|atom| atom == name)?;
+            slots[field] = u8::try_from(slot).ok()?;
+            next = slot + 1;
+        }
+        Some(slots)
+    }
+
+    /// A fixed class's union of `shape` (`Vm::fixed_union`) with no names yet.
+    pub(crate) fn new(shape: u32) -> Self {
+        Self { shape, atoms: [0; crate::heap::MAX_CELL_FIELDS], len: 0 }
+    }
+
+    /// `self` with `atom` as its next union name, its shape `shape`.
+    pub(crate) fn push(&mut self, shape: u32, atom: crate::bytecode::Atom) {
+        self.shape = shape;
+        self.atoms[self.len] = atom;
+        self.len += 1;
+    }
+}
+
+/// A fixed class's plan (`ConstructPlan::fixed`): the union shape its cell has, and each plan field's union slot.
+#[derive(Clone, Copy)]
+pub struct FixedCellPlan {
+    pub shape: u32,
+    pub slots: [u8; CONSTRUCT_PLAN_FIELDS],
 }
 
 /// What a `GetField` reads: named fields one after another from a root receiver (`this` or
@@ -2443,7 +2480,8 @@ pub enum ConstructPlanKind {
     /// arguments as passed.
     Passed,
     /// An initializer constructor's plan with defaulted or computed fields
-    /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`).
+    /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`), or a fixed class's cell (`ConstructPlan::fixed`),
+    /// whose fields are gathered into the cell's slots.
     Defaulted,
     /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
     /// forwarding (`forwarded_fields_in_lane`).
@@ -3289,12 +3327,6 @@ pub struct LaneContext {
     /// The running program's Wasm signature pool, shared with the program, for the program it is
     /// held for (`lane_signatures`): an indirect target reads its expected canonical from it.
     pub signatures: (ProgramId, Option<std::rc::Rc<crate::wasm::WasmSignatures>>),
-    /// Backward jumps left before the running Wasm function is credited with an
-    /// interpreter entry's worth of loop work (`TIERS.wasm.backedges_per_entry`), or `None`
-    /// when this run's code earns none (`Vm::credits_backedges_in_lane`). A crediting run keeps
-    /// its floor raised, so every backward jump reaches `safepoint_at`, which counts: the
-    /// handlers stay as they are.
-    pub backedges_left: Option<u32>,
     /// The accumulator the lane loop dispatches its next record with: the one a safepoint
     /// jump carried to its target (`safepoint_at`), else none.
     pub resumed_acc: Slot<Value>,
@@ -3703,6 +3735,7 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     nested: None,
     super_parent: Value::UNDEFINED,
     recorded: false,
+    fixed: None,
 };
 
 pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
@@ -4052,18 +4085,6 @@ impl CompiledProgram {
         self._code.length()
     }
 
-    #[inline]
-
-    pub fn has_function_or_note_fallback(&self, function: usize) -> bool {
-        let available = self.has_function(function);
-        if !available
-            && let Some(stats) = &self.diagnostics
-            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(function)
-        {
-            fallbacks.set(fallbacks.get().saturating_add(1));
-        }
-        available
-    }
 }
 
 impl ExecutionMode {

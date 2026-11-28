@@ -176,7 +176,6 @@ impl Vm {
             indirect: IndirectSlot::NONE,
             instance_address: (Value::DELETED.to_bits(), ProgramId::default(), 0),
             signatures: (ProgramId::default(), None),
-            backedges_left: self.credits_backedges_in_lane(code, program).then_some(self.programs.tiers().wasm.backedges_per_entry),
             floor,
             // SAFETY: the VM holds its interrupt state for the whole run.
             fuel: if unsafe { &*floor }.load(std::sync::atomic::Ordering::Relaxed) == COLLECTION_DUE_FLOOR { 0 } else { LANE_FUEL_BATCH },
@@ -345,7 +344,7 @@ impl Vm {
     fn drive_job_window(&mut self, code: &ResidualProgram, job: JobRoot, window: JobWindow, resume: JobResume, pending: &mut Vec<PendingGeneralCall>) -> JobEnd {
         let mut executing = ExecutingProgram { id: window.entry.program, retained: None };
         let caller_registers = self.active_registers;
-        let entered = self.enter_lane_floor(code, window.entry.program);
+        let entered = self.enter_lane_floor();
         let start = job_start(code, job, &window, (std::ptr::from_mut(pending), &raw mut executing), entered.cell);
         let mut context = self.context_for_start(start);
         let ip = self.drive_lane(&mut context, entered, |cx| match resume {

@@ -136,8 +136,6 @@ impl Store {
         let mode = std::env::var(EXECUTION_MODE_VARIABLE).ok().and_then(|name| mode_named(&name));
         if let Some(mode) = mode.filter(|mode| *mode != quench_runtime::ExecutionMode::Interpreted) {
             runtime.set_execution_mode(mode);
-            // Every module's compiled code, not only its hot roots: a conformance run.
-            runtime.compile_wasm_eagerly();
         }
         let mut store = Self {
             runtime,

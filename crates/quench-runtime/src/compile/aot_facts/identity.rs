@@ -18,15 +18,18 @@ use super::quiet::Proofs;
 use super::types;
 use super::AotFacts;
 use crate::bytecode::{Op, ResidualProgram, may_repeat};
-use crate::typed_ir::Classes;
+use crate::typed_ir::{Cell, Classes, Identity};
 
-/// A builtin the program may name: a global binding (`Math`), or a member of one (`Math.sqrt`), by atom.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BuiltinPath {
-    /// The atom of the global name.
-    pub global: u32,
-    /// The atom of the member the global object's builtin holds (`String.fromCharCode`), None for the global itself.
-    pub member: Option<u32>,
+/// The identity a cell holds once the closed world settles it: a builtin or a closure the proofs keep stays (it is the proof the
+/// lane reads, `Cell::identity`); any other proposed builtin or closure is `Many`. Applied to every settled register and fact cell
+/// after the proofs above are built, so an `Identity` a lane reads is always a proven one.
+pub(super) fn proven(facts: &AotFacts, cell: Cell) -> Cell {
+    let identity = match cell.identity {
+        Identity::Builtin(path) if !facts.builtin_identity(path) => Identity::Many,
+        Identity::Closure(body) if !facts.closure_identity(body) => Identity::Many,
+        other => other,
+    };
+    Cell { identity, ..cell }
 }
 
 /// Names whose presence lets a builtin's property change with no shape the flows record: `Reflect.set` and its kin store

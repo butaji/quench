@@ -259,7 +259,12 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         // A field no write of reaches (`Type::NEVER` at the fixpoint) is one the analysis sees no value of: any value.
         let seen = |ty: crate::typed_ir::Type| if ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Type::ANY } else { ty };
         facts.field_types = found.fields().map(|(atom, ty)| (atom, seen(ty))).collect();
-        facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell { ty: seen(cell.ty), ..cell })).collect();
+        // A key no write reaches is `Cell::NEVER`, whose identity is `Never`; seen as any value it is no object's identity.
+        facts.cells = found.fact_cells().map(|(key, cell)| (key, crate::typed_ir::Cell {
+            ty: seen(cell.ty),
+            identity: if cell.ty == crate::typed_ir::Type::NEVER { crate::typed_ir::Identity::Many } else { cell.identity },
+            ..cell
+        })).collect();
         field_readers.accessor_names(&accessor_names);
         field_readers.protocol_names(program);
         field_readers.finish(&facts.cells, &open_escapes);
@@ -270,6 +275,12 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         let never_departs = facts.constructed_classes().into_iter()
             .filter(|&class| facts.unions.contains_key(&class) && shapes::never_departs(&settled_flows, &census, &scope, class))
             .collect::<std::collections::BTreeSet<u32>>();
+        // The fixed-cell bit reads the never-departs set, and adds the field bound and the direct-construction conjunct.
+        facts.fixed_cells = facts.constructed_classes().into_iter()
+            .filter(|&class| facts.unions.get(&class).is_some_and(|union| union.fields.len() <= crate::heap::MAX_CELL_FIELDS)
+                && never_departs.contains(&class)
+                && shapes::direct_constructions_only(program, &settled_flows, &census, &scope, &open_escapes, class))
+            .collect();
         facts.never_departs = never_departs;
         facts.element_classes = found.element_classes();
         facts.dependencies = dependencies(&facts, reads, &found);
@@ -282,6 +293,14 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
         facts.builtins = identity::builtin_proofs(program, world, &settled_flows);
         facts.closures_once = identity::closures_once(program, world);
+        // The settled cells keep only the identities the proofs above keep (`identity::proven`): after this, an `Identity`
+        // in a cell is the proof a lane reads.
+        let mut registers = std::mem::take(&mut facts.registers);
+        for cells in registers.values_mut() { cells.map_cells(|cell| identity::proven(&facts, cell)); }
+        facts.registers = registers;
+        let mut fact_cells = std::mem::take(&mut facts.cells);
+        for cell in fact_cells.values_mut() { *cell = identity::proven(&facts, *cell); }
+        facts.cells = fact_cells;
         let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
         facts.this_undefined = this_undefined;
         facts.global_shape = globals::GlobalShape::of(&settled_flows, world);

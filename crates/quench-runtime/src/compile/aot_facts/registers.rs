@@ -74,6 +74,16 @@ impl RegisterCells {
         self.writes.sort_by_key(|(pc, _)| *pc);
     }
 
+    /// Rewrites every recorded cell with `map` (the settled proofs, `identity::proven`), keeping each cell's position and source.
+    pub(super) fn map_cells(&mut self, mut map: impl FnMut(Cell) -> Cell) {
+        for (_, cells, _) in &mut self.entries {
+            for cell in cells.iter_mut() { *cell = map(*cell); }
+        }
+        for (_, written) in &mut self.writes {
+            for (_, cell, _) in written.iter_mut() { *cell = map(*cell); }
+        }
+    }
+
     /// The cell and source `register` holds just before the instruction at `pc`: none where no path reaches `pc`.
     fn lookup(&self, pc: u32, register: u16) -> Option<(Cell, Source)> {
         let block = self.entries.partition_point(|(start, ..)| *start <= pc).checked_sub(1)?;

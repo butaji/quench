@@ -237,8 +237,7 @@ impl Lowering<'_, '_> {
         if !matches!(inline, Inline::InPlace | Inline::Lookup) {
             self.hold_holder_any(state, exit, holder);
             // A builtin the closed world proves is the callee (`callee_is_builtin`) is no compare of its identity here.
-            let builtin = definition_before(self.unit, pc, instruction.register_b()).is_some_and(|defined| self.callee_is_builtin(defined, pc, instruction.register_b()));
-            if !builtin {
+            if !self.callee_is_builtin(pc, instruction.register_b()) {
                 let same = self.is_identity(held, callee);
                 emit_js_guard(&mut self.builder, same, exit);
             }
@@ -377,7 +376,7 @@ impl Lowering<'_, '_> {
         self.hold_holder_any(state, exit, holder);
         let entry = if fixed { self.tagged(state, callee) } else { self.hoist_native_read(state, header, defined)? };
         // A fixed callee the closed world proves is a builtin at the call (`callee_is_builtin`) is no compare of its identity.
-        if !(fixed && self.callee_is_builtin(defined, pc, callee)) {
+        if !(fixed && self.callee_is_builtin(pc, callee)) {
             let same = self.is_identity(entry, identity);
             emit_js_guard(&mut self.builder, same, exit);
         }

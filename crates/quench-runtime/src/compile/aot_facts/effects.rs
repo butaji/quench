@@ -6,11 +6,11 @@ mod fields;
 mod strings;
 
 pub(super) use self::fields::{base_fact, field_owner, this_fact, this_member};
-use self::fields::{base_fact, member_stores, member_type, named_word, prototype_base};
+use self::fields::{base_fact, member_identity, member_stores, member_type, named_word, prototype_base};
 use self::strings::{string_call, string_length};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Length, Site, Sites, View};
+use crate::typed_ir::{BuiltinPath, Cell, Classes, ElementClass, Elements, Holders, Identity, Length, Site, Sites, View};
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register, Traits, WideInstruction};
 use crate::typed_ir::Type;
 use crate::staged::typing::{self, Abstract};
@@ -250,7 +250,7 @@ fn value_of(
         if let Some(length) = string_length(ctx, base_fact(ctx, base, state), atom) {
             return Word::of(length);
         }
-        let cell = member_type(ctx, base_fact(ctx, base, state), atom);
+        let cell = member_identity(owner, member_type(ctx, base_fact(ctx, base, state), atom), atom);
         return named_word(ctx, owner, cell, atom);
     }
     // A nested lookup (`base.first.second`) delivers its last field's value.
@@ -258,7 +258,7 @@ fn value_of(
         && let Some(crate::bytecode::FieldLookup::Site(index)) = instruction.field_lookup()
         && let Some((base, first, second)) = ctx.scope.site_paths.get(index).copied().flatten()
     {
-        let cell = member_type(ctx, base_fact(ctx, base, state), first);
+        let cell = member_identity(base_fact(ctx, base, state), member_type(ctx, base_fact(ctx, base, state), first), first);
         return match second {
             Some(second) => Word::member(second, member_type(ctx, Some(Word::of_cell(cell)), second)),
             None => Word::member(first, cell),
@@ -292,6 +292,11 @@ fn value_of(
         events.wild_global |= ctx.scope.is_global_object(atom);
         events.global_source |= ctx.scope.is_global_object(atom);
         let mut word = resolved(ctx, Key::Global(atom));
+        // A name the program binds to no closure reads the realm's builtin of that name, joined with what its stores put there;
+        // a name the program writes is demoted by the closed world's proof (`identity::proven`).
+        if !ctx.resolved.contains_key(&Key::Global(atom)) {
+            word.cell.identity = Identity::Builtin(BuiltinPath { global: atom, member: None }).join(word.cell.identity);
+        }
         // A global-object name (`globalThis`, `window`, ...) reads the global object itself.
         if ctx.scope.is_global_object(atom) { word.cell = word.cell.maybe_global(); }
         return word;
@@ -312,6 +317,7 @@ fn value_of(
             sites: Sites::Many,
             global: false,
             prototype: false,
+            identity: Identity::Many,
         };
         return Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) };
     }
@@ -336,7 +342,7 @@ fn value_of(
             if let Some(length) = string_length(ctx, Some(owner), atom) {
                 return Word::of(length);
             }
-            let cell = member_type(ctx, Some(owner), atom);
+            let cell = member_identity(Some(owner), member_type(ctx, Some(owner), atom), atom);
             return named_word(ctx, Some(owner), cell, atom);
         }
         let (base, index) = (settled(ctx, state[usize::from(instruction.register_b())]), state[usize::from(instruction.register_c())].cell);
@@ -396,6 +402,7 @@ fn array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, sta
         sites: Sites::Many,
         global: false,
         prototype: false,
+        identity: Identity::Many,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }
@@ -420,6 +427,7 @@ fn typed_array_constructed(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructio
         sites: Sites::Many,
         global: false,
         prototype: false,
+        identity: Identity::Many,
     };
     Some(Word { cell, origin: Some(Origin::Alloc { function: ctx.id, pc: pc as u32 }) })
 }

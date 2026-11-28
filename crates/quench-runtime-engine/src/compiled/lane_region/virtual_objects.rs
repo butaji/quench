@@ -103,6 +103,16 @@ pub(crate) struct ConstructReady {
 impl Lowering<'_, '_> {
     /// The word of a plan's callee: the symbol of the image's closure, which the loader resolves
     /// and roots (`aot_image::live`).
+    /// Whether the construction at unit `pc` needs no guard that its callee register `callee` is the plan's closure. The plan
+    /// is the one `construct_plans` builds for the site's `construct_target` (`image_plan`), a closure of that body; the callee
+    /// register's cell names the one closure of the same body (`Identity::Closure`), so the two are one object.
+    fn construct_callee_proven(&self, pc: usize, callee: Register) -> bool {
+        let Some((function, at, _)) = self.origin_local(pc, callee) else { return false };
+        let Some(facts) = self.vm.facts else { return false };
+        facts.function_facts(function).construct_target(at)
+            .is_some_and(|body| self.cell_before(pc, callee).identity == quench_runtime::typed_ir::Identity::Closure(body))
+    }
+
     fn plan_callee_word(&mut self, callee: PlanCallee) -> ir::Value {
         let PlanCallee::Image(key) = callee;
         self.reloc(RelocKind::HeapValue, key, Value::UNDEFINED.to_bits())
@@ -138,10 +148,12 @@ impl Lowering<'_, '_> {
     pub(crate) fn virtual_construct(&mut self, state: &mut State, pc: usize, instruction: WideInstruction, plan: ScalarConstructPlan) -> bool {
         let quench_runtime::bytecode::ConstructArguments::Registers(window) = instruction.construct_arguments() else { return false };
         let exit = self.guard_exit(state, pc as u32);
-        let callee = self.tagged(state, instruction.register_b());
         let expected = self.plan_callee_word(plan.callee);
-        let same = self.raw_compare(Relation::Equal, callee, expected);
-        emit_js_guard(&mut self.builder, same, exit);
+        if !self.construct_callee_proven(pc, instruction.register_b()) {
+            let callee = self.tagged(state, instruction.register_b());
+            let same = self.raw_compare(Relation::Equal, callee, expected);
+            emit_js_guard(&mut self.builder, same, exit);
+        }
         let ready = self.construct_ready.iter()
             .find(|ready| ready.callee == plan.callee && (ready.header..=ready.end).contains(&pc))
             .map(|ready| ready.variable);

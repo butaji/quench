@@ -61,7 +61,7 @@ pub use class_layout::{FieldDefault, Storage, UnionField, UnionLayout};
 pub use frozen::RootStore;
 pub use function::FunctionFacts;
 pub use gate::World;
-pub use identity::BuiltinPath;
+pub use crate::typed_ir::BuiltinPath;
 pub use globals::GlobalShape;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
@@ -163,6 +163,9 @@ pub struct AotFacts {
     /// The constructed classes whose instances never depart their union layout (`shapes::never_departs`), read by
     /// `AotFacts::class_never_departs`. Only where the closed world proves the union layout.
     never_departs: std::collections::BTreeSet<u32>,
+    /// The constructed classes whose instances are fixed cells from birth (`class_fixed_cell`): a union layout, never departed
+    /// (`never_departs`), at most `heap::MAX_CELL_FIELDS` fields, and every construction a direct `new` (`shapes::direct_constructions_only`).
+    fixed_cells: std::collections::BTreeSet<u32>,
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
@@ -213,6 +216,7 @@ impl AotFacts {
             unions: BTreeMap::new(),
             root_stores: BTreeMap::new(),
             never_departs: std::collections::BTreeSet::new(),
+            fixed_cells: std::collections::BTreeSet::new(),
             readers: None,
             builtins: None,
             closures_once: std::collections::BTreeSet::new(),
@@ -389,6 +393,16 @@ impl AotFacts {
     /// Its shape is then the one its union layout names for good, so an instance's slots are the union's slots.
     pub fn class_never_departs(&self, class: u32) -> bool {
         self.never_departs.contains(&class)
+    }
+
+    /// Whether every instance of class `class` is a union cell from birth: the allocator builds the union cell only at a
+    /// construction whose start shape is the class's `Constructed{C, true}` root, so this holds only where every construction
+    /// that reaches the class is a direct `new` whose new_target is the class (`shapes::direct_constructions_only`), and the
+    /// instances never depart the union layout (`class_never_departs`), which the closed world proves (`class_union_layout`).
+    /// Every union field has a domain (`slot_domain`) by construction, so none is checked here. The allocator and the lane
+    /// read this one bit: the allocator builds the fixed cell, and the lane addresses the fields directly.
+    pub fn class_fixed_cell(&self, class: u32) -> bool {
+        self.fixed_cells.contains(&class)
     }
 
     /// The classes of `this` in `function`: the join of the receivers its recorded calls pass (`FactKey::Receiver`, settled in

@@ -11,7 +11,7 @@ use super::shape::{self, Shape};
 use super::value::{Accessor, Key, Origin, Word};
 use crate::bytecode::{Traits, WideInstruction, used_registers};
 use crate::staged::effects::{Affine, Indices};
-use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Length, Representation, Type, View};
+use crate::typed_ir::{Cell, Classes, ElementClass, Elements, Holders, Identity, Length, Representation, Type, View};
 
 /// The array an element store writes and the indices it touches, read before the store: the array's class as the census
 /// keys the store (`Key::Element`), and the indices (`indices_of`).
@@ -265,7 +265,7 @@ impl Record {
             if let Some(atom) = method.filter(|&atom| ctx.scope.is_array_mutator(atom)) {
                 let stored = call.arguments.iter().fold(Cell::NEVER, |cell, argument| cell.join(argument.cell));
                 let elements = Elements { ty: Type::NEVER, classes: Classes::Never, length: Length::Any, view: View::None, holes: false };
-                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global, prototype: stored.prototype };
+                let written = Cell { ty: stored.ty, classes: stored.classes, elements, sites: stored.sites, global: stored.global, prototype: stored.prototype, identity: Identity::of_type(stored.ty) };
                 self.writes.push((pc as u32, Key::Element(call.receiver.elements_key()), Word::of_cell(written)));
                 // A builtin mutator on an array runs no code, so its receiver is no escape (`escapes`). The arrays it stores are
                 // read back by an element read, which takes the unnamed class, as an element store's do (`Operation::ElementWrite`).

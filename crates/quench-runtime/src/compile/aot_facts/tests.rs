@@ -6,7 +6,7 @@ use crate::Engine;
 use crate::bytecode::ResidualProgram;
 use crate::staged::effects::{Affine, Indices};
 use crate::staged::Operation;
-use crate::typed_ir::{Cell, ElementClass, FactKey, Length, Representation, Type};
+use crate::typed_ir::{Cell, ElementClass, FactKey, Identity, Length, Representation, Type};
 use crate::heap::TypedArrayKind;
 use crate::ValueType;
 
@@ -928,11 +928,6 @@ fn constructors_sharing_one_class_factory_body_are_distinct_classes() {
     }
 }
 
-/// The atom `name` interns to, in `program`.
-fn atom_named(program: &ResidualProgram, name: &str) -> u32 {
-    program.atoms.iter().position(|atom| atom.as_ref() == name).expect("an atom of that name") as u32
-}
-
 #[test]
 fn a_store_of_a_name_a_define_property_may_make_non_writable_stays_observed() {
     let program = program("function Proto() {} var p = new Proto(); p.x = 1; Object.defineProperty(Proto.prototype, 'x', {writable: false});");
@@ -1107,6 +1102,49 @@ fn a_computed_store_while_the_global_object_is_a_value_takes_the_global_shape() 
     assert!(analyze(&program).global_shape().is_none(), "the store may write any global name the global object holds");
 }
 
+/// The identity of every register `cell_at` answers for, in every function of `program`.
+fn identities_of(program: &ResidualProgram, facts: &AotFacts) -> Vec<Identity> {
+    let mut found = Vec::new();
+    for id in 0..program.function_count() {
+        let (len, registers) = program.with_record(id, |function| (function.code.len() as u32, usize::from(function.registers)));
+        let function = facts.function_facts(id as u32);
+        for pc in 0..len {
+            for register in 0..registers {
+                if let Some(cell) = function.cell_at(pc, register as u16) { found.push(cell.identity); }
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_builtin_method_callee_register_is_its_builtin_identity() {
+    let program = program("var x = 4; var r = Math.sqrt(x);");
+    let sqrt = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "sqrt")) };
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(sqrt)), "no store writes Math.sqrt");
+}
+
+#[test]
+fn a_builtin_member_a_store_writes_is_no_builtin_identity() {
+    let program = program("function f(x) { return x; } Math.sqrt = f; var r = Math.sqrt(4);");
+    let sqrt = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "sqrt")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(sqrt)), "a store writes Math.sqrt, so its reads are Many");
+}
+
+#[test]
+fn a_top_level_function_register_is_its_closure_identity() {
+    let program = program("function f(x) { return x; } var g = f; g(1);");
+    let f = function_named(&program, "f") as u32;
+    assert!(identities_of(&program, &analyze(&program)).contains(&Identity::Closure(f)), "the root creates f once");
+}
+
+#[test]
+fn a_closure_made_in_a_loop_register_is_many() {
+    let program = program("var fs = []; for (var i = 0; i < 3; i++) { fs.push(function () { return i; }); } fs.length;");
+    let inner = (0..program.function_count()).find(|&id| program.with_record(id, |function| function.parent.is_some())).expect("a nested function") as u32;
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Closure(inner)), "the loop creates a closure per iteration");
+}
+
 #[test]
 /// The pc of function `name`'s last instruction (its return) and its register count.
 fn last_pc_and_registers(program: &ResidualProgram, name: &str) -> (u32, usize) {
@@ -1148,4 +1186,25 @@ fn an_int_array_with_a_delete_is_not_a_plain_int32_backing() {
     let (last, registers) = last_pc_and_registers(&program, "f");
     let function = facts.function_facts(function_named(&program, "f") as u32);
     assert!(!(0..registers).any(|register| function.backing_plain(last, register as u16)));
+}
+
+#[test]
+fn a_class_only_built_by_direct_new_is_a_fixed_cell_from_birth() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); s.count = 1;");
+    let facts = analyze(&program);
+    assert!(facts.class_fixed_cell(function_named(&program, "Scheduler") as u32));
+}
+
+#[test]
+fn a_parent_of_a_derived_class_is_no_fixed_cell_since_super_constructs_it() {
+    let program = program("function Scheduler() { this.count = 0; } class Timer extends Scheduler { constructor() { super(); } } var t = new Timer();");
+    let facts = analyze(&program);
+    assert!(!facts.class_fixed_cell(function_named(&program, "Scheduler") as u32), "super() constructs the parent with new_target Timer");
+}
+
+#[test]
+fn a_program_naming_reflect_construct_has_no_fixed_cell() {
+    let program = program("function Scheduler() { this.count = 0; } var s = Reflect.construct(Scheduler, []);");
+    let facts = analyze(&program);
+    assert!(!facts.class_fixed_cell(function_named(&program, "Scheduler") as u32), "Reflect.construct takes any new_target");
 }
