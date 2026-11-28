@@ -321,10 +321,9 @@ view_handler! {
                     RecordPlan::own_other_formed(hint.receiver, form, hint.slot, records, std::ptr::from_ref::<Vm>(machine))
                 });
             } else if const { crate::dispatch_fast::own_constant_site(FLAG) } {
-                // One object's own constant: its record's address, then the watch on its values.
-                let machine = unsafe { vm(script) };
-                let Some((object, watch, value)) = machine.own_constant_word_operands(i.call_link.get()) else { property_miss!() };
-                frame.plan = Some(RecordPlan::own_constant(object, watch, value));
+                // S7f DESIGN: one object's own constant was its object record's address and the watch on its values
+                // (`own_constant_word_operands`); no ordinary object is a record, so the site declines to the miss row.
+                property_miss!()
             } else if const { crate::dispatch_fast::length_site(FLAG) } {
                 // A register's `length`: an array's or a string's, as the site's tier decided.
                 let machine = unsafe { vm(script) };
@@ -343,13 +342,10 @@ view_handler! {
                     quench_runtime::staged::property::FieldPlan::Geometry { atom: i.imm() }
                 }));
             } else if const { crate::dispatch_fast::getter_site(FLAG) } {
-                // A read that met a getter whose hint returns an own field of the receiver
-                // (`IcOp::GetterOwn`): the hint's operands, where the hint is for the read's name;
-                // else the getter's refresh, which makes the hint.
-                let machine = unsafe { vm(script) };
-                let Some((guard, watch, slot)) = machine.getter_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
-                if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::getter(guard, watch, slot, property_miss!()));
+                // S7f DESIGN: a getter whose hint returned the receiver's own field (`IcOp::GetterOwn`) held that
+                // field through the receiver's object record (`getter_hint_operands`); no ordinary object is a record,
+                // so the read declines to the miss row (the getter's refresh, `row_get_field_getter_refresh`).
+                property_miss!()
             } else if const { FLAG == crate::dispatch_fast::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };

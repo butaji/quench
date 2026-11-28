@@ -341,22 +341,3 @@ script_handler! {
     }
 }
 
-/// The `FieldOperand::shape` of a record whose hint is a getter's own-field return
-/// (`Vm::getter_hint_operands`), as `HOLDER_HINT` no object's exact shape.
-const GETTER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 3;
-
-/// Makes the own field `slot` of `base`, which the record's getter returns, the hint of the
-/// `GetField` record at `ip`, in place of the one it holds; whether the record holds it.
-pub(crate) fn set_getter_hint(vm: &mut Vm, ip: Ip, atom: Atom, base: Value, slot: u16) -> bool {
-    if holds_loop_site(ip) {
-        return false;
-    }
-    // SAFETY: `ip` is a `GetField` record of a live view.
-    let i = unsafe { &*ip };
-    let owned = (unsafe { i.operand.field.shape } == GETTER_HINT).then(|| i.call_link.get());
-    let Some(index) = vm.hold_getter_hint(owned, atom, base, slot, NO_CALL_LINK) else {
-        return false;
-    };
-    set_record_hint(ip, GETTER_HINT, index);
-    true
-}

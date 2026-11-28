@@ -597,9 +597,11 @@ pub(super) fn returning_field_hit<const KIND: u8>(
     cache: u16,
 ) -> Option<Value> {
     match KIND {
-        RETURNING_FIELD_OWN => vm.primary_own_field_hit(code, object, cache),
+        // S7f DESIGN: the primary own read (`primary_own_field_hit`) served an object record only. A cell's own read
+        // is class-keyed (`cell_own_field_hit`), which the lane cannot reach, so the own kind declines to the general read.
+        RETURNING_FIELD_OWN => None,
         RETURNING_FIELD_POLYMORPHIC => vm.inline_polymorphic_field_hit(code, object, cache),
-        RETURNING_FIELD_HOLDER => vm.primary_holder_field_hit(code, object, cache),
+        RETURNING_FIELD_HOLDER => vm.class_holder_field_hit(code, object, cache),
         _ => vm.inherited_field_hit(code, object, cache),
     }
 }
@@ -720,24 +722,6 @@ pub(super) fn own_bound_handlers() -> [*const (); OWN_FORMS.len() + OWN_FORMS.le
     own_sites!(row)
 }
 
-/// A memo leaf's first step (`MemoLeaf::run`): `field` of the object `base` names, read
-/// from `this`'s record where the caller holds it (a forwarding body's receiver, already
-/// proven a direct object).
-#[inline(always)]
-pub(super) fn memo_first_step(
-    vm: &Vm,
-    field: quench_runtime::vm::FieldCache,
-    base: u16,
-    arguments: ReadArguments,
-    this: Value,
-    this_record: Option<&quench_runtime::tier_surface::Object>,
-) -> Option<Value> {
-    match this_record {
-        Some(record) if base == quench_runtime::bytecode::FieldBase::THIS.0 => vm.record_field_formed_hit_in(field, record),
-        _ => vm.record_field_formed_hit(field, read_base_in_lane(quench_runtime::bytecode::FieldBase(base), arguments, this)?),
-    }
-}
-
 /// The `script_call_memo_miss` instantiation of memo shape `shape` (`MemoRead::shape`).
 pub(super) fn script_call_memo_handler(shape: u8) -> Handler {
     const _: () = assert!(MEMO_NESTED < MEMO_FORWARD);
@@ -836,19 +820,15 @@ pub(super) fn memoize_read_in_lane(
         };
         // The steps as whole-word compares of the objects this call read (`MemoLeaf::formed`).
         let (field, method_field) = (entry(forward.field), entry(forward.method));
-        let base = read_base_in_lane(quench_runtime::bytecode::FieldBase(forward.base), arguments, this);
-        let receiver = base.and_then(|base| vm.record_field_entry_hit(field, base));
-        let read = match receiver.and_then(|receiver| receiver_this_in_lane(vm, inner.this_binding, receiver)) {
-            Some(method_this) => leaf.formed(vm, arguments.within(target.params), method_this),
-            None => leaf,
-        };
+        // S7f DESIGN: the receiver's formed reads (`record_field_entry_hit`, `formed_entry`) named its object record,
+        // which no ordinary object has. The entries stay unformed and the method leaf stays unformed too.
         MemoRead::Forward {
             base: forward.base,
-            field: base.map_or(field, |base| vm.formed_entry(field, base)),
-            method_field: receiver.map_or(method_field, |receiver| vm.formed_entry(method_field, receiver)),
+            field,
+            method_field,
             params: target.params,
             method,
-            read,
+            read: leaf,
         }
     } else {
         // SAFETY: as for `LeafRead::of`.
