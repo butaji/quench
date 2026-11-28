@@ -13,7 +13,10 @@
 //!   classes, and a fixed length where no edge can change it;
 //! - `sites`: the object-literal allocation sites the object may come from (`Sites`), which a copy
 //!   (`Object.assign`, an extend helper) reads the keys and values of. Kept apart from `classes`: a literal
-//!   is no constructed class's instance, so its site is not a class id.
+//!   is no constructed class's instance, so its site is not a class id;
+//! - `identity`: which one object the value is, where the solve proves it (`Identity`): a builtin the
+//!   closed world never changes, or a closure of a body made once per run. A callee whose identity is
+//!   proven needs no compare in execution.
 //!
 //! Representation is derived from the cell (`Cell::representation`), never stored. A store and a read
 //! form a Galois connection: a slot's cell is the join of every stored cell (α), and a read takes the
@@ -290,7 +293,7 @@ impl Elements {
             _ => self.ty,
         };
         let ty = if self.holes || !in_bounds { ty.join(Type::language(ValueType::Undefined)) } else { ty };
-        Cell { ty, classes: self.classes, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true }
+        Cell { ty, classes: self.classes, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true, identity: Identity::of_type(ty) }
     }
 }
 
@@ -310,18 +313,20 @@ pub struct Cell {
     /// `__proto__` read off a value that is no program closure, a `getPrototypeOf` result, or a value from nowhere the solve
     /// follows (`ANY`). A flag like `global`, joined by OR; the closed world's index-property fact reads it (`aot_facts::gate`).
     pub prototype: bool,
+    /// Which one object the value is (`Identity`): proven by the settled solve, else `Many` or `Never` per the type.
+    pub identity: Identity,
 }
 
 impl Cell {
     /// No value yet: the solve's bottom.
-    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false, prototype: false };
+    pub const NEVER: Self = Self { ty: Type::NEVER, classes: Classes::Never, elements: Elements::NEVER, sites: Sites::Never, global: false, prototype: false, identity: Identity::Never };
     /// Any value: the top.
-    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true };
+    pub const ANY: Self = Self { ty: Type::ANY, classes: Classes::Many, elements: Elements::ANY, sites: Sites::Many, global: false, prototype: true, identity: Identity::Many };
 
-    /// A value of type `ty` from nowhere the solve follows: its classes and sites from the type alone.
+    /// A value of type `ty` from nowhere the solve follows: its classes, sites and identity from the type alone.
     pub fn of(ty: Type) -> Self {
         let elements = if ty.is_subtype(Type::IMMEDIATE) { Elements::NEVER } else { Elements::ANY };
-        Self { ty, classes: Classes::of_type(ty), elements, sites: Sites::of_type(ty), global: false, prototype: false }
+        Self { ty, classes: Classes::of_type(ty), elements, sites: Sites::of_type(ty), global: false, prototype: false, identity: Identity::of_type(ty) }
     }
 
     /// The cell with the global object among the values it may hold.
@@ -352,6 +357,7 @@ impl Cell {
             sites: self.sites.join(other.sites),
             global: self.global || other.global,
             prototype: self.prototype || other.prototype,
+            identity: join_identity(self, other),
         }
     }
 
@@ -373,6 +379,63 @@ impl Cell {
     /// The representation a value of this cell has at every point: derived from the type, never stored.
     pub fn representation(self) -> Option<Representation> {
         [Representation::Int32, Representation::Float64].into_iter().find(|representation| representation.accepts(self.ty))
+    }
+}
+
+/// A builtin the program may name: a global binding (`Math`), or a member of one (`Math.sqrt`), by atom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BuiltinPath {
+    /// The atom of the global name.
+    pub global: u32,
+    /// The atom of the member the global object's builtin holds (`String.fromCharCode`), None for the global itself.
+    pub member: Option<u32>,
+}
+
+/// Which one object a value is: a flat lattice. `Never` holds no object (a primitive, or nothing yet); `Builtin` and
+/// `Closure` are the proven identities, and `Many` is any other object or none known.
+///
+/// Proven: where the settled solve keeps a `Builtin(p)` or `Closure(b)` in a cell, the value is that builtin / that body's one
+/// closure object in every run (`AotFacts::builtin_identity`, `AotFacts::closure_identity`); every other identity the solve
+/// proposed is demoted to `Many` after the solve (`identity::proven`). The lane drops its callee compare on the proof.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Identity {
+    Never,
+    Builtin(BuiltinPath),
+    /// The one closure object of body `0`, made once per run. Derived from the body a function type carries (`Type::body_index`).
+    Closure(u32),
+    Many,
+}
+
+impl Identity {
+    /// The identity of a value of type `ty` the solve knows no builtin of: its closure's body where the type holds one, none
+    /// where the type holds no object (`Type::IMMEDIATE`), any object otherwise.
+    pub fn of_type(ty: Type) -> Self {
+        match ty.body_index() {
+            Some(body) => Self::Closure(body),
+            None if ty.is_subtype(Type::IMMEDIATE) => Self::Never,
+            None => Self::Many,
+        }
+    }
+
+    /// The identities either may hold: `Never` is the unit, equal identities stay, any other pair is `Many`.
+    pub fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Never, other) | (other, Self::Never) => other,
+            (left, right) if left == right => left,
+            _ => Self::Many,
+        }
+    }
+}
+
+/// The identity of a join of two cells. `Never` is the unit only where a side holds no value at all (`Cell::NEVER`): a
+/// primitive side joined with an object's identity is no one object, so `Many`.
+fn join_identity(left: Cell, right: Cell) -> Identity {
+    match (left.identity, right.identity) {
+        (Identity::Never, Identity::Never) => Identity::Never,
+        (Identity::Never, other) if left.ty == Type::NEVER => other,
+        (other, Identity::Never) if right.ty == Type::NEVER => other,
+        (Identity::Never, _) | (_, Identity::Never) => Identity::Many,
+        (left, right) => left.join(right),
     }
 }
 
