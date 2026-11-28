@@ -266,7 +266,7 @@ pub struct LaneNativeCall {
 /// write this one, take the general path, so the memory view tracks the
 /// register exactly.
 pub struct LaneView {
-    /// A record's handler may change while the lane runs (`requicken`); its other fields do not.
+    /// A record's handler may change at an edge while the lane runs (`edge_rewrite`); its other fields do not.
     pub records: Records,
     /// Per instruction, whether the general loop enters the lane there: the
     /// straight-line lane run from it is long enough to repay the lane's
@@ -2485,10 +2485,7 @@ pub struct CallOperand {
 
 /// A `GetField` record's operand: its immediate, and the exact receiver shape its own-field
 /// hint names, `NO_FIELD_RECEIVER` for none. The hint's slot is the record's `call_link`,
-/// which no field record reads otherwise (`holds_no_call_link`). An inherited read's record
-/// hints the inherited entry that last answered it instead (`set_inherited_hint`): its shape
-/// is then `INHERITED_HINT` and its `call_link` that entry's index; a polymorphic read's, the
-/// prototype-held read that last answered it (`set_holder_hint`), `HOLDER_HINT` and its index.
+/// which no field record reads otherwise (`holds_no_call_link`).
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct FieldOperand {
@@ -2766,27 +2763,6 @@ pub struct Activation {
 
 /// Where the kind's tag lies in an activation.
 pub const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
-
-/// The cache tier a single-read `GetField` site's entries call for, to which a miss of its
-/// single-entry handler moves the record (`row_get_field_miss`, `row_returning_field_miss`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FieldSiteTier {
-    /// A nested read whose steps hit primary own entries, or an array's own `length`
-    /// (`lane_nested_value`).
-    Nested,
-    /// A nested read with another step, which only the general cached read makes.
-    General,
-    /// A read that met an accessor the site cached (`Vm::field_site_getter`).
-    Getter,
-    /// Past one shape (`Vm::field_site_polymorphic`).
-    Polymorphic,
-    /// A primary entry naming a prototype holder (`Vm::field_site_holder`).
-    Holder,
-    /// An entry beyond the immediate prototype (`Vm::field_site_inherited`).
-    Inherited,
-    /// The primary own entry, which the record already reads.
-    Own,
-}
 
 #[derive(Debug, Default)]
 pub struct OsrDiagnostics {

@@ -640,7 +640,7 @@ pub(super) fn forwarded_target_in_lane<'a>(
     }
     let target = resolved.insert(passed_target_in_lane(cx, callee, passed)?);
     if let Some(index) = vm.script_call_index(callee) {
-        // SAFETY: as `requicken`: the record's operand is the call's, written in place.
+        // SAFETY: as `edge_rewrite`: the record's operand is the call's, written in place.
         unsafe { (*ip.cast_mut()).operand.call.memo = index as u32 };
     }
     Some(target)

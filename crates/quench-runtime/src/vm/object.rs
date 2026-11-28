@@ -2278,7 +2278,7 @@ impl Vm {
         self.accessor_field_indices.get(self.field_cache_index(site)) != NO_ACCESSOR_FIELD
     }
 
-    /// Whether the site's primary entry is a prototype's (`FieldSiteTier::Holder`).
+    /// Whether the site's primary entry is a prototype's.
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches.get(self.field_cache_index(site)).holder != NO_FIELD_HOLDER
     }
@@ -2327,7 +2327,7 @@ impl Vm {
 
     /// `holder_hint_hit` over the up to four prototype hints `arms` names, sixteen bits each,
     /// an index plus one (zero for none): a polymorphic read whose receivers' prototypes each hold
-    /// the name (`polymorphic_entry`). The receiver's object part is resolved once.
+    /// the name. The receiver's object part is resolved once.
     #[inline(always)]
     pub fn holder_arms_hit(&self, arms: u64, atom: Atom, object: Value) -> Option<Value> {
         if arms == 0 {

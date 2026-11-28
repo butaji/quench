@@ -1170,7 +1170,7 @@ print(out.length + " " + h + " " + out[out.length - 3].slice(0, 60));
 #[test]
 fn nested_reads_past_their_primary_entries_keep_their_values() {
     // A nested `GetField` whose steps miss their primary own entries reads the polymorphic
-    // entries and a string's own `length` (`nested_polymorphic_value_in_lane`): strings of
+    // entries and a string's own `length`: strings of
     // astral and accented code points, arrays and an object with its own `length`, a middle
     // step over many shapes, an inherited one, then a getter installed on its prototype and
     // a primitive in its place. Node 26 prints the same. A semantics check: the iteration

@@ -242,13 +242,8 @@ use quench_runtime::vm::engine_types::CallOperand;
 /// A `CallOperand::memo` link that names no script target: no cache holds this many.
 const NO_OPERAND_LINK: u32 = u32::MAX;
 
-/// The `FieldOperand::shape` of a record whose hint is an inherited entry
-/// (`Vm::inherited_hint_operands`): no object's exact shape (`Object::exact_shape`, whose id
-/// bits never all hold), so an own-field hint read (`LaneInstruction::field_hint`) misses it.
-const INHERITED_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 1;
-
 /// The `FieldOperand::shape` of a polymorphic read's record whose hint is a prototype-held
-/// read (`Vm::holder_hint_hit`), as `INHERITED_HINT` no object's exact shape.
+/// read (`Vm::holder_hint_hit`), a value no object's exact shape has.
 const HOLDER_HINT: u32 = quench_runtime::vm::NO_FIELD_RECEIVER - 2;
 
 #[quench_macros::ext(LaneInstructionOps1)]
@@ -375,20 +370,8 @@ impl LaneView {
                         generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(false, { $leaf }))),
                     (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD, NOT_LEAF) as Handler,
                         returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD, $leaf) as Handler),
-                    (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_OWN, NOT_LEAF) as Handler,
-                        returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_OWN, $leaf) as Handler),
-                    (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as Handler,
-                        returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, $leaf) as Handler),
-                    (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, NOT_LEAF) as Handler,
-                        returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, $leaf) as Handler),
-                    (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, NOT_LEAF) as Handler,
-                        returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, $leaf) as Handler),
-                    (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, NOT_LEAF) as Handler,
-                        returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, $leaf) as Handler),
                     (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as Handler,
                         returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, $leaf) as Handler),
-                    (returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, NOT_LEAF) as Handler,
-                        returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_GETTER, $leaf) as Handler),
                 ];
                 returns.into_iter().chain(arithmetic_operators!(all pick).into_iter().flatten())
                     .chain(relation_operators!(all pick).into_iter().flatten()).collect::<Vec<(Handler, Handler)>>()
@@ -401,7 +384,7 @@ impl LaneView {
             _ => forms!(PLAIN_LEAF),
         };
         for record in self.records.iter() {
-            // SAFETY: as `requicken`: the lane runs on the view's thread, and no reference to
+            // SAFETY: as `edge_rewrite`: the lane runs on the view's thread, and no reference to
             // the handler field is live.
             let record = unsafe { &mut *record.get() };
             if let Some((_, leaf)) = forms.iter().find(|(plain, _)| *plain as *const () == record.handler) {
@@ -2739,35 +2722,11 @@ const OWN_FORMS: [u32; 6] = {
 };
 
 
-/// The site facts of a generated read through a prototype hint (`IcOp::Held`), of `this` and of
-/// a register: past every own-field site.
-pub(crate) const HELD_SITE_THIS: u8 = own_site(true, OWN_FORMS.len());
-pub(crate) const HELD_SITE_REGISTER: u8 = own_site(false, OWN_FORMS.len());
-
-/// The site facts of the held read of a receiver other than a direct object (an array, function
-/// or ordinary builtin, as `a.push` or `f.call`), which a held site's miss takes: its object part
-/// is resolved out of line (`RecordPlan::other`).
-/// One instantiation for both bases: the base is a runtime test (`runtime_base`), as these rows are cold.
-pub(crate) const HELD_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 1);
-pub(crate) const HELD_OTHER_REGISTER: u8 = HELD_OTHER_THIS;
-
-/// The site fact of a string register's read through a `String.prototype` hint
-/// (`IcOp::HeldString`), as `s.charCodeAt`.
-pub(crate) const STRING_SITE: u8 = own_site(false, OWN_FORMS.len() + 2);
 
 
-/// The site fact of a held read at a site whose receivers live outside the object records, as
-/// `a.push` or `f.call` (`FieldSiteTier::Holder` of a cell): the held-other read from the first,
-/// whose miss takes the site's holder entry (`row_get_field_holder_cell_refresh`).
-pub(crate) const HELD_CELL_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 3);
 
-/// The site facts of a read through the record's inherited hint, a method beyond the immediate
-/// prototype (`FieldSiteTier::Inherited`): of a direct object, then of any receiver's object
-/// part, each of `this` and of a register.
-pub(crate) const INHERITED_THIS: u8 = own_site(true, OWN_FORMS.len() + 4);
-pub(crate) const INHERITED_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 4);
-pub(crate) const INHERITED_OTHER_THIS: u8 = own_site(false, OWN_FORMS.len() + 5);
-pub(crate) const INHERITED_OTHER_REGISTER: u8 = INHERITED_OTHER_THIS;
+
+
 
 
 /// The trusted own-field sites: the load proved the base's class `C` (`trusted_named_read`), so the record reads its
@@ -2779,6 +2738,10 @@ pub(crate) const TRUSTED_OWN_THIS: u8 = own_site(true, OWN_FORMS.len() + 26);
 pub(crate) const TRUSTED_OWN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 26);
 pub(crate) const TRUSTED_RUN_THIS: u8 = own_site(true, OWN_FORMS.len() + 27);
 pub(crate) const TRUSTED_RUN_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 27);
+/// The trusted own-field site of a frame local base (`trusted_base`, a `FieldBase::local` slot): the object is the running
+/// frame's local slot, then the field is read as `TRUSTED_OWN_*` and `TRUSTED_RUN_*` read it, from the operand word. The form
+/// is in the word, so one row serves both storage forms. Its base names no register or `this`.
+pub(crate) const TRUSTED_LOCAL: u8 = own_site(false, OWN_FORMS.len() + 28);
 
 /// The bit of a trusted operand's slot word that marks a field the class may leave absent (`!field_always_stored`):
 /// its read leaves at the miss, which takes the general read. Bit 30 is clear in every slot word of a spill slot below
@@ -2792,36 +2755,16 @@ pub(crate) const STRING_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 10);
 
 /// The site facts of a read the VM's geometry or length answers from the receiver's word, which no
 /// record addresses (`FieldPlan::Length`, `FieldPlan::Geometry`): a register's `length` of an
-/// arguments object, a user function or a typed view (`TYPED_LENGTH_SITE`, a miss to the array row),
-/// and any geometry name of a typed view, DataView, Map or Set (`GEOMETRY_SITE`, a miss to the
-/// general read).
+/// arguments object, a user function or a typed view (`TYPED_LENGTH_SITE`, a miss to the array row).
 pub(crate) const TYPED_LENGTH_SITE: u8 = own_site(false, OWN_FORMS.len() + 20);
-pub(crate) const GEOMETRY_SITE: u8 = own_site(false, OWN_FORMS.len() + 21);
 
-/// The site fact of a number receiver's read through a `Number.prototype` hint (`IcOp::HeldNumber`),
-/// as `n.toFixed`: own-form index 14.
-pub(crate) const NUMBER_SITE: u8 = own_site(false, OWN_FORMS.len() + 14);
 
 /// The site fact of a read whose result is one proven closure (`named_read_row`, `closure_cell_read`): the record's
 /// operand word addresses the closure cell, and the row loads the closure from it. The read's base is not read, so one
 /// instance serves `this` and a register.
 pub(crate) const CLOSURE_CELL_SITE: u8 = own_site(false, OWN_FORMS.len() + 42);
 
-/// The site fact of a nested read `a.b.c` of two own entries (`get_field_nested_miss`'s steps):
-/// the record's hint is the first step's entry, the site's second entry the second; the row runs
-/// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read.
-/// No load installs it: a nested read takes the general read.
-pub(crate) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
 
-/// The formed nested sites: `NESTED_SITE`'s row with each hop's storage form fixed, the first hop's
-/// (the record's hint) and the second's (the intermediate object's), each a flat run or packed inline
-/// values (`nested_mode_parts`). Indexes 43 to 46 are below the returning sites (from 59) and no other
-/// site fact uses them. No load installs them now.
-const NESTED_PAIR_BASE: usize = OWN_FORMS.len() + 34;
-pub(crate) const NESTED_FLAT_FLAT: u8 = own_site(false, NESTED_PAIR_BASE);
-pub(crate) const NESTED_FLAT_INLINE: u8 = own_site(false, NESTED_PAIR_BASE + 1);
-pub(crate) const NESTED_INLINE_FLAT: u8 = own_site(false, NESTED_PAIR_BASE + 2);
-pub(crate) const NESTED_INLINE_INLINE: u8 = own_site(false, NESTED_PAIR_BASE + 3);
 
 
 
@@ -2862,20 +2805,6 @@ pub(crate) const SINK_SITE: u8 = own_site(false, OWN_FORMS.len() + 47);
 
 
 
-/// The site facts of the generated entry reads (`FieldPlan::Hinted`, `FieldPlan::Entry`): each
-/// one hit shape of the VM's entry lookups, which the row calls by the kind it names
-/// (`LaneFrame::field_entry`).
-/// Of `this` and of a register alike (`runtime_base`).
-/// The polymorphic read: the record's own hint, then the site's inline entries (`row_polymorphic_miss` past them).
-pub(crate) const POLYMORPHIC_SITE: u8 = own_site(false, OWN_FORMS.len() + 38);
-/// The site's hashed entries past the inline ones (`Vm::polymorphic_field_hit`), the polymorphic read's miss.
-pub(crate) const HASHED_SITE: u8 = own_site(false, OWN_FORMS.len() + 39);
-/// The site's primary holder entry, of a direct object or of any receiver in a heap cell (`Vm::primary_holder_field_hit`,
-/// `Vm::cell_holder_field_hit`), which holds no hint.
-pub(crate) const HOLDER_SITE: u8 = own_site(false, OWN_FORMS.len() + 40);
-/// The site's inherited entry walked past the immediate prototype (`Vm::inherited_field_entry_hit`), whose answer
-/// becomes the record's inherited hint.
-pub(crate) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41);
 
 
 
@@ -2885,12 +2814,19 @@ pub(crate) const INHERITED_WALK_SITE: u8 = own_site(false, OWN_FORMS.len() + 41)
 pub(crate) const PRIVATE_FIELD_THIS: u8 = own_site(true, OWN_FORMS.len() + 48);
 pub(crate) const PRIVATE_FIELD_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 48);
 
-/// The site facts of a returning own-field read (`RETURNING_FIELD_OWN`'s row, k 50 up: the topmost site facts): the record's own
-/// hint, for `this` and a register, at each leaf form the record returns from (`LeafForm`). The
-/// row completes the return with its leaf form's completion, so the leaf forms are const site
+/// The site facts of a returning trusted own-field read (`RETURNING_TRUSTED_*`): the trusted read of a fixed class's
+/// cell (`trusted_read`) followed by the return, for `this` and a register, at each leaf form the record returns
+/// from (`LeafForm`). The row completes the return with its leaf form's completion, so the leaf forms are const site
 /// facts of one family: `returning_site(this, leaf)`.
 const RETURNING_FORM: usize = OWN_FORMS.len() + 50;
 const RETURNING_BASE: u8 = own_site(false, RETURNING_FORM);
+/// The returning trusted reads of `this` and of a register, at the leaf form that is no leaf (`NOT_LEAF`).
+pub(crate) const RETURNING_TRUSTED_THIS: u8 = returning_site(true, NOT_LEAF);
+pub(crate) const RETURNING_TRUSTED_REGISTER: u8 = returning_site(false, NOT_LEAF);
+
+/// The site fact of a nested read `a.b.c` of two proven fixed cells (`trusted_read`, `FieldPlan::FixedChain`): the first
+/// hop's word is the record's operand, the second's its `mode`. Its miss takes the general read, which keeps the record.
+pub(crate) const NESTED_TRUSTED: u8 = own_site(false, OWN_FORMS.len() + 16);
 
 
 
@@ -2921,93 +2857,6 @@ macro_rules! own_sites {
 
 
 
-
-script_handler! {
-    /// The polymorphic row's miss (`POLYMORPHIC_SITE`): the general read, which keeps the record. A polymorphic
-    /// read whose classes the load proves one slot for takes its trusted row there (`trusted_named_read`).
-    #[inline(never)]
-    fn row_polymorphic_miss<>(cx, r, ip, i, view) {
-        let _ = i;
-        sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `lane_get_field_holder` past its hint: the site's primary holder entry
-    /// (`Vm::primary_record_holder_field_hit`), whose answer becomes the hint. Any other read
-    /// takes the holder row (`HOLDER_SITE`).
-    #[inline(never)]
-    fn row_get_field_holder_refresh<THIS: bool>(cx, r, ip, i, view) {
-        // S7f DESIGN: the record's primary holder entry (`Vm::primary_record_holder_field_hit`) is deleted,
-        // so no hint is made; every read takes the holder row (`HOLDER_SITE`).
-        let _ = i;
-        sibling!(generated_row!(FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE), r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `GetField` of a string primitive, which `String.prototype` answers through the
-    /// site's cache (`Vm::string_prototype_field_hit`), a method read as `s.substring`, or
-    /// its chain's data walk for an absent name, at a site `Vm::string_field_site_cacheable`
-    /// admits. A miss moves the record on as `row_get_field_miss` decides.
-    fn get_field_string_miss<>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        // The site checks (`Vm::string_field_site_cacheable`) ran when the handler was
-        // installed, so a hit reads the site's `String.prototype` entry directly; any other
-        // read is `Vm::cached_string_field_hit`'s, whose miss records the site's entry.
-        let Some(value) = (unsafe { single_field_base_in_lane(cx, r, i.b) })
-            .filter(|object| vm.heap_reads().is_string(*object))
-            .and_then(|object| vm.cached_string_field_hit(unsafe { &*(*cx).code }, object, i.imm(), i.c))
-        else {
-            sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// The generated number read (`generated_row` at `NUMBER_SITE`) past its hint: the site's `Number.prototype`
-    /// entry (`Vm::number_prototype_field_hit`), whose answer becomes the hint. Any other read
-    /// takes `row_get_field_miss`, which decides the record's tier.
-    #[inline(never)]
-    fn row_get_field_number_refresh<>(cx, r, ip, i, view) {
-        // S7f DESIGN: `Vm::number_prototype_field_hit` is deleted (a record tier); no hint is made here.
-        let _ = i;
-        sibling!(row_get_field_miss, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// The generated string read (`generated_row` at `STRING_SITE`) past its hint: the site's `String.prototype` entry
-    /// (`Vm::string_prototype_field_hit`), whose answer becomes the hint. Any other read
-    /// takes `get_field_string_miss`.
-    #[inline(never)]
-    fn row_get_field_string_refresh<>(cx, r, ip, i, view) {
-        // S7f DESIGN: `Vm::string_prototype_field_hit` is deleted (a record tier); no hint is made here.
-        let _ = i;
-        sibling!(get_field_string_miss, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// The generated held read at `HELD_CELL_REGISTER` past its hint: the site's holder entry
-    /// (`Vm::cell_holder_field_hit`), whose answer becomes the hint. A miss takes
-    /// the holder row (`HOLDER_SITE`), which moves the record on.
-    #[inline(never)]
-    fn row_get_field_holder_cell_refresh<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let base = r.get(i.b);
-        let Some(value) = vm.cell_holder_field_hit(code, base, i.c) else {
-            sibling!(generated_row!(FIELD_LEAF_READ, ACC_NONE, HOLDER_SITE), r, ip, Carried::script_in(cx, view))
-        };
-        set_prototype_hint(ip, |owned| vm.hold_holder_hint(owned, i.imm(), base, value, NO_CALL_LINK));
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// A `GetField` of a local slot: the general read. A base that is no local slot takes its row at load
@@ -3071,19 +2920,6 @@ script_handler! {
 
 
 script_handler! {
-    /// A nested `GetField` whose steps hit their entries without guest code
-    /// (`lane_nested_value`); any other read takes the general row (`row_get_field_general`). The nested
-    /// read is no load-time row, so its record keeps its row either way.
-    fn get_field_nested_miss<>(cx, r, ip, i, view) {
-        let Some(value) = (unsafe { lane_nested_value(cx, r, ip, i) }) else {
-            sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
-        };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
     /// The general read's miss (`GENERAL_THIS`, `GENERAL_REGISTER`, and the nested or local base):
     /// the general read the row's host read did not answer, which repeats the side-effect-free
     /// lookup, then the activation path of a getter or a proxy.
@@ -3125,7 +2961,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// `lane_get_field` at a site whose reads met a getter (`FieldSiteTier::Getter`): the
+    /// `lane_get_field` at a site whose reads met a getter: the
     /// getter activation first, whose cache check fails without effect, so a data read the
     /// cached probes answer stays `lane_get_field`'s. An activation without lane-stack room
     /// makes the activations frames first (`script_call_frame_in_lane`), so the read goes on with
@@ -4640,7 +4476,7 @@ script_handler! {
     /// that entry runs (`entry_call_row`) for this call, in place, and the record keeps its row.
     /// Out of line, reached by `sibling!`, so the miss makes no call.
     #[inline(never)]
-    fn script_call_requicken_miss<>(cx, r, ip, i, view) {
+    fn script_call_entry_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let target = vm.linked_script_call_entry(r.get(i.b), &i.call_link);
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
@@ -4653,7 +4489,7 @@ script_handler! {
     }
 }
 
-/// The row a call takes whose linked target has entry `entry` (`script_call_requicken_miss`, and the load
+/// The row a call takes whose linked target has entry `entry` (`script_call_entry_miss`, and the load
 /// for a body whose entry the facts name, `specialize_script_calls`): the environment, settling, keeping or
 /// leaf form of the entry, else the full form, which takes every other entry in place.
 pub(super) fn entry_call_row(entry: CallEntry, i: &LaneInstruction) -> Handler {
@@ -4675,7 +4511,7 @@ pub(super) fn entry_call_row(entry: CallEntry, i: &LaneInstruction) -> Handler {
 script_handler! {
     /// The miss of a call row (`script_call_row`) whose entry the row does not admit: the target the
     /// site links, which takes its entry's form where that is not a plain activation
-    /// (`script_call_requicken_miss`), and the out-of-line form where the site's arguments are more than
+    /// (`script_call_entry_miss`), and the out-of-line form where the site's arguments are more than
     /// it takes. Else the entry is proved (`Admission::UNPROVEN` cleared), the link marks it (`PLAIN_LINK`),
     /// and the call runs through its row, which admits it by the entry's proof, the argument count and the
     /// room (`CallFrame::call_entry`). A returning call the run refuses (`returning_call_admitted`) takes the
@@ -4695,7 +4531,7 @@ script_handler! {
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
         if target.entry != CallEntry::framed(Framed::Activates) {
-            sibling!(script_call_requicken_miss, r, ip, Carried::script_in(cx, view))
+            sibling!(script_call_entry_miss, r, ip, Carried::script_in(cx, view))
         }
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
         if returns && !returning_call_admitted(cx) {
@@ -5216,9 +5052,7 @@ script_handler! {
         // S7f DESIGN: the global object is a class cell, so its own data field makes no record hint
         // (`Vm::own_data_field_hint` and `Vm::hinted_own_field_store_hit` are deleted); every global
         // store takes the general path.
-        let _ = (cx, i, view);
-        let _ = r;
-        requicken(ip, exit_lane);
+        let _ = (cx, r, i, view);
         exit(ip)
     }
 }
@@ -6294,28 +6128,12 @@ const RETURNING_UNARY: u8 = 1;
 const RETURNING_BINARY: u8 = 2;
 const RETURNING_OBJECT: u8 = 3;
 const RETURNING_LITERAL: u8 = 4;
-/// A `RETURNING_FIELD` read of a register or `this` at a site that reads neither `name` nor
-/// `length`: the site's primary own entry (`Vm::primary_own_field_hit`). No load installs it now.
-const RETURNING_FIELD_OWN: u8 = 5;
-/// `RETURNING_FIELD_OWN` at a site past one shape (`Vm::polymorphic_field_hit`).
-const RETURNING_FIELD_POLYMORPHIC: u8 = 6;
-/// `RETURNING_FIELD_OWN` at a site whose primary entry names a prototype holder
-/// (`Vm::primary_holder_field_hit`).
-const RETURNING_FIELD_HOLDER: u8 = 7;
-/// `RETURNING_FIELD_OWN` at a site with an inherited entry (`Vm::inherited_field_hit`).
-const RETURNING_FIELD_INHERITED: u8 = 8;
-/// `RETURNING_FIELD` of a nested site whose steps hit primary own entries
-/// (`lane_nested_value`).
-const RETURNING_FIELD_NESTED: u8 = 9;
 /// A returning `MakeObjectLiteral` (`return { ... }`): the literal the `MakeObjectLiteral` row
 /// makes, returned from the frame.
 const RETURNING_OBJECT_LITERAL: u8 = 10;
 /// `RETURNING_FIELD` of a private name of a register or `this`: the site's private field
 /// (`LaneFrame::private_value`); a method, accessor or missing field takes `RETURNING_FIELD`.
 const RETURNING_FIELD_PRIVATE: u8 = 11;
-/// `RETURNING_FIELD` at a site whose reads met a getter (`FieldSiteTier::Getter`): the getter
-/// activation first, as `get_field_getter_miss` makes it, so no cached data probe precedes it.
-const RETURNING_FIELD_GETTER: u8 = 12;
 
 
 
@@ -6346,13 +6164,11 @@ impl ReadArguments {
     }
 }
 
-/// The hit a field record of a read body answers with: its quickened primary entry, own or
-/// held by a record prototype (`own_formed_handler`, `lane_get_field_holder`). Each hit is
-/// its cache's own validated read, whatever the record's state when it runs.
+/// The hit a field record of a read body answers with: its quickened primary own entry (`own_formed_handler`).
+/// Each hit is its cache's own validated read, whatever the record's state when it runs.
 #[derive(Clone, Copy)]
 enum FieldHit {
     Own(u16),
-    Holder(u16),
 }
 
 
@@ -6365,10 +6181,6 @@ impl FieldHit {
             || math_field_call_handlers().contains(&handler)
         {
             Some(Self::Own(record.c))
-        } else if handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS) as *const ()
-            || handler == generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER) as *const ()
-        {
-            Some(Self::Holder(record.c))
         } else {
             None
         }
@@ -6381,7 +6193,7 @@ impl FieldHit {
         // field hit declines and the read takes its general path.
         let _ = (vm, code, object);
         match self {
-            Self::Own(cache) | Self::Holder(cache) => {
+            Self::Own(cache) => {
                 let _ = cache;
                 None
             }
@@ -6392,12 +6204,6 @@ impl FieldHit {
 /// The read a `CallEntry::reads` body answers with, by the state its records quickened to.
 #[derive(Clone, Copy)]
 enum LeafRead {
-    /// Its returning `GetField` (`returning_miss` of `kind`) on the object `base` names: the
-    /// kind's hit (`returning_field_hit`), or for a holder a record prototype's method read
-    /// with no call.
-    Field { base: u16, kind: u8, cache: u16 },
-    /// Its nested own read (`nested_own_field_hit`) of field site `site`.
-    Nested { site: u32 },
     /// Its field record's hit, then the dense element the parameter `index` names.
     Element { base: u16, field: FieldHit, index: u16 },
     /// Its returning private field read (`RETURNING_FIELD_PRIVATE`) of `atom` at its record
@@ -6421,9 +6227,6 @@ impl LeafRead {
             return Some(Self::Element { base: entry.b, field: FieldHit::of(entry)?, index: element.c });
         }
         let handler = entry.handler;
-        if handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_NESTED, NOT_LEAF) as *const () {
-            return Some(Self::Nested { site: entry.imm() });
-        }
         if handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as *const () {
             return Some(Self::Private {
                 base: entry.b,
@@ -6433,18 +6236,7 @@ impl LeafRead {
                 function: target.function,
             });
         }
-        let kind = if handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_POLYMORPHIC, NOT_LEAF) as *const () {
-            RETURNING_FIELD_POLYMORPHIC
-        } else if returning_own_row(handler) || handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_OWN, NOT_LEAF) as *const () {
-            RETURNING_FIELD_OWN
-        } else if handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_HOLDER, NOT_LEAF) as *const () {
-            RETURNING_FIELD_HOLDER
-        } else if handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_INHERITED, NOT_LEAF) as *const () {
-            RETURNING_FIELD_INHERITED
-        } else {
-            return None;
-        };
-        Some(Self::Field { base: entry.b, kind, cache: entry.c })
+        None
     }
 
     /// The read's value for a call passing `arguments` on `this`; `None` for a miss.
@@ -6462,29 +6254,9 @@ impl LeafRead {
                 let array = field.run(vm, code, base(field_base)?)?;
                 vm.direct_dense_element(array, arguments.get(index)?)
             }
-            Self::Nested { site } => {
-                // SAFETY: a nested record of the running program names its site.
-                // S7f DESIGN: the nested own chain (`nested_own_field_hit`, record-only) is deleted; the read takes the general path.
-                let _ = (site, code);
-                None
-            }
             // The callee runs frameless, capturing from its closure's environment.
             Self::Private { base: field_base, atom, site, environment, function } => {
                 vm.site_private_field(code, site, (environment, function, false), base(field_base)?, atom)
-            }
-            Self::Field { base: field_base, kind, cache } => {
-                let object = base(field_base)?;
-                match kind {
-                    RETURNING_FIELD_POLYMORPHIC => {
-                        returning_field_hit::<RETURNING_FIELD_POLYMORPHIC>(vm, code, object, cache)
-                    }
-                    RETURNING_FIELD_OWN => returning_field_hit::<RETURNING_FIELD_OWN>(vm, code, object, cache),
-                    // A record prototype's method, read with no call; any other declines the
-                    // read, and the activation's own record reads it.
-                    // S7f DESIGN: a record prototype's method read (`primary_record_holder_field_hit`) is deleted; it declines.
-                    RETURNING_FIELD_HOLDER => None,
-                    _ => returning_field_hit::<RETURNING_FIELD_INHERITED>(vm, code, object, cache),
-                }
             }
         }
     }
@@ -6530,146 +6302,6 @@ impl ForwardRead {
     }
 }
 
-use quench_runtime::vm::engine_types::MemoLeaf;
-
-/// The memo shapes `script_call_memo_miss` takes as its parameter: a leaf's step
-/// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
-/// (`MemoRead::Forward`), so a site's handler makes its memo's steps with no dispatch on them.
-const MEMO_FIELD: u8 = 0;
-const MEMO_ELEMENT: u8 = 1;
-const MEMO_LENGTH: u8 = 2;
-const MEMO_NESTED: u8 = 3;
-const MEMO_FORWARD: u8 = 4;
-
-#[quench_macros::ext(MemoLeafOps1)]
-impl MemoLeaf {
-    /// Its step's memo shape.
-    fn shape(&self) -> u8 {
-        match self {
-            Self::Field { .. } => MEMO_FIELD,
-            Self::Element { .. } => MEMO_ELEMENT,
-            Self::Length { .. } => MEMO_LENGTH,
-            Self::Nested { .. } => MEMO_NESTED,
-        }
-    }
-
-    /// The memo form of `read`, whose hits the active program's caches just answered; `None`
-    /// for a polymorphic or inherited read.
-    fn of(vm: &Vm, code: &ResidualProgram, read: LeafRead) -> Option<Self> {
-        let entry = |hit: FieldHit| match hit {
-            FieldHit::Own(cache) | FieldHit::Holder(cache) => vm.field_cache_entry(cache),
-        };
-        Some(match read {
-            LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } => {
-                Self::Field { base, field: vm.field_cache_entry(cache) }
-            }
-            LeafRead::Field { .. } => return None,
-            // The memo holds for its callee alone, whose environment fixes the home, so the
-            // site's shape and slot under it are a plain own field step.
-            LeafRead::Private { base, site, environment, .. } => {
-                Self::Field { base, field: vm.site_private_field_entry(site, environment)? }
-            }
-            LeafRead::Element { base, field, index } => Self::Element { base, field: entry(field), index },
-            LeafRead::Nested { site } => {
-                // SAFETY: a nested record of the running program names its site.
-                let site = unsafe { code.field_sites.get_unchecked(site as usize) };
-                let (base, field) = (site.base.0, vm.field_cache_entry(site.first.1));
-                match site.second {
-                    None => Self::Field { base, field },
-                    Some((atom, _)) if atom == vm.length_atom => Self::Length { base, field },
-                    Some((_, second)) => Self::Nested { base, field, second: vm.field_cache_entry(second) },
-                }
-            }
-        })
-    }
-
-    /// This memo with its steps as `Vm::formed_entry` makes them of the objects a call passing
-    /// `arguments` on `this` reads, which its steps just answered: each step then proves its
-    /// shapes and storage forms by whole-word compares (`Vm::record_field_formed_hit`).
-    fn formed(self, vm: &Vm, arguments: ReadArguments, this: Value) -> Self {
-        // S7f DESIGN: `Vm::formed_entry` and `Vm::record_field_entry_hit` are deleted with the record
-        // tier; the memo keeps its steps' cache entries as they were read.
-        let _ = (vm, arguments, this);
-        self
-    }
-
-    /// `LeafRead::run` of the read this memo records, of the step `shape` names (a constant
-    /// where it inlines); `None` for a memo of another step.
-    #[inline(always)]
-    fn run(
-        &self,
-        shape: u8,
-        vm: &Vm,
-        arguments: ReadArguments,
-        this: Value,
-        this_record: Option<&quench_runtime::tier_surface::Object>,
-    ) -> Option<Value> {
-        match *self {
-            // S7f DESIGN: a memo's first step (`memo_first_step`) read a record's own entry and is deleted with the
-            // object-record family; every memo declines and its read takes the general path.
-            Self::Field { .. } | Self::Element { .. } | Self::Length { .. } => {
-                let _ = (shape, vm, arguments, this, this_record);
-                None
-            }
-            // S7f DESIGN: the second step's formed read (`Vm::record_field_formed_hit`) is deleted with the
-            // record tier; a nested memo declines and its read takes the general path.
-            Self::Nested { .. } if shape == MEMO_NESTED => None,
-            _ => None,
-        }
-    }
-}
-
-
-use quench_runtime::vm::engine_types::MemoRead;
-
-#[quench_macros::ext(MemoReadOps1)]
-impl MemoRead {
-    /// Its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD`).
-    fn shape(&self) -> u8 {
-        match self {
-            Self::Leaf(read) => read.shape(),
-            Self::Forward { read, .. } => MEMO_FORWARD | read.shape(),
-        }
-    }
-}
-
-
-use quench_runtime::vm::engine_types::ReadMemo;
-
-/// Slots of the read memo table (`LaneStack::read_memos`): it bounds the table's memory, and a
-/// table that fills starts again empty, so the sites that read since make their memos again.
-const READ_MEMOS: usize = 4096;
-
-
-
-
-
-script_handler! {
-    /// `script_call_full_miss` at a site whose read call made a memo (`memoize_read_in_lane`): the
-    /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
-    /// target's would. A call the memo does not answer takes the full form, which the site
-    /// then keeps; a run that admits no read call (`returning_call_admitted`) takes it
-    /// once.
-    fn script_call_memo_miss<SHAPE: u8>(cx, r, ip, i, view) {
-        let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-        // A run that admits no read call leaves the memo to the next.
-        if !unsafe { (*cx).script_calls } || (returns && !returning_call_admitted(cx)) {
-            sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(value) = (unsafe { memo_read_in_lane::<SHAPE>(cx, r, i) }) else {
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
-            sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
-        };
-        if !returns {
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        lane_return_value!(cx, ip, value)
-    }
-}
-
-
-
 script_handler! {
     /// A value record that returns its result from the frame (`returning_kind`): the value
     /// as the record's own handler computes it, then the activation's completion, or the VM
@@ -6678,27 +6310,6 @@ script_handler! {
     fn returning_miss<KIND: u8, LEAF: u8>(cx, r, ip, i, view) {
         let value = unsafe {
             match KIND {
-                RETURNING_FIELD_OWN
-                | RETURNING_FIELD_POLYMORPHIC
-                | RETURNING_FIELD_HOLDER
-                | RETURNING_FIELD_INHERITED => {
-                    let code = &*(*cx).code;
-                    let vm = vm(cx);
-                    let value = single_field_base_in_lane(cx, r, i.b).and_then(|object| {
-                        if KIND == RETURNING_FIELD_POLYMORPHIC {
-                            polymorphic_read(vm, code, ip, object)
-                        } else {
-                            returning_field_hit::<KIND>(vm, code, object, i.c)
-                        }
-                    });
-                    let Some(value) = value else {
-                        if KIND == RETURNING_FIELD_POLYMORPHIC {
-                            sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
-                        }
-                        sibling!(row_returning_field_miss::<LEAF>, r, ip, Carried::script_in(cx, view))
-                    };
-                    Some(value)
-                }
                 RETURNING_FIELD_PRIVATE => {
                     let code = &*(*cx).code;
                     let value = field_base_in_lane(cx, r, quench_runtime::bytecode::FieldBase(i.b))
@@ -6707,23 +6318,6 @@ script_handler! {
                         sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
                     };
                     Some(value)
-                }
-                RETURNING_FIELD_NESTED => {
-                    let Some(value) = lane_nested_value(cx, r, ip, i) else {
-                        sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
-                    };
-                    Some(value)
-                }
-                // A read that meets its site's getter activates it, as `lane_get_field`
-                // does: the record returns from the frame, so the getter's completion
-                // completes this activation too (`complete_activation_in_lane`).
-                RETURNING_FIELD_GETTER => {
-                    return match getter_activation_in_lane(cx, r, ip, i) {
-                        Ok((registers, base)) => next!(cx, registers, base, Carried::script(cx)),
-                        // A native getter that raised is not called again: the general path raises it.
-                        Err(next) if (vm(cx)).lane_completion.is_raised() => next,
-                        Err(_) => sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script(cx)),
-                    };
                 }
                 RETURNING_FIELD => match field_value_in_lane(cx, r, i) {
                     Some(value) => Some(value),
@@ -6791,9 +6385,7 @@ script_handler! {
 }
 
 script_handler! {
-    /// A miss of a single-entry returning read (`RETURNING_FIELD_OWN`, `_HOLDER`, `_INHERITED`, `_POLYMORPHIC`): the
-    /// general returning read, which keeps the record. No load installs those kinds now, so only a record that already
-    /// holds one reaches this miss.
+    /// A miss of a returning field read: the general returning read, which keeps the record.
     #[inline(never)]
     fn row_returning_field_miss<LEAF: u8>(cx, r, ip, i, view) {
         let _ = i;
@@ -7142,7 +6734,7 @@ const ENVIRONMENT_WINDOW_FIELD: u32 = (1 << ENVIRONMENT_WINDOW_SHIFT) - 1;
 /// The `arguments` count row the view gives its kept-arguments fact (`row_near`).
 const ARGUMENTS_COUNT: u16 = quench_runtime::staged::ARGUMENTS_COUNT_ROW;
 
-/// The jump rows the jump passes fuse and requicken to (`jump_row`).
+/// The jump rows the jump passes fuse to, and the loop admission edge rewrites to (`jump_row`).
 const JUMP: u16 = quench_runtime::staged::JUMP_ROW;
 
 /// The capture rows the capture passes fuse (`specialize_captures`, `specialize_capture_updates`,
@@ -7902,8 +7494,6 @@ use on_demand_metadata::lane_completes_return;
 
 #[cfg(test)]
 pub(crate) mod numeric_pair_tests;
-
-#[cfg(all(test, feature = "profile-field-primitives"))]
 
 #[cfg(test)]
 pub(crate) mod leaf_call_tests;

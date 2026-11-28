@@ -99,8 +99,6 @@ fn memoize_getter(vm: &mut Vm, site: u16, getter: Value, base: Value) {
 /// forward (getters-as-calls.md, trivial accessors), recognized from its body:
 /// - `return k` of a primitive constant that is no heap value (`constant_body_value`);
 /// - `return this` (`CallEntry::frameless(Frameless::ReadsThis)`) of a getter that binds `object` itself;
-/// - `return this.f` (`CallEntry::frameless(Frameless::Reads)`) whose returning `GetField` of `this` hits an own or
-///   holder entry: that entry, which proves the receiver's shape itself;
 /// - `return this.#f`: the private field's own slot its site recorded for `object`'s exact
 ///   shape under the getter's home (`Vm::site_private_field_entry`): the getter's identity
 ///   fixes its environment and so its home, and the shape fixes where the field is.
@@ -121,8 +119,10 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
         _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(AccessorForward::Receiver),
         // SAFETY: a `Reads` target of the running program holds its returning record first.
         _ if target.entry == CallEntry::frameless(Frameless::Reads) => match unsafe { LeafRead::of(target) }? {
-            LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
-                Some(AccessorForward::Field(vm.field_cache_entry(cache)))
+            LeafRead::Private { base, site, environment, .. } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
+                let answer = vm.site_private_field_entry(site, environment)?;
+                let receiver = vm.heap_reads().object(object)?;
+                (answer.receiver == receiver.exact_shape()).then_some(AccessorForward::Field(answer))
             }
             _ => None,
         },

@@ -10,6 +10,16 @@ pub fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, ba
     if let Some(word) = frame.hoisted(stage, lookup) { return Some(word); }
     if let Some(word) = frame.entry_field(stage, lookup) { return Some(word); }
     if base.0 == FieldBase::NESTED {
+        // A nested lookup whose two hops are proven fixed cells reads both from the base the frame names, no guard.
+        let fixed = frame.plans().field_plan(lookup).and_then(|plan| match plan {
+            FieldPlan::FixedChain { base, first, second } => Some((base, first, second)),
+            _ => None,
+        });
+        if let Some((base, first, second)) = fixed {
+            let object = base_word(stage, frame, base, miss)?;
+            let middle = super::read::fixed_read(stage, object, first, miss)?;
+            return super::read::fixed_read(stage, middle, second, miss);
+        }
         // A nested lookup's base is the site's, which the frame names; its links keep no proof.
         // Two own hops inline, each one exact-shape compare and one slot load, as the hand read.
         // The two hops written out, not looped, so each hop's guard folds to its own compare.
