@@ -35,7 +35,7 @@ impl Vm {
     }
 
     /// The innermost running native's callable.
-    pub(super) fn active_native_callable(&self) -> Option<Value> {
+    pub(crate) fn active_native_callable(&self) -> Option<Value> {
         self.realm.promise.active_native.last().map(|activation| activation.callable)
     }
 

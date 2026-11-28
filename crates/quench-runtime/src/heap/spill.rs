@@ -258,7 +258,8 @@ impl ClassSpace {
     /// slot into a new run; a run too short for the slot is replaced by a larger one, its words copied, and the old
     /// one freed. Returns whether a run was allocated, which moves the fields a holder reads by address (the holder edge).
     pub(super) fn put_word(&mut self, g: u32, from: Option<u32>, to: Option<u32>, slot: usize, value: Value) -> bool {
-        let Some(spill) = to else {
+        // A slot below the spill slot is inline, whether or not the cell spills.
+        let Some(spill) = to.filter(|&spill| slot >= spill as usize) else {
             self.set_word(g, None, slot, value);
             return false;
         };
