@@ -70,8 +70,15 @@ impl Heap {
     /// nothing, and its type is learned from the first real store. A seed joins like any observation:
     /// the stores into the slot still widen it.
     pub(crate) fn seed_declared_slot(&mut self, shape: u32, slot: usize, ty: crate::typed_ir::Type, initial: crate::Value) {
-        if !self.properties.tracks() || slot >= self.properties.shape_length(shape) { return; }
         if !crate::typed_ir::Type::immediate(initial).is_subtype(ty) { return; }
+        self.seed_slot_type(shape, slot, ty);
+    }
+
+    /// Joins `ty` into the observation of `slot` of `shape`: the one seeding routine. `seed_declared_slot` seeds a declared
+    /// type once its initial value satisfies it; a union field's domain (`AotFacts::slot_domain`) is seeded at the receiver
+    /// template's construction (`Vm::seed_union_domains`), where every store into the slot is already within it.
+    pub(crate) fn seed_slot_type(&mut self, shape: u32, slot: usize, ty: crate::typed_ir::Type) {
+        if !self.properties.tracks() || slot >= self.properties.shape_length(shape) { return; }
         self.properties.note_slot_type(shape, slot, ty);
         self.rewrite_widened_numbers();
     }
