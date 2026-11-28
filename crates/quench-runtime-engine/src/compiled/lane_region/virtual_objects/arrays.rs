@@ -206,12 +206,6 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// Whether an unwritten element of a frame array reads as `undefined`: no builtin prototype object has an index
-    /// property in the closed world the facts describe (`AotFacts::prototype_indices_empty`). Without facts, it is not known.
-    fn holes_read_undefined(&self) -> bool {
-        self.vm.facts.is_some_and(|facts| facts.function_facts(self.function_id).prototype_indices_empty())
-    }
-
     /// `arr[key]` of a kept array into `destination`: the element's value, typed by the join of the elements the
     /// access may name. A destination that is the array itself ends the array there. A constant index of an unwritten
     /// element (a hole) is read only where `holes_read_undefined`; elsewhere the array materializes at the read.
