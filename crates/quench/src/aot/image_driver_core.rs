@@ -44,6 +44,10 @@ fn apply_allocator_policy() {
 fn fresh_state() -> Result<Box<Rest>, String> {
     // SAFETY: the compiler emits the catalog, metadata and objects together.
     let program = unsafe { bind_entry() }?;
+    // The Intl and Temporal layer links only where the realm reaches it (`REACHES_INTL`).
+    if REACHES_INTL {
+        quench_runtime::install_intl();
+    }
     let mut runtime = Runtime::new_static_with_builtins(SystemHost, &BUILTINS, &EXECUTION);
     runtime.set_execution_mode(ExecutionMode::NativeOnly);
     runtime.set_memory_policy(MEMORY_POLICY);
