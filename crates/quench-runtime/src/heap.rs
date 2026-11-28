@@ -230,6 +230,7 @@ mod class_space;
 mod departure;
 mod spill;
 mod dictionary_cell;
+mod class_delete;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
 pub use object_view::{ObjectMut, ObjectRef};

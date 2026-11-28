@@ -331,6 +331,16 @@ impl ClassSpace {
         self.set_word(g, None, from as usize, Value::DELETED);
         true
     }
+
+    /// Folds the run of cell `g` under spill slot `from` back into the cell: the inverse of `put_word`'s first spill. The
+    /// run's first word is the field at `from`, and it moves to that inline slot; the run is freed. The caller passed a
+    /// shape whose fields fit the region, so every other run word is slack.
+    pub(super) fn fold_run(&mut self, g: u32, from: u32) {
+        let offset = self.spill_offset(g, from);
+        let first = self.spill.run(offset)[0];
+        self.spill.free_run(offset);
+        self.set_word(g, None, from as usize, first);
+    }
 }
 
 impl Heap {

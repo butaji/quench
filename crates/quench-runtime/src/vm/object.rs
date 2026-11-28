@@ -587,8 +587,8 @@ impl Vm {
         entry.facts.is_dictionary() || entry.facts.has_symbol_key()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
-        // A class cell stays one (departure-free S3), except for a delete, which departs it first (R4-C4, S4 owns it).
-        let cell = self.heap.live_class_cell(object).filter(|_| trigger != DictionaryTrigger::ClassDeparture);
+        // A class cell stays one (departure-free S3 and S4), whatever the trigger.
+        let cell = self.heap.live_class_cell(object);
         if cell.is_none() {
             self.heap.depart_class_object(object);
             self.drop_departed_holder_entries();

@@ -107,7 +107,7 @@ crate::snapshot::snap_struct!(RealmIntrinsics {
 });
 
 crate::snapshot::snapshot_enum!(dictionary_trigger: DictionaryTrigger {
-    PropertyCount, DeletionPattern, PrototypeUse, ModuleNamespace, ClassDeparture,
+    PropertyCount, DeletionPattern, PrototypeUse, ModuleNamespace,
 });
 
 impl Snap for DictionaryTrigger {
@@ -249,7 +249,6 @@ pub(super) fn shape_of_record(record: &[u8; SHAPE_RECORD]) -> SnapshotResult<Sha
                 1 => DictionaryTrigger::DeletionPattern,
                 2 => DictionaryTrigger::PrototypeUse,
                 3 => DictionaryTrigger::ModuleNamespace,
-                4 => DictionaryTrigger::ClassDeparture,
                 _ => return Err(SnapshotError("invalid snapshot dictionary trigger".into())),
             },
         },

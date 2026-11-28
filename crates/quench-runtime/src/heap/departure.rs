@@ -6,9 +6,9 @@
 //! are copied into an arena run for the record; the cell keeps its inline field words, which the sweep frees
 //! with the object, and its slack is `Value::DELETED`.
 //!
-//! Departure is the final form only for delete, extras and record-only views. A class whose shape outgrows its cell
-//! spills instead (`heap::spill`), and a dictionary-mode cell keeps its class and takes its fields in a table
-//! (`heap::dictionary_cell`), so a field store, add, initialization or dictionary transition never departs.
+//! Departure is the final form only for extras and record-only views. A class whose shape outgrows its cell spills
+//! instead (`heap::spill`), a dictionary-mode cell keeps its class and takes its fields in a table
+//! (`heap::dictionary_cell`), and a delete is a class transition (`heap::class_delete`), so none of those departs.
 //!
 //! A departed object takes its dictionary class from the VM (`Vm::mark_object_dictionary`), because a
 //! dictionary shape lives in the VM's shape table. The record's class is the cell's class until then.
