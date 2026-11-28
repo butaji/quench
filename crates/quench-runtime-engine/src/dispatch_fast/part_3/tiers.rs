@@ -123,67 +123,31 @@ pub(in super::super) fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, 
     None
 }
 
-/// The script targets the call record at `pc` of `view` linked (`call_link`), newest first:
-/// its latest and its history (`LaneStack::call_sites`), each where a plain call of it binds
-/// an ordinary `this` and activates in place: what a lane body inlines (`lane_unit::unit`).
-pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, pc: u32) -> Vec<crate::compiled::CallTarget> {
-    // SAFETY: the view holds a record per PC; reading its link changes nothing.
-    let Some(record) = view.records.get(pc as usize).map(|record| unsafe { &*record.get() }) else { return Vec::new() };
-    let history = vm.lane_stack.call_sites.borrow();
-    // The callees the site resolved, in the order first seen (`LaneStack::note_site_callee`).
-    let recorded = history.get(&std::ptr::from_ref(&record.call_link).addr());
-    // A collection since the site linked retires its entry; the callee's own entry of this
-    // generation, where a call resolved it again, is the same target. A linked entry another
-    // site's callee took since names no callee of this site.
-    let latest = vm.lane_stack.script_targets.entries.get(link_index(record.call_link.get())).and_then(|linked| {
-        if linked.admission.of_generation(vm.lane_stack.admission) {
-            Some(linked)
-        } else {
-            // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target.
-            vm.script_call_entry(linked.callee).map(|target| unsafe { &*target })
-        }
-    }).filter(|target| {
-        target.program() == vm.active_program
-            && target.entry.activates_registers_only()
-            && target.this_binding.binds_receiver()
-            && recorded.is_none_or(|recorded| recorded.iter().any(|site| site.identity() == Some(target.callee)))
+/// The bodies the call at `pc` of function `function` may call, as the closed world proves them
+/// (`FunctionFacts::proven_call_targets`), each bound as a plain function of the running program:
+/// what a lane body inlines (`lane_unit::unit`). Where no target is proven, the body's own inlined
+/// calls (`lane_unit::InlinedCall`) are the targets, else none: the general call.
+pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: u32) -> Vec<crate::compiled::CallTarget> {
+    let proven: Vec<crate::compiled::CallTarget> = vm.programs.aot_facts(vm.active_program).map_or_else(Vec::new, |facts| {
+        facts.function_facts(function).proven_call_targets(pc).into_iter()
+            .map(|body| crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Function, function: body })
+            .take(crate::compiled::tier_policy::POLYMORPHISM)
+            .collect()
     });
-    match latest {
-        Some(latest) => {
-            let latest = crate::compiled::CallTarget {
-                callee: crate::compiled::CalleeBinding::Identity(latest.callee), function: latest.function };
-            std::iter::once(latest)
-                .chain(recorded.into_iter().flatten().rev().copied().filter(|target| *target != latest))
-                .take(crate::compiled::tier_policy::POLYMORPHISM)
-                .collect()
-        }
-        // A site that runs only in its function's lane body,
-        // links nothing current: the callees it recorded, else the body's own inlined calls
-        // (`lane_unit::InlinedCall`), are its targets.
-        None => match recorded {
-            Some(recorded) => recorded.iter().rev().copied().collect(),
-            None => view.body_view_in_lane().map_or_else(Vec::new, |method| {
-                method.inlined.iter()
-                    .filter(|frame| frame.parent.is_none() && frame.call == pc)
-                    .map(|frame| frame.target)
-                    .collect()
-            }),
-        },
+    if !proven.is_empty() {
+        return proven;
     }
+    view.body_view_in_lane().map_or_else(Vec::new, |method| {
+        method.inlined.iter()
+            .filter(|frame| frame.parent.is_none() && frame.call == pc)
+            .map(|frame| frame.target)
+            .collect()
+    })
 }
 
 /// The dense capture slots of `callee`'s environment (`Vm::callee_capture_slots`).
 pub(in super::super) fn callee_captures_in_lane(cx: *mut LaneContext, callee: Value) -> (usize, usize) {
     unsafe { vm(cx) }.callee_capture_slots(callee)
-}
-
-/// Records the forwarded initializer the construction at `i` ran, which a body may call by
-/// its entry (`construct_callee_in_lane`).
-pub(in super::super) fn note_construct_site(vm: &Vm, i: &LaneInstruction, constructor: Value, forwarded: &ScriptCallTarget) {
-    vm.lane_stack.note_site_callee(&i.call_link, crate::compiled::CallTarget {
-        callee: crate::compiled::CalleeBinding::Forwarded { through: constructor, callee: forwarded.callee },
-        function: forwarded.function,
-    });
 }
 
 /// Whether a lane body's run may call bodies by their compiled entries: the lane may make

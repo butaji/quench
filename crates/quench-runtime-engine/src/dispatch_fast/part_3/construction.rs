@@ -99,7 +99,6 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
                 return Ok(KeepingConstruction::Finished(this));
             }
         }
-        note_construct_site(vm, i, callee, &forwarded);
         let forwarder = SkippedForwarder {
             function: target.function,
             callee,

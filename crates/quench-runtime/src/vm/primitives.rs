@@ -48,14 +48,6 @@ impl Vm {
         }
     }
 
-    /// `same_realm_user_target`, and whether its body is numeric (`DispatchClass::Numeric`).
-    #[inline(always)] pub fn same_realm_script_target(
-        &self,
-        callee: Value,
-    ) -> Option<(super::ProgramId, u32, Value, bool)> {
-        self.same_realm_user_target(callee).map(|(program, id, env)| (program, id, env, self.numeric_body(program, id)))
-    }
-
     /// Whether function `id` of `program` has a numeric body (`DispatchClass::Numeric`).
     #[inline(always)] pub fn numeric_body(&self, program: super::ProgramId, id: u32) -> bool {
         self.programs.residual(program).and_then(|code| code.function_get(id as usize).map(|body| body.dispatch))

@@ -10,12 +10,6 @@ pub(super) const fn leaf_binds_this(form: LeafForm) -> bool {
     quench_runtime::staged::call_leaf::binds_this(form)
 }
 
-/// The `LaneStack::noted` entry of a link address and callee function.
-#[inline(always)]
-pub(super) fn noted_slot(address: usize, function: u32) -> usize {
-    ((address >> 1) ^ (function as usize).wrapping_mul(0x9E37)) & (NOTED_SITE_CALLEES - 1)
-}
-
 /// The script target index a call link names, with or without `PLAIN_LINK`.
 #[inline(always)]
 pub(super) fn link_index(link: u16) -> usize { usize::from(link & !PLAIN_LINK) }

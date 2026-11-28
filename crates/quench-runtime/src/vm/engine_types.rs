@@ -49,19 +49,6 @@ use crate::compile::aot_facts::AotFacts;
 /// usual frame stack. The register storage grows only between activations,
 /// so register windows stay put while any exists.
 pub struct LaneStack {
-    /// Per call record (by its `call_link`'s address), the callees it resolved,
-    /// in the order first seen, up to `tier_policy::POLYMORPHISM` (`note_site_callee`): the targets a region
-    /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
-    /// callee since; this record alone names the site's own. A collection drops the callees it
-    /// swept (`forget_dead_callees`).
-    pub call_sites: std::cell::RefCell<rustc_hash::FxHashMap<usize, smallvec::SmallVec<[CallTarget; INLINE_SITE_TARGETS]>>>,
-    /// Pairs of a call record's link address and a callee its `call_sites` record holds, direct-mapped
-    /// (`noted_slot`): a polymorphic site's steady state re-notes the callees it alternates between, and
-    /// a hit here skips the map. Any callee leaving a record empties it.
-    pub noted: Box<[std::cell::Cell<Option<(usize, CallTarget)>>; NOTED_SITE_CALLEES]>,
-    /// `noted` for the script-target entries a link resolved (`Vm::note_linked_callee`): a link address and
-    /// the callee its record holds as `CalleeBinding::Identity`, by link address and entry index.
-    pub linked: Box<[std::cell::Cell<(usize, Value)>; NOTED_SITE_CALLEES]>,
     pub values: LaneValues,
     /// The activation records. Read and written only through `activations` and
     /// `activations_mut` (call protocol v2 stage C): a plain activation keeps its frame header
@@ -816,10 +803,6 @@ pub struct EnvironmentWindow {
 /// closure of the displaced function a full resolution.
 pub const FUNCTION_TARGETS: usize = 64;
 
-/// The callees a site's history holds unspilled: sites stay monomorphic (mandreel: 131K, none
-/// polymorphic), so one keeps an entry at 32 bytes instead of 112.
-pub const INLINE_SITE_TARGETS: usize = 1;
-
 #[repr(C)]
 pub struct InstanceContext {
     pub env: Value,
@@ -1037,9 +1020,6 @@ pub struct LoopSite {
     /// Whether an enclosing admitted loop still enters (`LoopSite::inside_admitted_loop`); false once none does.
     pub enclosed: std::cell::Cell<bool>,
 }
-
-/// `LaneStack::noted` entries.
-pub const NOTED_SITE_CALLEES: usize = 64;
 
 /// The activations below a callback a deferred native runs in the lane
 /// (`Vm::deferred_callback_in_lane`): they are the native's caller's, whose pending calls and
@@ -3494,9 +3474,6 @@ impl Default for LaneStack {
             native_table: ZeroedWords::new(LANE_STACK_ACTIVATIONS),
             callback_return: Box::new(CallbackTrampoline::new()),
             wasm_storage_bytes: 0,
-            call_sites: std::cell::RefCell::default(),
-            noted: Box::new([const { std::cell::Cell::new(None) }; NOTED_SITE_CALLEES]),
-            linked: Box::new([const { std::cell::Cell::new((0, Value::UNDEFINED)) }; NOTED_SITE_CALLEES]),
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
@@ -4139,15 +4116,12 @@ impl LaneStack {
         *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
     }
 
-    /// Drops the callees a collection swept from the sites' records before any allocation
-    /// reuses their records: a body inlining one would take another function for it.
+    /// Drops the handles a collection may have swept before any allocation reuses their records.
     #[inline]
-    pub fn forget_dead_callees(&mut self, live: impl Fn(Value) -> bool) {
+    pub fn forget_dead_callees(&mut self) {
         self.wasm_export = None;
         self.js_import = None;
         self.bound_call = None;
-        self.forget_noted();
-        self.call_sites.get_mut().retain(|_, targets| { targets.retain(|target| target.identity().is_none_or(&live)); !targets.is_empty() });
     }
 
     /// Retires everything this stack resolved before the collection that ended under `key`
@@ -4616,13 +4590,6 @@ impl LaneDependencies {
 }
 
 impl LaneStack {
-
-    #[inline]
-
-    pub fn forget_noted(&self) {
-        self.noted.iter().for_each(|noted| noted.set(None));
-        self.linked.iter().for_each(|linked| linked.set((0, Value::UNDEFINED)));
-    }
 
     #[inline(always)]
     pub fn set_condition(&mut self, bit: u64, holds: bool) {

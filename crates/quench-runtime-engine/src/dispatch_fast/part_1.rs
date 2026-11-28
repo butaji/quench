@@ -795,7 +795,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     let direct = |vm: &mut Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
-    let callees_compiling = starting && body_tier_in_lane::callees_compiling(vm, own, code.function_get(function as usize));
+    let callees_compiling = starting && body_tier_in_lane::callees_compiling(vm, own, function, code.function_get(function as usize));
     let pick = vm.lane_pick(code, function);
     match crate::compiled::admission::route_for_lane(crate::compiled::admission::LaneRouteFacts { ahead_image: false, pick, callees_compiling }) {
         // The interpreter's pick compiles nothing: the interpreter runs the function.

@@ -4,19 +4,6 @@
 use crate::ext_traits::*;
 use super::*;
 
-#[quench_macros::ext(DispatchFastOnDemandMetadataVm)]
-impl Vm {
-    /// `LaneStack::note_site_callee` while a lane body may read the history: only the
-    /// JavaScript tiers inline a site's callees (`site_targets_in_lane`), so interpreted
-    /// execution keeps no history, as V8's jitless mode allocates no feedback for an
-    /// optimizing compiler it never runs (mandreel: 12.5 MB of history at its peak).
-    pub(crate) fn note_site_callee(&self, link: &std::cell::Cell<u16>, target: crate::compiled::CallTarget) {
-        if quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), crate::compiled::admission::Tier::ANY) {
-            self.lane_stack.note_site_callee(link, target);
-        }
-    }
-}
-
 /// Whether the lane completes `call`, the general path's call of the innermost `frame`,
 /// itself: an async callee's promise settles on the general path
 /// (`PendingGeneralCall::completion`), and a caller the general path runs without a view

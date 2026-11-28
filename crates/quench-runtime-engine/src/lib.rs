@@ -124,7 +124,6 @@ pub(crate) mod engine_prelude {
     pub use crate::dispatch_fast::native_frames::DispatchFastNativeFramesVm;
     pub use crate::dispatch_fast::in_place_natives::DispatchFastInPlaceNativesVm;
     pub use crate::dispatch_fast::with_scopes::DispatchFastWithScopesVm;
-    pub use crate::dispatch_fast::on_demand_metadata::DispatchFastOnDemandMetadataVm;
     pub use crate::dispatch_fast::scoped_names::DispatchFastScopedNamesVm;
     pub use crate::dispatch_fast::lane_roots::DispatchFastLaneRootsVm;
     pub use crate::dispatch_fast::setters::DispatchFastSettersVm;
@@ -294,7 +293,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::mapped_windows::DispatchFastMappedWindowsVm as _;
     pub use crate::dispatch_fast::native_frames::DispatchFastNativeFramesVm as _;
     pub use crate::dispatch_fast::native_frames::LaneStackOps6 as _;
-    pub use crate::dispatch_fast::on_demand_metadata::DispatchFastOnDemandMetadataVm as _;
     pub use crate::dispatch_fast::proven_callees::DispatchFastProvenCalleesVm as _;
     pub use crate::dispatch_fast::proxy_traps::DispatchFastProxyTrapsVm as _;
     pub use crate::dispatch_fast::scoped_names::DispatchFastScopedNamesVm as _;
