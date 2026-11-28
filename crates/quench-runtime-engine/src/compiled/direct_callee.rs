@@ -190,8 +190,8 @@ pub(crate) unsafe fn rebind_region_call(cx: *mut quench_runtime::vm::engine_type
     // SAFETY: the region's code (and its `CallCode`) outlives its run, which named it.
     let Some(calls) = (unsafe { calls.as_ref() }) else { return };
     let site = ip.addr() as u64;
-    let Some(record) = calls.records.iter().find(|record| record.call == site && record.callee != 0) else { return };
-    if record.callee == target.callee.to_bits() || record.packed & u64::from(u32::MAX) != u64::from(target.function) { return; }
+    let Some((_, record)) = calls.records.iter().find(|(call, callee)| call.call == site && callee.callee != 0) else { return };
+    if record.callee == target.callee.to_bits() || record.function != u64::from(target.function) { return; }
     let mut rebound = calls.rebound.borrow_mut();
     if rebound.len() >= REGION_REBINDS { return; }
     // SAFETY: the context's decoded site is the call being made.
