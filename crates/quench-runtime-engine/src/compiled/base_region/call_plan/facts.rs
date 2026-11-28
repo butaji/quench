@@ -49,15 +49,15 @@ impl DirectFacts {
         // SAFETY: the caller's contract; the words are at the designed cell's offsets.
         let word = |offset: i32| unsafe { ((callee.cell + offset as usize) as *const u64).read() };
         Self {
-            callee: callee.callee.to_bits(),
+            callee: callee.closure.callee.to_bits(),
             cell: callee.cell,
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
             call: callee.call as u64,
             caller_base: callee.caller_base as u64,
             function: callee.target.function,
             captures: callee.capture_word(),
-            env: callee.target.context_words().0,
-            capture: callee.target.context_words().1,
+            env: callee.closure.context_words().0,
+            capture: callee.closure.context_words().1,
             global_this: callee.sloppy.map(|global| global.to_bits()),
             // A live callee is never an arrow: no direct row binds a lexical `this` (only an AOT image's proven row does).
             lexical: false,

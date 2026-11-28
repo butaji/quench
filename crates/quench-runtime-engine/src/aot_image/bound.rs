@@ -98,7 +98,7 @@ impl BoundCalls {
             let code: Rc<dyn RootedCode> = self.held.clone();
             vm.hold_folded_roots(&code);
         }
-        let identity = self.held.callees.borrow_mut().embed_heap_identity(direct.callee);
+        let identity = self.held.callees.borrow_mut().embed_heap_identity(direct.closure.callee);
         held.push(Box::new(direct));
         // The box's contents do not move when the vector grows, so the descriptor address stays valid.
         let direct: &DirectCallee = &**held.last()?;
@@ -106,7 +106,7 @@ impl BoundCalls {
         let callee = Box::new(UnsafeCell::new(CalleeRecord {
             callee: identity, cell: direct.cell as u64, captures: direct.capture_word(),
             global_this: direct.sloppy.map_or(0, quench_runtime::Value::to_bits), function: u64::from(direct.target.function),
-            descriptor, env: direct.target.context_words().0, capture: direct.target.context_words().1,
+            descriptor, env: direct.closure.context_words().0, capture: direct.closure.context_words().1,
             registers: u64::from(direct.registers), sloppy: u64::from(direct.sloppy.is_some()) }));
         let address = callee.get() as u64;
         self.held.records.borrow_mut().push(callee);

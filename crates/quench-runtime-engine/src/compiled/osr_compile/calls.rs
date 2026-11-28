@@ -88,6 +88,6 @@ impl CallCode {
     /// The callees its calls name by identity, which a collection that frees one retires it over
     /// while its code compiles.
     pub(crate) fn identities(&self) -> Box<[Value]> {
-        self.inlined.iter().filter_map(|call| call.target.identity()).chain(self.direct.iter().map(|callee| callee.callee)).collect()
+        self.inlined.iter().filter_map(|call| call.target.identity()).chain(self.direct.iter().map(|callee| callee.closure.callee)).collect()
     }
 }

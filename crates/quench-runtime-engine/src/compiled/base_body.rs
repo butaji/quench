@@ -183,7 +183,7 @@ impl Vm {
         let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
         // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
-        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.callee, callee.target.function);
+        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.closure.callee, callee.target.function);
         Callees::of(code, candidates, &inline_body, stable, natives, plans)
     }
 
@@ -206,7 +206,7 @@ impl Vm {
         let closed = callees.closed(code);
         // A body proves its realm at entry (`base_region::function::assemble`); its inlined callees are that
         // realm's (`inlinable_callee`), and so must its direct ones be for a realm switch to leave it standing.
-        let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.callee).is_some());
+        let realm_bound = callees.owned.iter().all(|callee| self.same_realm_user_target(callee.closure.callee).is_some());
         let Some(mut method) = LaneMethod::of_base_body(built, function, registers, callees.owned, (closed, realm_bound), invalidation) else { return LaneBodyOutcome::Declined };
         method.exits = ExitTable::of_code(code);
         bind_callees(&method.direct, caller);

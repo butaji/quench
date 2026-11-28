@@ -118,9 +118,9 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
     let atom = vm.intern_atom("fib");
     let callee = vm.own_property(vm.realm.globals, atom).unwrap();
     let target = vm.resolve_script_call_target(&program, callee).expect("fib is a lane call target");
-    let function = target.function;
+    let function = target.body.function;
     // SAFETY: a resolved target's view outlives its program.
-    let view = unsafe { &*target.view };
+    let view = unsafe { &*target.body.view };
     let mut direct = vec![DirectCandidates::new(); program.function(function as usize).code.len()];
     for pc in program.function(function as usize).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).map(|(pc, _)| pc) {
         let site = crate::dispatch_fast::direct_callee_in_lane(&vm, view, function, pc, 1, target).expect("fib calls itself directly");

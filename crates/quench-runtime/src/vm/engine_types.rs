@@ -42,6 +42,9 @@ use super::activation::FrameRecord;
 
 use crate::compile::aot_facts::AotFacts;
 
+mod script_call_target;
+pub use script_call_target::*;
+
 /// Activations a lane runs without VM frames, innermost last, over the
 /// bottom VM frame of the lane run. They exist only while the lane runs:
 /// every exit makes them VM frames with pending calls, exactly as frame
@@ -98,13 +101,13 @@ pub struct LaneStack {
     /// calls only activate (`Vm::resolve_script_call_target`): one per callee serves every
     /// other program, apart from the target its own program's calls use.
     pub cross_targets: ScriptTargets,
-    /// The last target resolved for a closure of each function (`FUNCTION_TARGETS`), under
-    /// its generation and program: every field but the closure's own (`callee`, `env`,
-    /// `capture`, an arrow's `lexical_this`) depends on the function alone.
-    pub function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
+    /// The body part of the last target resolved for a closure of each function
+    /// (`FUNCTION_TARGETS`), under its generation and program: a call of another closure of the
+    /// function rebuilds only the closure's operands (`Vm::closure_target`).
+    pub function_targets: Box<[FunctionTarget; FUNCTION_TARGETS]>,
     /// `function_targets` of other programs' callees (`cross_targets`), whose closures a
     /// program's code makes afresh as often as its own.
-    pub cross_function_targets: Box<[ScriptCallTarget; FUNCTION_TARGETS]>,
+    pub cross_function_targets: Box<[FunctionTarget; FUNCTION_TARGETS]>,
     /// Constructors' plans (`initialize_fields_in_lane`, `planned_receiver_in_lane`).
     pub construct_plans: Box<[ConstructPlan; CONSTRUCT_PLANS]>,
     /// Per plan, the one dependency its proof is (`watch_construct_plan`): published while
@@ -1069,56 +1072,6 @@ pub struct PlainFrames {
     pub bound: std::cell::Cell<usize>,
 }
 
-/// A user function a lane `Call` may activate without a frame, valid as the general loop's
-/// `InLoopCallTarget` is: for `callee` while the collection epoch and realm it was resolved
-/// under hold, which its `generation` names. A target serves calls from `program`, the
-/// callee's own, or, held apart (`LaneStack::cross_targets`), from any other program, whose
-/// calls it only activates, switching the lane to its program (`enter_program_in_lane`).
-#[derive(Clone, Copy)]
-pub struct ScriptCallTarget {
-    pub callee: Value,
-    /// The generation it was resolved in and the program it serves (`Admission`).
-    pub admission: Admission,
-    pub function: u32,
-    pub env: Value,
-    pub view: *const LaneView,
-    pub registers: u16,
-    /// The lane-stack room its plain activation reserves (`fill_room::<SCRIPT_FILL_BLOCK>` of
-    /// `registers`), derived once.
-    pub room: u16,
-    pub params: u16,
-    /// How a call binds its `this` (`ThisBinding`).
-    pub this_binding: ThisBinding,
-    /// The `this` a plain call (an `undefined` receiver) binds: an arrow's own
-    /// (`ThisBinding::Lexical`), found in its environment when it was resolved, the realm's
-    /// global object for a sloppy function, `undefined` for any other binding. A plain call
-    /// reads it in one load (`plain_call_activation`).
-    pub lexical_this: Value,
-    /// `TARGET_CONSTRUCTS` where `new` may activate it too (`Vm::inline_constructible`), and
-    /// `TARGET_INITIALIZES` where `new` may run its body as the stores alone
-    /// (`Function::only_initializes_this_fields`).
-    pub forms: u8,
-    /// The registers its plain activation starts `undefined` (`ResidualProgram::entry_fill`),
-    /// at most `u8::MAX`: past one `WINDOW_FILL_BLOCK` it starts every register so.
-    pub fill: u8,
-    /// How a plain call enters it.
-    pub entry: CallEntry,
-    /// The dense storage header its depth-0 captures read (`LaneContext::capture`), or null where the walk
-    /// does not end at a function environment or its storage is sparse. The storage of a live environment never
-    /// moves, and the generation retires the target at the next collection.
-    pub capture: *const usize,
-    /// Whether the target is a constructor body that forwards its construction to a method of
-    /// `this` under its call plan (`CallPlan::forwards_arguments`) and shape. Which method is
-    /// read from the function's record (`dispatch_fast::forwarded_method_of`), so a target
-    /// keeps its cache entry's size.
-    pub forwards_method: bool,
-}
-
-/// Where the call row's one guard (`staged::call::guard_bound_target`) reads a `ScriptCallTarget`: its
-/// callee word and its admission word, and the entry's size, for a tier that addresses the entries itself.
-pub const SCRIPT_TARGET_CALLEE_OFFSET: usize = core::mem::offset_of!(ScriptCallTarget, callee);
-pub const SCRIPT_TARGET_ADMISSION_OFFSET: usize = core::mem::offset_of!(ScriptCallTarget, admission);
-pub const SCRIPT_TARGET_BYTES: usize = core::mem::size_of::<ScriptCallTarget>();
 
 /// A lane run's generation (`LaneStack::generation`), narrow so a cache entry stays one
 /// line; its wrap clears every entry, so no stale one can match a reused number.
@@ -1393,7 +1346,11 @@ pub struct Case {
 /// and its specialized body. The caller's body owns it.
 #[derive(Clone)]
 pub struct DirectCallee {
-    pub target: ScriptCallTarget,
+    /// What the callee's body fixes about the call.
+    pub target: FunctionTarget,
+    /// The closure the descriptor was made for (its identity, environment and captures), which the
+    /// call guards; another closure of the function rebinds the call's run-time words (`bound`).
+    pub closure: ClosureOperands,
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
@@ -1406,7 +1363,6 @@ pub struct DirectCallee {
     /// The caller's base instruction pointer (its view's records), which the callee's header saves for the return.
     pub caller_base: usize,
     pub cell: usize,
-    pub callee: Value,
     pub registers: u16,
     /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
     /// binds a direct object itself (`receiver_this_in_lane`); `None` for a strict callee, which
@@ -3444,8 +3400,8 @@ impl Default for LaneStack {
             wasm_storage_bytes: 0,
             script_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
             cross_targets: ScriptTargets::with_len(SCRIPT_CALL_TARGETS_INITIAL),
-            function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
-            cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
+            function_targets: Box::new([EMPTY_FUNCTION_TARGET; FUNCTION_TARGETS]),
+            cross_function_targets: Box::new([EMPTY_FUNCTION_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
             setter_sites: Vec::new(),
@@ -3575,25 +3531,6 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     fixed: None,
     // The sentinel's callee is `undefined`, which no construction names, so its class is never read.
     class: 0,
-};
-
-pub const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
-    callee: Value::UNDEFINED,
-    // Never proved, so no proved call's compare can match it (`Admission::UNPROVEN`).
-    admission: Admission(Admission::new(NO_SCRIPT_GENERATION, ProgramId::MAIN).0 | Admission::UNPROVEN),
-    function: 0,
-    env: Value::UNDEFINED,
-    view: std::ptr::null(),
-    registers: 0,
-    room: 0,
-    params: 0,
-    this_binding: ThisBinding::Sloppy,
-    lexical_this: Value::UNDEFINED,
-    forms: 0,
-    fill: 0,
-    entry: CallEntry::framed(Framed::Activates),
-    capture: std::ptr::null(),
-    forwards_method: false,
 };
 
 pub const LANE_STACK_ACTIVATIONS: usize = 1 << 16;
@@ -3866,8 +3803,8 @@ impl CallCode {
         // A planned callee whose site has no record is named by constants (a Cranelift region's guard and capture
         // words), as is one an entry check holds: its death retires the code.
         // One whose code reads its closure from its bound words (`BoundClosure::read`) was unbound instead (`unbind_dead`).
-        let constant = self.direct.iter().filter(|callee| !live(callee.callee)).any(|callee| {
-            let word = callee.callee.to_bits();
+        let constant = self.direct.iter().filter(|callee| !live(callee.closure.callee)).any(|callee| {
+            let word = callee.closure.callee.to_bits();
             if self.held.contains(&word) { return true; }
             if callee.bound.read.get() { return false; }
             if !self.records.iter().any(|(record, _)| record.call == callee.call as u64) { return true; }
@@ -3875,7 +3812,7 @@ impl CallCode {
             false
         });
         if constant { return true; }
-        self.rebound.borrow().iter().filter(|callee| !live(callee.callee)).for_each(|callee| unbind(callee.callee.to_bits()));
+        self.rebound.borrow().iter().filter(|callee| !live(callee.closure.callee)).for_each(|callee| unbind(callee.closure.callee.to_bits()));
         false
     }
 }
@@ -4079,8 +4016,8 @@ impl LaneStack {
     pub fn clear_script_targets(&mut self) {
         self.script_targets.clear();
         self.cross_targets.clear();
-        *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
-        *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
+        *self.function_targets = [EMPTY_FUNCTION_TARGET; FUNCTION_TARGETS];
+        *self.cross_function_targets = [EMPTY_FUNCTION_TARGET; FUNCTION_TARGETS];
     }
 
     /// Drops the handles a collection may have swept before any allocation reuses their records.

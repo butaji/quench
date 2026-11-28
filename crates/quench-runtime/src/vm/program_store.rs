@@ -2688,7 +2688,7 @@ impl ProgramStore {
             // enters while the program lives (`PlannedTarget`).
             for slot in entry.planned_targets.borrow().values() {
                 let target = slot.target.get();
-                roots.extend([target.callee, target.env, target.lexical_this]);
+                roots.extend([target.closure.callee, target.closure.env, target.closure.lexical_this]);
             }
             roots.extend(entry.class_prototypes.borrow().values().copied());
             // A written closure cell is its body's one closure, which the body's calls enter while the program lives.

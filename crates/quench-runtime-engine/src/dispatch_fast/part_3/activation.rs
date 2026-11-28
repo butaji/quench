@@ -23,20 +23,20 @@ pub(in super::super) fn activate_gathering_in_lane(
     if (returns && !returning_call_admitted(cx)) || vm.with_scope_entered {
         return Err(exit(ip));
     }
-    let view = target.forms & TARGET_REST_VIEW != 0;
-    let room = usize::from(target.room) + if view { usize::from(argc) } else { 0 };
+    let view = target.body.forms & TARGET_REST_VIEW != 0;
+    let room = usize::from(target.body.room) + if view { usize::from(argc) } else { 0 };
     if !quench_runtime::staged::call_keeping::concrete_admits_keeping(
         vm.lane_stack.activation_count(), vm.lane_stack.activation_limit.get(), vm.lane_stack.values.room(), room,
     ) {
         return Err(script_call_frame_in_lane(ip, room));
     }
-    let fixed = target.params - 1;
+    let fixed = target.body.params - 1;
     if view {
         // A rest view keeps every value passed after its registers, as a keeping activation
         // does, and its rest register holds `undefined` (`LaneFrame::rest_view`).
         let callee_registers = fill_window_in_lane(vm, target, passed, argc.min(fixed));
         callee_registers.set(fixed, Value::UNDEFINED);
-        let count = usize::from(target.registers);
+        let count = usize::from(target.body.registers);
         // SAFETY: the room checked above holds the kept values past the window.
         unsafe {
             quench_runtime::staged::call_keeping::keep_passed(
@@ -45,7 +45,7 @@ pub(in super::super) fn activate_gathering_in_lane(
             );
             vm.lane_stack.values.set_top(callee_registers.0.add(count + usize::from(argc) + lane_values::CONTEXT));
         }
-        return Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc, this, false, Some(target.registers)));
+        return Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc, this, false, Some(target.body.registers)));
     }
     // The entry, which callers read in place, is copied before the rest array allocates.
     let target = &{ *target };
@@ -54,7 +54,7 @@ pub(in super::super) fn activate_gathering_in_lane(
     });
     let callee_registers = fill_window_in_lane(vm, target, passed, argc.min(fixed));
     callee_registers.set(fixed, rest);
-    Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc.min(target.params), this, false, None))
+    Ok(enter_window_in_lane::<false, false>(cx, r, ip, target, callee_registers, argc.min(target.body.params), this, false, None))
 }
 
 #[inline(always)]
@@ -90,7 +90,7 @@ pub(in super::super) fn script_target_in_in_lane(
     }
     let active = vm.active_program;
     *resolved = vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
-        .filter(|target| target.program() == active && admits_activation_in_lane(target));
+        .filter(|target| target.body.program() == active && admits_activation_in_lane(target));
     resolved.as_ref()
 }
 
@@ -167,10 +167,10 @@ pub(in super::super) fn activate_in_lane(
     // Values past the parameters stay observable (legacy `f.arguments`, a frame made of the
     // activation): the keeping activation holds them after the registers. A callee no legacy
     // reflection observes is passed its parameters alone, as its frame would keep them.
-    if argc > target.params && (!target.drops_extra_arguments() || target.forwards()) {
+    if argc > target.body.params && (!target.body.drops_extra_arguments() || target.body.forwards()) {
         // A call keeping every value it was passed, a rest body's array aside, takes the plain
         // push with the values after its registers.
-        if !constructs && target.entry != CallEntry::framed(Framed::Gathers) {
+        if !constructs && target.body.entry != CallEntry::framed(Framed::Gathers) {
             return activate_keeping_window_in_lane::<true>(cx, r, ip, target, arguments, this);
         }
         return activate_keeping_in_lane::<true>(
@@ -185,11 +185,11 @@ pub(in super::super) fn activate_in_lane(
         );
     }
     if !activation_room_in_lane(vm, target) {
-        return Err(script_call_frame_in_lane(ip, usize::from(target.room)));
+        return Err(script_call_frame_in_lane(ip, usize::from(target.body.room)));
     }
     // SAFETY: the call's window of `r` holds its `argc` values.
     let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
-    Ok(push_passed_in_lane::<true, false>(cx, r, ip, target, passed, argc.min(target.params), this, constructs))
+    Ok(push_passed_in_lane::<true, false>(cx, r, ip, target, passed, argc.min(target.body.params), this, constructs))
 }
 
 /// Whether the lane stack takes `target`'s activation: capacity, the guest-call budget and
@@ -197,13 +197,13 @@ pub(in super::super) fn activate_in_lane(
 #[inline(always)]
 pub(in super::super) fn activation_room_in_lane(vm: &Vm, target: &ScriptCallTarget) -> bool {
     vm.lane_stack.admits_activations(1)
-        && quench_runtime::staged::call::concrete_fits(vm.lane_stack.values.room() as u64, u64::from(target.room))
+        && quench_runtime::staged::call::concrete_fits(vm.lane_stack.values.room() as u64, u64::from(target.body.room))
 }
 
 /// Whether `target` takes `argc` arguments and the lane stack holds it: `staged::call::admit_room` run on words.
 #[inline(always)]
 pub(in super::super) fn admits_window_in_lane(vm: &Vm, target: &ScriptCallTarget, argc: u16) -> bool {
-    quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) && activation_room_in_lane(vm, target)
+    quench_runtime::staged::call::concrete_fits(u64::from(target.body.params), u64::from(argc)) && activation_room_in_lane(vm, target)
 }
 
 /// Whether the returning call at `ip` of `target`, passing `argc` arguments from the window `r`, reuses the running frame
@@ -221,12 +221,12 @@ pub(in super::super) fn tail_reuse_admitted_in_lane(cx: *mut LaneContext, r: Reg
     !constructs
         && !vm.with_scope_entered
         && unsafe { (*cx).leaf.call }.is_null()
-        && target.program() == unsafe { (*cx).program }
-        && argc <= target.params
+        && target.body.program() == unsafe { (*cx).program }
+        && argc <= target.body.params
         && argc <= FIXED_ARGUMENT_COPIES
-        && target.entry != CallEntry::framed(Framed::Gathers)
-        && !target.settles()
-        && code.function(target.function as usize).call_plan(code).tail_callee
+        && target.body.entry != CallEntry::framed(Framed::Gathers)
+        && !target.body.settles()
+        && code.function(target.body.function as usize).call_plan(code).tail_callee
         && code.function(running_function_in_lane(cx) as usize).tail_site_permitted(caller_pc)
         && vm.lane_stack.plain.registers.get() == r.0
         && vm.lane_stack.top_frame().and_then(|frame| frame.completion()) == Some(Completion::Plain)
@@ -247,26 +247,26 @@ pub(in super::super) fn reuse_frame_in_lane(cx: *mut LaneContext, r: Registers, 
     let running = vm.lane_stack.pop_activation().expect("a reused frame is the running plain frame");
     let record = quench_runtime::staged::call_keeping::KeepingRecord::of_kept(argc, None);
     let activation = Activation::of_parts(
-        target.function, running.call(), running.caller_base(), running.caller_registers, running.caller_program,
+        target.body.function, running.call(), running.caller_base(), running.caller_registers, running.caller_program,
         ActivationKind::Script(ScriptActivation {
-            callee: target.callee, argc: record.argc, completion: Completion::Plain, forwards: record.forwards,
+            callee: target.closure.callee, argc: record.argc, completion: Completion::Plain, forwards: record.forwards,
             kept: record.kept, environment: false, record: std::ptr::null_mut(),
         }),
     );
     // SAFETY: the pop freed the header's slot, so the push has its capacity; the header goes below `r`, over the popped one.
     unsafe { vm.lane_stack.push_activation(activation, r.0) };
-    let count = usize::from(target.registers);
+    let count = usize::from(target.body.registers);
     // SAFETY: the window `r` is the stack's, with room for the callee's registers and context (`activation_room_in_lane`);
     // its registers are written before the stack's top covers them.
     unsafe {
-        fill_admitted_window(r.0, usize::from(target.fill), count);
+        fill_admitted_window(r.0, usize::from(target.body.fill), count);
         copy_arguments(r.0, arguments.as_ptr(), argc);
         vm.lane_stack.values.set_top(r.0.add(count + lane_values::CONTEXT));
-        ((*cx).registers, (*cx).base) = (r, (*target.view).records());
+        ((*cx).registers, (*cx).base) = (r, (*target.body.view).records());
     }
     r.set_this(this);
-    r.set_env(target.env);
-    r.set_capture(target.capture);
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    (r, unsafe { (*target.view).start() })
+    r.set_env(target.closure.env);
+    r.set_capture(target.closure.capture);
+    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
+    (r, unsafe { (*target.body.view).start() })
 }

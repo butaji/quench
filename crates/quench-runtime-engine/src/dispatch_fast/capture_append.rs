@@ -41,9 +41,9 @@ pub(crate) unsafe fn run(
 /// The initialized mutable capture named by the recognized body's load/store pair.
 /// Its storage remains stable until guest code or collection runs.
 unsafe fn writable_binding(target: &ScriptCallTarget) -> Option<(*const usize, usize, Value)> {
-    let slots = capture_stores(target.capture)?;
+    let slots = capture_stores(target.closure.capture)?;
     // SAFETY: AppendsCapture preparation proves the load and its capture immediate.
-    let imm = unsafe { &*(*target.view).records().add(LOAD_CAPTURE_PC) }.imm();
+    let imm = unsafe { &*(*target.body.view).records().add(LOAD_CAPTURE_PC) }.imm();
     let slot = usize::from(ImmediateLayout::capture_slot(imm));
     // SAFETY: capture_stores admits direct writes; the shared read rejects TDZ/markers.
     let previous = unsafe { quench_runtime::tier_surface::EnvironmentSlots::read_storage(slots, u16::try_from(slot).ok()?) }?;
@@ -148,7 +148,7 @@ print(JSON.stringify(out));
             .script_targets
             .entries
             .iter()
-            .find(|target| target.entry == CallEntry::frameless(Frameless::AppendsCapture))
+            .find(|target| target.body.entry == CallEntry::frameless(Frameless::AppendsCapture))
             .copied()
             .expect("ordinary calls must resolve to the append operation")
     }
@@ -179,7 +179,7 @@ print(JSON.stringify(out));
             let (vm, lines) = printed(&program, false, compiled);
             assert_eq!(lines, ["xy".repeat(128)]);
             let target = append_target(&vm);
-            assert!(capture_stores(target.capture).is_some(), "the primitive calls must admit direct writes");
+            assert!(capture_stores(target.closure.capture).is_some(), "the primitive calls must admit direct writes");
         }
     }
 

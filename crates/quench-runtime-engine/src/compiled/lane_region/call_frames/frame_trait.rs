@@ -19,7 +19,7 @@ impl CallFrame<Emit<'_, '_>> for EmitFrame<'_> {
             DirectSite::Owned(owned) => {
                 // A callee register the state already holds as this very function (a Stable binding's
                 // read, or an identity an earlier guard proved) needs no check: the identity is folded.
-                let word = owned.callee.to_bits();
+                let word = owned.closure.callee.to_bits();
                 let proven = matches!(site.callee, quench_runtime::staged::forms::Callee::Register(register)
                     if self.state.values[usize::from(register)].value.ty.function_identity().map(|identity| identity.to_bits()) == Some(word));
                 let identity = if proven { Identity::Folded(word) } else { Identity::Guarded(word) };

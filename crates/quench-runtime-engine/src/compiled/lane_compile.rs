@@ -401,7 +401,7 @@ impl LanePlan {
     /// The callees its code names by identity: inlined frames' and direct calls'.
     fn callees(&self) -> Box<[Value]> {
         self.unit.frames.iter().filter_map(|frame| frame.target.identity())
-            .chain(self.direct.iter().map(|callee| callee.callee)).collect()
+            .chain(self.direct.iter().map(|callee| callee.closure.callee)).collect()
     }
 
     /// The facts its code relies on, its direct callees' included.

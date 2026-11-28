@@ -217,10 +217,10 @@ fn call_admitted(cx: *mut LaneContext, vm: &Vm, call: &BodyCall, _callee: Value)
 /// activation and then leave with it. `None` where the callee has a body, or no view.
 fn declined_callee_miss(cx: *mut LaneContext, target: &ScriptCallTarget) -> Option<u64> {
     // SAFETY: the program's views outlive the lane run.
-    let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
+    let own = unsafe { &*(*cx).views }.get(target.body.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)?;
     if !own.declined_in_lane() { return None; }
     // The demand a native caller makes of a declined callee, as `body_run_in_lane` makes it.
-    let rest_view = unsafe { &*(*cx).code }.function_get(target.function as usize).is_some_and(|function| function.rest_view());
+    let rest_view = unsafe { &*(*cx).code }.function_get(target.body.function as usize).is_some_and(|function| function.rest_view());
     if !rest_view && !calling_body_in_lane(cx) { own.note_native_caller(); }
     Some(miss(unsafe { vm(cx) }, Miss::CalleeDeclined))
 }
@@ -237,7 +237,7 @@ fn body_script_call(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     let vm = unsafe { vm(cx) };
     let Some(this) = direct_call_this_in_lane(vm, target, receiver) else { return miss(vm, Miss::Receiver) };
     // SAFETY: as `call_read_in_lane`.
-    if target.entry.answered_by_read() {
+    if target.body.entry.answered_by_read() {
         // SAFETY: as `call_read_in_lane`.
         if let Some(value) = unsafe { body_read_answer(cx, call, target, this) } {
             call.registers.set(call.site.result, value);
@@ -245,8 +245,8 @@ fn body_script_call(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         }
         // The read missed (a receiver its layout does not name): the body runs as the registers-only
         // activation such an entry makes then (`CallEntry::activates_registers_only`), not a leave.
-        let fixed = call.argc() <= target.params.min(FIXED_ARGUMENT_COPIES);
-        let how = quench_runtime::staged::call_body::concrete_activation(target.entry.activates_registers_only(), target.forwards(), fixed, false);
+        let fixed = call.argc() <= target.body.params.min(FIXED_ARGUMENT_COPIES);
+        let how = quench_runtime::staged::call_body::concrete_activation(target.body.entry.activates_registers_only(), target.body.forwards(), fixed, false);
         if !how.plain { return miss(vm, Miss::CallReadAnswer); }
         if !activation_room_in_lane(vm, target) { return miss(vm, Miss::NoActivationRoom); }
         if let Some(missed) = declined_callee_miss(cx, target) { return missed; }
@@ -369,8 +369,8 @@ fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value, cla
     let Some(target) = construct_target_in_lane(cx, vm, callee) else { return miss(vm, Miss::Callee) };
     // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
     // A forwarding constructor's receiver is no plan's: its construction takes the helper path.
-    if target.forwards() { return miss(vm, Miss::NoPlan); }
-    if !target.constructs() { return miss(vm, Miss::ConstructNotConstructor); }
+    if target.body.forwards() { return miss(vm, Miss::NoPlan); }
+    if !target.body.constructs() { return miss(vm, Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`script_construct_miss`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
     let how = match activation_form(&target, call.argc()) {
@@ -394,9 +394,9 @@ fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value, cla
 /// its fields: the allocation of `callee`'s prototype, or the finished receiver.
 fn construct_receiver(cx: *mut LaneContext, call: &BodyCall, callee: Value, class: u32, target: &ScriptCallTarget) -> Option<(Value, bool)> {
     let vm = unsafe { vm(cx) };
-    if target.initializes() {
+    if target.body.initializes() {
         // SAFETY: the context's program outlives the lane run.
-        initialize_fields_in_lane(vm, unsafe { &*(*cx).code }, callee, class, callee, target.function, call.argument())
+        initialize_fields_in_lane(vm, unsafe { &*(*cx).code }, callee, class, callee, target.body.function, call.argument())
     } else {
         vm.inline_construct_receiver(callee, class).map(|this| (this, false))
     }
@@ -411,7 +411,7 @@ fn construct_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value) ->
     vm.script_call_entry(callee).map(|entry| unsafe { *entry }).or_else(|| {
         // SAFETY: the context's program outlives the lane run.
         vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
-            .filter(|target| concrete_admits_target_program(target.program().raw(), vm.active_program.raw()))
+            .filter(|target| concrete_admits_target_program(target.body.program().raw(), vm.active_program.raw()))
     })
 }
 
@@ -428,7 +428,7 @@ fn body_call_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value, li
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
         let resolved = vm.resolve_script_call_target(code, callee)?;
-        if !concrete_admits_target_program(resolved.program().raw(), vm.active_program.raw()) { return None; }
+        if !concrete_admits_target_program(resolved.body.program().raw(), vm.active_program.raw()) { return None; }
         vm.linked_script_call_entry(callee, link)
     })
 }
@@ -443,15 +443,15 @@ fn body_call_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value, li
 /// is an environment is already routed away.
 #[inline]
 pub(crate) fn activation_form(target: &ScriptCallTarget, argc: u16) -> Option<CallActivation<bool>> {
-    let fixed = argc <= target.params.min(FIXED_ARGUMENT_COPIES);
-    let form = quench_runtime::staged::call_body::concrete_activation(target.entry.activates(), target.forwards(), fixed, target.entry == CallEntry::framed(Framed::Environment));
+    let fixed = argc <= target.body.params.min(FIXED_ARGUMENT_COPIES);
+    let form = quench_runtime::staged::call_body::concrete_activation(target.body.entry.activates(), target.body.forwards(), fixed, target.body.entry == CallEntry::framed(Framed::Environment));
     (form.plain || form.keeping || form.environment).then_some(form)
 }
 
 /// The `this` a callee's body is entered with: the deleted marker where it reads a lexical one.
 #[inline]
 pub(super) fn body_this_in_lane(target: &ScriptCallTarget, this: Value) -> Value {
-    Value::from_bits(quench_runtime::staged::call_body::concrete_body_this(this.to_bits(), target.this_binding == ThisBinding::Lexical))
+    Value::from_bits(quench_runtime::staged::call_body::concrete_body_this(this.to_bits(), target.body.this_binding == ThisBinding::Lexical))
 }
 
 /// The activation of `target` a lane body's call (`constructs`: `new`) makes, run by the target's
@@ -501,24 +501,24 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     let depth = vm.lane_stack.activation_count() - 1;
     let leave = move |resume: Ip, acc: Value| finish(cx, depth, resume, acc, constructs);
     // SAFETY: the program's views outlive the lane run.
-    let own = unsafe { &*(*cx).views }.get(target.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
+    let own = unsafe { &*(*cx).views }.get(target.body.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
     let Some(own) = own else {
-        if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_LEAVE callee={} why=no-view", target.function); }
+        if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_LEAVE callee={} why=no-view", target.body.function); }
         return leave(start, Value::UNDEFINED)
     };
-    if own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.function, &[]); }
+    if own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.body.function, &[]); }
     let Some(method) = own.body_view_in_lane().filter(|method| body_admits_in_lane(cx, method, NO_PENDING_ACTIVATIONS)) else {
         unsafe { (*cx).callee_warming = own.warming() };
         // Each call of it from native code leaves that code until it has a body (`note_native_caller`).
         // Not a rest view yet (TOD-2052): its body, entered from a region's call, spreads its kept rest values
         // with no frame of its own to read them from.
-        let rest_view = unsafe { &*(*cx).code }.function_get(target.function as usize).is_some_and(|function| function.rest_view());
+        let rest_view = unsafe { &*(*cx).code }.function_get(target.body.function as usize).is_some_and(|function| function.rest_view());
         // A caller with a body of its own planned this call already (`bind_callees`); a loop region did not.
         let caller_body = calling_body_in_lane(cx);
         if own.body_view_in_lane().is_none() && !rest_view && !caller_body { own.note_native_caller(); }
         if quench_runtime::trace::Channel::BodyLeave.on() {
             let why = if own.body_view_in_lane().is_some() { "not-admitted" } else if own.warming() { "warming" } else { "no-body" };
-            eprintln!("QUENCH_CALLEE_LEAVE callee={} why={why} tier={}", target.function, own.tier_note());
+            eprintln!("QUENCH_CALLEE_LEAVE callee={} why={why} tier={}", target.body.function, own.tier_note());
         }
         return leave(start, Value::UNDEFINED);
     };
@@ -536,7 +536,7 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         drop(method);
         return body_returned_in_lane(cx, call, Some(value), constructs);
     }
-    if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_EXIT callee={} exit={exit:?}", target.function); }
+    if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_EXIT callee={} exit={exit:?}", target.body.function); }
     let resumed = body_left_in_lane(cx, registers, own, &method, exit);
     drop(method);
     if !leave_counts_in_lane(cx, exit) { super::note_warming_leave_in_lane(cx, own); }

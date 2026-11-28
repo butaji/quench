@@ -144,7 +144,7 @@ impl Callees {
     /// The function each call site of `code` was recorded calling (`candidates`, by PC): its plan's first arm.
     pub(crate) fn recorded(code: &[WideInstruction], candidates: &[DirectCandidates], plans: &SitePlans) -> Vec<Option<quench_runtime::value::Value>> {
         code.iter().zip(candidates).zip(plans).map(|((instruction, site), plan)| {
-            arm_callees(*instruction, plan.as_ref(), site).first().map(|callee| callee.callee)
+            arm_callees(*instruction, plan.as_ref(), site).first().map(|callee| callee.closure.callee)
         }).collect()
     }
 
@@ -233,7 +233,7 @@ impl Callees {
         let at = self.at.get(shape.call_pc as usize)?.as_ref()?.start;
         let (callee, body) = (&self.owned[at], self.bodies[at].as_ref()?);
         let numbers = |index: usize| body.numbers.get(&index).copied().or_else(|| region.number_constant(index));
-        let inlinable = Callee { function: callee.target.function, identity: callee.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize].and_then(Held::global), captures: (callee.capture_values.addr(), callee.capture_len) };
+        let inlinable = Callee { function: callee.target.function, identity: callee.closure.callee, code: &body.code, registers: body.registers, homes: &body.homes, numbers: &numbers, live: &body.live, stable: self.stable[shape.call_pc as usize].and_then(Held::global), captures: (callee.capture_values.addr(), callee.capture_len) };
         let mut trial = context.clone();
         let site = InlineSite::plan(shape, targets[shape.call_pc as usize].first()?, &inlinable, &mut trial)
             .inspect_err(|why| super::note(|_, rejects| *rejects.entry(format!("inline refused: {why:?}")).or_default() += 1))

@@ -53,12 +53,12 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
     fn read_answer(&mut self, _: &mut Concrete, target: &ScriptCallTarget, base: Value) -> Option<Value> {
         let cx = self.cx;
         // SAFETY: a cached target of the running program.
-        if target.entry != CallEntry::frameless(Frameless::Reads) {
+        if target.body.entry != CallEntry::frameless(Frameless::Reads) {
             if let Some(value) = unsafe { constant_body_value(target) } {
                 // `return k`: no receiver to bind, nothing to read.
                 return Some(value);
             }
-            if !target.entry.answered_by_read() {
+            if !target.body.entry.answered_by_read() {
                 return None;
             }
         }
@@ -73,7 +73,7 @@ impl GetterAnswer<Concrete> for LaneGetterAnswer<'_> {
     #[inline(always)]
     fn memoize(&mut self, _: &mut Concrete, target: &ScriptCallTarget, getter: Value, base: Value) {
         let site = match self.memo {
-            _ if target.entry == CallEntry::frameless(Frameless::ReadsCapture) => return,
+            _ if target.body.entry == CallEntry::frameless(Frameless::ReadsCapture) => return,
             GetterMemo::Site(site) => site,
             GetterMemo::Read(i) if i.b != quench_runtime::bytecode::FieldBase::NESTED => i.c,
             _ => return,
@@ -115,10 +115,10 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
     if direct_call_this_in_lane(vm, target, object) != Some(object) {
         return None;
     }
-    match target.entry {
-        _ if target.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(AccessorForward::Receiver),
+    match target.body.entry {
+        _ if target.body.entry == CallEntry::frameless(Frameless::ReadsThis) => Some(AccessorForward::Receiver),
         // SAFETY: a `Reads` target of the running program holds its returning record first.
-        _ if target.entry == CallEntry::frameless(Frameless::Reads) => match unsafe { LeafRead::of(target) }? {
+        _ if target.body.entry == CallEntry::frameless(Frameless::Reads) => match unsafe { LeafRead::of(target) }? {
             LeafRead::Private { base, site, environment, .. } if base == quench_runtime::bytecode::FieldBase::THIS.0 => {
                 let answer = vm.site_private_field_entry(site, environment)?;
                 let receiver = vm.heap_reads().object(object)?;
@@ -138,12 +138,12 @@ unsafe fn getter_forward(vm: &Vm, target: &ScriptCallTarget, object: Value) -> O
 /// `target` is a cached target of the running program.
 #[inline(always)]
 unsafe fn constant_body_value(target: &ScriptCallTarget) -> Option<Value> {
-    if !target.entry.activates() {
+    if !target.body.entry.activates() {
         return None;
     }
     // SAFETY: the program store keeps a derived view alive with its program; its first
     // record is the body's first instruction.
-    let first = unsafe { &*(*target.view).records() };
+    let first = unsafe { &*(*target.body.view).records() };
     let constant = first.handler == return_row!(quench_runtime::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, NOT_LEAF)) as Handler as *const ()
         || first.handler == return_row!(quench_runtime::bytecode::RETURN_ROW, returning_code(CONSTANT_KIND, PLAIN_LEAF)) as Handler as *const ();
     constant.then(|| first.constant())
@@ -259,7 +259,7 @@ pub(crate) fn lane_getter_step(cx: *mut LaneContext, r: Registers, ip: Ip, i: &L
 /// receiver. `None`, which changes nothing, for a call that is not plain: the kept activation takes it.
 #[inline(always)]
 pub(crate) fn invoke_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, base: Value) -> Option<(Registers, Ip)> {
-    let function = u16::try_from(target.function).ok()?;
+    let function = u16::try_from(target.body.function).ok()?;
     let mut frame = super::lane_frame::getter_frame(cx, r, ip, target, base, getter_activation);
     // SAFETY: `ip` is the read record of the running view.
     let result = unsafe { (*ip).a };
@@ -279,8 +279,8 @@ unsafe fn getter_activation(context: *mut (), r: Registers, ip: Ip, _record: *co
     depth: usize, this: Value) -> Resumed {
     let cx = context.cast::<LaneContext>();
     let (vm, target) = unsafe { (vm(cx), &*target) };
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    if leaf_binds_this(target.entry.leaf_form())
+    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
+    if leaf_binds_this(target.body.entry.leaf_form())
         && let Some((registers, base)) = unsafe { leaf_getter(cx, r, ip, target, this) }
     {
         return Resumed::At(registers, base, Carried::script(cx));
@@ -305,11 +305,11 @@ unsafe fn getter_activation(context: *mut (), r: Registers, ip: Ip, _record: *co
 unsafe fn leaf_getter(cx: *mut LaneContext, r: Registers, ip: Ip, target: &ScriptCallTarget, this: Value) -> Option<(Registers, Ip)> {
     let vm = unsafe { vm(cx) };
     debug_assert!(unsafe { (*cx).leaf.call }.is_null(), "a getter's read materializes a running leaf first");
-    let form = target.entry.leaf_form();
+    let form = target.body.entry.leaf_form();
     // SAFETY: as `Vm::script_call_entry`; read in place before anything touches the cache, and
     // nothing in the leaf resolves a target or collects.
-    let entry = unsafe { &*vm.script_call_entry(target.callee)? };
-    if entry.entry != target.entry || entry.function != target.function || !std::ptr::eq(entry.view, target.view) {
+    let entry = unsafe { &*vm.script_call_entry(target.closure.callee)? };
+    if entry.body.entry != target.body.entry || entry.body.function != target.body.function || !std::ptr::eq(entry.body.view, target.body.view) {
         return None;
     }
     // SAFETY: as `lane_run_leaf`'s window: `plain_room` proved the admitted room, which the

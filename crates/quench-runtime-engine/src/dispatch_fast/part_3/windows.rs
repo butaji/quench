@@ -26,9 +26,9 @@ pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTL
     // The keeping row's record words (`staged::call_keeping::KeepingRecord`).
     let record = quench_runtime::staged::call_keeping::KeepingRecord::of_kept(argc, kept);
     let activation = Activation::of_parts(
-        target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
+        target.body.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
         ActivationKind::Script(ScriptActivation {
-            callee: target.callee,
+            callee: target.closure.callee,
             argc: record.argc,
             completion: Completion::of(constructs, cross, SETTLES),
             forwards: record.forwards,
@@ -40,21 +40,21 @@ pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTL
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation, callee_registers.0) };
     // SAFETY: the program store keeps a derived view alive with its program.
-    let base = unsafe { (*target.view).records() };
+    let base = unsafe { (*target.body.view).records() };
     unsafe {
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
-    callee_registers.set_env(target.env);
-    callee_registers.set_capture(target.capture);
+    callee_registers.set_env(target.closure.env);
+    callee_registers.set_capture(target.closure.capture);
     if cross {
-        enter_program_in_lane(cx, target.program());
+        enter_program_in_lane(cx, target.body.program());
     }
     // A proved plain call (`PLAIN_LINK`) skips this per-call count (`COUNTED`); under the tier's
     // diagnostics `enter_plain_window` counts it instead.
-    if COUNTED { vm.programs.record_js_jit_lane_entry(target.program(), target.function); }
+    if COUNTED { vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function); }
     // A construction runs its body from the first record; the tier enters plain calls.
-    let start = if constructs { base } else { unsafe { (*target.view).start() } };
+    let start = if constructs { base } else { unsafe { (*target.body.view).start() } };
     (callee_registers, start)
 }
 
@@ -62,7 +62,7 @@ pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTL
 #[cold]
 #[inline(never)]
 pub(in super::super) fn count_proved_entry_in_lane(vm: &mut Vm, target: &ScriptCallTarget) {
-    let (program, function) = (target.program(), target.function);
+    let (program, function) = (target.body.program(), target.body.function);
     vm.programs.record_js_jit_lane_entry(program, function);
 }
 
@@ -97,26 +97,26 @@ pub(in super::super) fn enter_plain_window(
     // without kept values) and completes `Completion::of(false, false, false)`, `Plain`.
     let header = PlainHeader::new(
         ip.expose_provenance() as u64, r.0.expose_provenance() as u64, caller_base.expose_provenance() as u64,
-        target.function, argc, 0, target.callee.to_bits(),
+        target.body.function, argc, 0, target.closure.callee.to_bits(),
     );
     push_plain_at(
         &mut quench_runtime::staged::Concrete::pure(),
         stack.plain_frames_word() as u64, callee_registers.0.expose_provenance() as u64, header, u64::from(program.raw()), depth as u64,
     );
     // SAFETY: the program store keeps a derived view alive with its program.
-    let base = unsafe { (*target.view).records() };
+    let base = unsafe { (*target.body.view).records() };
     unsafe {
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.expose_provenance() as u64,
-        this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
+        this.to_bits(), target.closure.env.to_bits(), target.closure.capture.expose_provenance() as u64,
     );
     // A proved call skips the tier entry count (`enter_window_of_in_lane`'s `COUNTED`) unless the
     // tier's diagnostics count entries: then this cold branch does, so they observe the same path.
     if crate::compiled::admission::diagnosing(vm) { count_proved_entry_in_lane(vm, target); }
-    (callee_registers, unsafe { (*target.view).start() })
+    (callee_registers, unsafe { (*target.body.view).start() })
 }
 
 /// The frameless target of another program's function `callee` a native calls from the
