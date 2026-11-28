@@ -60,6 +60,7 @@ use record::ElementStore;
 pub use class_layout::{FieldDefault, Storage, UnionField, UnionLayout};
 pub use frozen::RootStore;
 pub use function::FunctionFacts;
+pub use accessors::AccessorArms;
 pub use gate::World;
 pub use crate::typed_ir::BuiltinPath;
 pub use globals::GlobalShape;
@@ -183,6 +184,12 @@ pub struct AotFacts {
     uncached: std::collections::BTreeSet<u32>,
     /// The global object's own properties the closed world fixes (`globals::GlobalShape`); None unless it is closed.
     global_shape: Option<GlobalShape>,
+    /// The names top-level `let`, `const` and `class` declare in the closed world's scripts, sorted and deduped
+    /// (`globals::global_lexical_names`). Empty unless the program is closed.
+    global_lexical: Vec<u32>,
+    /// The functions whose names resolve statically (`Function::names_resolve_statically`), read by
+    /// `FunctionFacts::names_static`. A bytecode property, so it holds in every world.
+    names_static: std::collections::BTreeSet<u32>,
 }
 
 impl AotFacts {
@@ -226,6 +233,8 @@ impl AotFacts {
             global_object_identity: false,
             uncached: std::collections::BTreeSet::new(),
             global_shape: None,
+            global_lexical: Vec::new(),
+            names_static: std::collections::BTreeSet::new(),
         }
     }
 
@@ -305,6 +314,12 @@ impl AotFacts {
     /// may reach the global object by a name the analysis cannot follow.
     pub fn global_shape(&self) -> Option<&GlobalShape> {
         self.global_shape.as_ref()
+    }
+
+    /// The names top-level `let`, `const` and `class` declare in every script of the closed world, sorted and deduped
+    /// (`globals::global_lexical_names`). Empty in any world but `World::Closed`, since a later script may declare one.
+    pub fn global_lexical_names(&self) -> &[u32] {
+        &self.global_lexical
     }
 
     /// Whether no builtin prototype object (`Array.prototype`, `Object.prototype`) has an index property, of any kind, in the

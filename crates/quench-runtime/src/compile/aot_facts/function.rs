@@ -33,7 +33,8 @@ impl<'a> FunctionFacts<'a> {
     }
 
     /// The accessor the field access at `pc` runs, where the census proves one (`accessors::accessor_arms`).
-    pub(crate) fn accessor_arms(&self, pc: u32) -> Option<&'a accessors::AccessorArms> {
+    /// Read by the load-time choice of the accessor protocol rows (category F: sites 54, 59).
+    pub fn accessor_arms(&self, pc: u32) -> Option<&'a accessors::AccessorArms> {
         self.facts.accessor_arms.get(&(self.function, pc))
     }
 
@@ -53,6 +54,14 @@ impl<'a> FunctionFacts<'a> {
     /// where the settled types name one (`AotFacts::field_owners`): a guess, held under the layout's guard.
     pub fn field_owner(&self, pc: u32) -> Option<u32> {
         self.access_classes(pc).single().map(|(class, _)| class)
+    }
+
+    /// The kind of typed array the register `reg` holds just before `pc` is, where every array it holds is a typed array of
+    /// that one native kind (`typed_ir::View::One`, read through `View::kind`, the mapping `element_view` settles). None where
+    /// the solve did not settle, or the register holds no array of one kind. Read by the load-time choice of the length
+    /// rows (category D: sites 9, 10), where a typed array's `length` is its view's.
+    pub fn view_kind(&self, pc: u32, reg: u16) -> Option<crate::heap::TypedArrayKind> {
+        self.cell_at(pc, reg)?.elements.view.kind()
     }
 
     /// The kind of typed array the element access (a read or a store) at `pc` reads or stores, where its base holds typed
@@ -233,6 +242,13 @@ impl<'a> FunctionFacts<'a> {
     /// Whether the step at `pc` may resize an array of any element class (`may_resize_length` over every class).
     pub fn may_resize_any(&self, pc: u32) -> bool {
         self.facts.lengths.get(&self.function).is_none_or(|settled| settled.may_resize_any(pc))
+    }
+
+    /// Whether the names of this function resolve statically (`Function::names_resolve_statically`): every name the body
+    /// names is a lexical binding the compiler resolved, or a global one. Read by the load-time choice of the name sites
+    /// (category K: sites 25 to 33, 55), so a by-name read or store is no run-time resolution.
+    pub fn names_static(&self) -> bool {
+        self.facts.names_static.contains(&self.function)
     }
 
     /// Whether no index accessor can run for an element access of the program (`AotFacts::index_accessors_absent`).

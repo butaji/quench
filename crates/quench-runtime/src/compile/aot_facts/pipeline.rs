@@ -311,6 +311,11 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.cells = fact_cells;
         facts.global_shape = globals::GlobalShape::of(&settled_flows, world);
         facts.uncached = globals::uncached_atoms(program, world);
+        facts.global_lexical = globals::global_lexical_names(program, world);
+        // The static name scope of each function (`Function::names_resolve_statically`) is a bytecode property, read in every world.
+        facts.names_static = (0..program.function_count() as u32)
+            .filter(|&id| program.with_record(id as usize, |function| function.names_resolve_statically(program)))
+            .collect();
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
