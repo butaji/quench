@@ -168,7 +168,6 @@ pub(crate) mod wasm_growth;
 pub(crate) mod wasm_stage;
 pub(crate) mod wasm_instance_stage;
 pub(crate) mod instance_context;
-pub(crate) mod indirect_profile;
 pub use instance_context::{InstanceContext, InstanceRecord, NativeRoots};
 #[cfg(test)]
 pub(crate) mod wasm_global_tests;
@@ -1814,7 +1813,7 @@ impl AnalysisState {
 /// normal return.
 use quench_runtime::wasm::trap::COMPILED_TRAPS as TRAPS;
 
-use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, MAX_JIT_PROFILED_INDIRECT_TARGETS, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
+use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
 
 /// Linux process RSS and high-water mark, in KiB, for opt-in JIT diagnostics.
 #[cfg(target_os = "linux")]
@@ -2342,7 +2341,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
     table_slot: u64,
     index: u64,
     signature_index: u64,
-    site: u64,
+    _site: u64,
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
@@ -2400,13 +2399,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             let same_instance_function = same_program_function
                 .filter(|(_, _, target_env)| *target_env == context.env)
                 .map(|(_, function, _)| function);
-            if let Some(function) = same_instance_function
-                && !context.compiled.is_null()
-                && let Ok(site) = usize::try_from(site)
-            {
-                // SAFETY: the running artifact outlives its own call.
-                unsafe { &*context.compiled }.note_indirect_target(site, function);
-            }
             let direct_entry = same_instance_function.and_then(|function| {
                 let compiled =
                     compiled_reference_target(vm, program, function as usize, context.compiled)?;
@@ -2685,8 +2677,7 @@ fn direct_reference_entry(
 }
 
 /// Pick a compiled artifact for an indirect target, preferring the artifact
-/// that is already executing when it contains the target. This is the case
-/// after profile-guided selective promotion closes over a hot indirect callee.
+/// that is already executing when it contains the target.
 fn compiled_reference_target(
     vm: &Vm,
     program: ProgramId,
@@ -2696,37 +2687,20 @@ fn compiled_reference_target(
     let current_artifact = if caller.is_null() {
         None
     } else {
-        vm.programs
-            .compiled(program)
-            .flatten()
-            .filter(|compiled| std::ptr::eq(Rc::as_ptr(compiled), caller))
-            .filter(|compiled| compiled.has_function(function))
-            .or_else(|| {
-                u32::try_from(function).ok().and_then(|function| {
-                    vm.programs.wasm_tier_for_artifact_containing(
-                        program,
-                        function as usize,
-                        caller,
-                    )
-                })
-            })
-    };
-    current_artifact
-        .or_else(|| {
+        u32::try_from(function).ok().and_then(|function| {
             vm.programs
-                .compiled(program)
-                .flatten()
-                .filter(|compiled| compiled.has_function(function))
+                .wasm_tier_for_artifact_containing(program, function as usize, caller)
         })
-        .or_else(|| {
-            u32::try_from(function)
-                .ok()
-                .and_then(|function| vm.programs.wasm_tier_containing(program, function))
-        })
+    };
+    current_artifact.or_else(|| {
+        u32::try_from(function)
+            .ok()
+            .and_then(|function| vm.programs.wasm_tier_containing(program, function))
+    })
 }
 
 /// A Wasm program's compile (`compile_wasm_program`), the route `jit_routes` installs.
-pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, Option<usize>, admission::CompiledUnit) -> Option<CompiledProgram>;
+pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, usize, admission::CompiledUnit) -> Option<CompiledProgram>;
 pub(crate) use quench_runtime::vm::engine_types::CompiledProgram;
 
 use quench_runtime::vm::engine_types::WasmJitDiagnostics;
@@ -5083,14 +5057,6 @@ impl quench_runtime::dataflow::Dataflow for PlanFlow<'_, '_> {
             return out;
         }
         let instruction = self.instructions[block];
-        if let Some(callee) = Step::of(instruction.op(), instruction.imm())
-            .and_then(|step| step.callee(instruction))
-            && !self.callable.contains(callee)
-            && !self.analysis.experimental_root_compilation
-        {
-            self.fail(|| format!("uncompiled-callee:{callee}@{block}"));
-            return out;
-        }
         if let Some(catch) = self.catches[block] {
             match wasm_catch::raise_entry(catch, state, self.bound) {
                 Some(entered) => self.raised[block] = Some(entered),
@@ -5137,9 +5103,6 @@ struct Analysis<'a> {
     /// Whether imported calls may compile: a callee may grow memory, which
     /// moves an unguarded memory's bytes.
     callouts: bool,
-    /// `unreachable` is enabled only for a bounded, explicitly selected root
-    /// experiment until its compile-time memory cost is measured.
-    experimental_root_compilation: bool,
     /// Rejection reasons exist only for explicit diagnostic runs.
     compile_rejections: Option<&'a std::cell::RefCell<Vec<Option<String>>>>,
     /// Whether bodies unroll their innermost loops (`program_unrolls`), decided once the
@@ -5155,10 +5118,10 @@ struct Analysis<'a> {
 
 impl<'a> Analysis<'a> {
     /// The plan of program `program` (`code`) over the instance environment `env`: callouts compile, no
-    /// root experiment, no diagnostics, no unrolling, growth unknown, bindings read from `env`.
+    /// diagnostics, no unrolling, growth unknown, bindings read from `env`.
     fn new(vm: &'a Vm, program: ProgramId, code: &'a ResidualProgram, env: Value) -> Self {
         Self {
-            vm, program, code, env, callouts: true, experimental_root_compilation: false,
+            vm, program, code, env, callouts: true,
             compile_rejections: None, unrolls: false, grows_memory: quench_runtime::bitset::BitSet::default(), declared: None,
         }
     }
@@ -7504,19 +7467,6 @@ impl Vm {
         admission::specialize(admission::UnitRequest { kind: admission::UnitKind::WasmModule, facts }).compiled()
     }
 
-    /// Compile each Wasm module whole at its first entry (`Runtime::compile_wasm_eagerly`), as
-    /// `unit` (`UnitKind::WasmEager`) says.
-    pub(crate) fn compile_wasm_eagerly(&mut self, unit: admission::CompiledUnit) {
-        // An execution-only build (no `jit`) compiles no Wasm module at run time.
-        #[cfg(feature = "jit")]
-        {
-            let _ = unit;
-            self.programs.compile_wasm_modules_at_first_entry();
-        }
-        #[cfg(not(feature = "jit"))]
-        let _ = unit;
-    }
-
     pub(crate) fn native_execution_rejections(&self) -> u64 {
         self.native_execution_rejections
     }
@@ -7989,28 +7939,14 @@ impl Vm {
         Some((entry.return_pc, entry.return_register, value))
     }
 
-    /// Compile every function of `program` that has a compiled denotation,
-    /// with `env` as the instance whose bindings fix global types and memory.
-    fn compile_program(&self, program: ProgramId, env: Value, unit: admission::CompiledUnit) -> Option<CompiledProgram> {
-        self.compile_program_with_diagnostics(program, env, jit_diagnostics_enabled(), unit)
-    }
-
-    fn compile_program_with_diagnostics(
-        &self,
-        program: ProgramId,
-        env: Value,
-        diagnostics_enabled: bool,
-        unit: admission::CompiledUnit,
-    ) -> Option<CompiledProgram> {
-        self.compile_program_with_diagnostics_and_root(program, env, diagnostics_enabled, None, unit)
-    }
-
+    /// Compile function `root` of `program`, and the functions its static closure calls, with `env` as the instance
+    /// whose bindings fix global types and memory.
     fn compile_program_with_diagnostics_and_root(
         &self,
         program: ProgramId,
         env: Value,
         diagnostics_enabled: bool,
-        root: Option<usize>,
+        root: usize,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         // Without the JIT's routes (`jit_routes`) the program runs in the interpreter.
@@ -8023,7 +7959,7 @@ impl Vm {
         program: ProgramId,
         env: Value,
         diagnostics_enabled: bool,
-        root: Option<usize>,
+        root: usize,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         let _ = unit;
@@ -8031,110 +7967,51 @@ impl Vm {
         let compile_rejections =
             diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let count = code.functions.len();
-        let allowed = if let Some(root) = root {
-            let mut selected = vec![false; count];
-            let mut pending = vec![root];
-            while let Some(index) = pending.pop() {
-                let Some(selected_function) = selected.get_mut(index) else {
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
-                        );
-                    }
-                    return None;
-                };
-                if *selected_function {
-                    continue;
-                }
-                let function = code.function_get(index)?;
-                if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                            function.code.len()
-                        );
-                    }
-                    return None;
-                }
-                *selected_function = true;
-                for packed in &function.code {
-                    let instruction = function.widened(*packed);
-                    if let Some(callee) = Step::of(instruction.op(), instruction.imm())
-                        .and_then(|step| step.callee(instruction))
-                    {
-                        pending.push(callee);
-                    }
-                }
-            }
-            // A selective tier normally follows only statically known calls.
-            // Before this promotion, however, the eager artifact has already
-            // observed hot `call_indirect` targets. Add a bounded set of those
-            // callees from call sites inside this root's static closure; the
-            // generated call still keeps the dynamic resolver as its miss
-            // path.
-            if let Some(baseline) = self.programs.compiled(program).flatten() {
-                let profiled_targets =
-                    baseline.profiled_indirect_targets(self, program, env, &selected);
-                for target in profiled_targets {
-                    if target >= count || selected[target] {
-                        continue;
-                    }
-                    if diagnostics_enabled {
-                        eprintln!(
-                            "QUENCH_WASM_JIT_PROFILED_INDIRECT_TARGET root={root} function={target}"
-                        );
-                    }
-                    pending.push(target);
-                }
-                while let Some(index) = pending.pop() {
-                    let Some(selected_function) = selected.get_mut(index) else {
-                        if diagnostics_enabled {
-                            eprintln!(
-                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
-                            );
-                        }
-                        return None;
-                    };
-                    if *selected_function {
-                        continue;
-                    }
-                    let function = code.function_get(index)?;
-                    if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
-                        if diagnostics_enabled {
-                            eprintln!(
-                                "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
-                                function.code.len()
-                            );
-                        }
-                        return None;
-                    }
-                    *selected_function = true;
-                    for packed in &function.code {
-                        let instruction =
-                            function.widened(*packed);
-                        if let Some(callee) = Step::of(instruction.op(), instruction.imm())
-                            .and_then(|step| step.callee(instruction))
-                        {
-                            pending.push(callee);
-                        }
-                    }
-                }
-            }
-            let selected_count = selected.iter().filter(|selected| **selected).count();
-            if selected_count > MAX_JIT_ROOT_FUNCTIONS {
+        let mut selected = vec![false; count];
+        let mut pending = vec![root];
+        while let Some(index) = pending.pop() {
+            let Some(selected_function) = selected.get_mut(index) else {
                 if diagnostics_enabled {
                     eprintln!(
-                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} functions={selected_count} limit={MAX_JIT_ROOT_FUNCTIONS}"
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
+                    );
+                }
+                return None;
+            };
+            if *selected_function {
+                continue;
+            }
+            let function = code.function_get(index)?;
+            if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
+                if diagnostics_enabled {
+                    eprintln!(
+                        "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
+                        function.code.len()
                     );
                 }
                 return None;
             }
-            selected
-        } else {
-            vec![true; count]
-        };
+            *selected_function = true;
+            for packed in &function.code {
+                let instruction = function.widened(*packed);
+                if let Some(callee) = Step::of(instruction.op(), instruction.imm())
+                    .and_then(|step| step.callee(instruction))
+                {
+                    pending.push(callee);
+                }
+            }
+        }
+        let selected_count = selected.iter().filter(|selected| **selected).count();
+        if selected_count > MAX_JIT_ROOT_FUNCTIONS {
+            if diagnostics_enabled {
+                eprintln!(
+                    "QUENCH_WASM_JIT_ROOT_REJECTION root={root} functions={selected_count} limit={MAX_JIT_ROOT_FUNCTIONS}"
+                );
+            }
+            return None;
+        }
+        let allowed = selected;
         let mut analysis = Analysis {
-            experimental_root_compilation: root.is_some(),
             compile_rejections: compile_rejections.as_ref(),
             ..Analysis::new(self, program, &code, env)
         };
@@ -8175,7 +8052,7 @@ impl Vm {
         if plans.iter().all(Option::is_none) {
             return None;
         }
-        if root.is_some_and(|root| plans.get(root).is_none_or(Option::is_none)) {
+        if plans.get(root).is_none_or(Option::is_none) {
             return None;
         }
         let fixed_base = guarded
@@ -8197,7 +8074,6 @@ impl Vm {
         };
         let mut reference_site_ids = vec![Vec::new(); count];
         let mut reference_call_sites = Vec::new();
-        let mut reference_cache_sites = Vec::new();
         let mut reference_cache_count = 0usize;
         // One pass over each callable function's full plan finds what every body's compilation
         // reads first: its indirect reference sites.
@@ -8212,13 +8088,12 @@ impl Vm {
                 if Step::of(instruction.op(), instruction.imm()) != Some(Step::Call(WasmCall::Reference)) {
                     continue;
                 }
-                let Slot::IndirectReference { table, .. } = full_plan.operand(pc) else {
+                let Slot::IndirectReference { .. } = full_plan.operand(pc) else {
                     continue;
                 };
                 let site_id = reference_cache_count;
                 reference_cache_count += 1;
                 reference_site_ids[index].push((pc, site_id));
-                reference_cache_sites.push((index, pc, table));
                 if diagnostics_enabled {
                     reference_call_sites.push(ReferenceCallSiteDiagnostics {
                         function: index,
@@ -8339,9 +8214,7 @@ impl Vm {
                     continue;
                 };
                 let stitched_projected_len = projected_code_len(bytes.len(), stitched.len())?;
-                if let Some(root) = root
-                    && stitched_projected_len > MAX_JIT_ROOT_CODE_BYTES
-                {
+                if stitched_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                     if diagnostics_enabled {
                         eprintln!(
                             "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={stitched_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
@@ -8358,9 +8231,7 @@ impl Vm {
             }
             let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
-            if let Some(root) = root
-                && body_projected_len > MAX_JIT_ROOT_CODE_BYTES
-            {
+            if body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
@@ -8374,9 +8245,7 @@ impl Vm {
             spans.push((offset, body_len, index));
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
-            if let Some(root) = root
-                && entry_projected_len > MAX_JIT_ROOT_CODE_BYTES
-            {
+            if entry_projected_len > MAX_JIT_ROOT_CODE_BYTES {
                 if diagnostics_enabled {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
@@ -8474,26 +8343,11 @@ impl Vm {
             guarded,
             fixed_base,
             diagnostics,
-            indirect_hits: indirect_profile::SiteHits::new(reference_cache_count),
-            reference_cache_sites,
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn install_compiled_diagnostics_for_test(
-        &mut self,
-        program: ProgramId,
-        env: Value,
-    ) -> bool {
-        let Some(compiled) = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics(program, env, true, unit))
-            .map(Rc::new)
-        else {
-            return false;
-        };
-        self.programs.set_compiled(program, Some(compiled));
-        true
-    }
-
+    /// Installs the root tier of function `root` of `program` in instance `env` (`compile_wasm_root`), without the first
+    /// call's claim: a test of compiled code runs a function whose predicted tier leaves it interpreted otherwise.
     #[cfg(test)]
     pub(crate) fn install_compiled_root_for_test(
         &mut self,
@@ -8501,18 +8355,12 @@ impl Vm {
         env: Value,
         root: usize,
     ) -> bool {
-        let Some(compiled) = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, true, Some(root), unit))
-            .map(Rc::new)
-        else {
-            return false;
-        };
-        self.programs.set_compiled(program, Some(compiled));
-        true
+        self.compile_wasm_root(program, env, root as u32)
     }
 
     /// The native code a known call of function `id` from frame `caller` runs, offered as the
     /// general loop's native entry (`wasm_activation::enter_native`) asks: the code a tier holds,
-    /// after the tiers' entry counters and compiles this entry makes (`offer_compiled_in`).
+    /// after the compile this entry makes due (`offer_compiled_in`).
     /// `None` where no tier runs it: the interpreter takes the call.
     pub(crate) fn offer_compiled(&mut self, caller: usize, id: u32) -> Option<Rc<CompiledProgram>> {
         #[cfg(feature = "jit")]
@@ -8651,78 +8499,14 @@ impl Vm {
         self.run_offered_in(compiled, program, env, id, args)
     }
 
-    /// The tiers' answer to an entry of function `id` of `program` in instance `env`: the code
-    /// that runs it natively, after the entry's counters and the compiles it makes due (the
-    /// program's first decision, a selective module's whole compile, a hot root's tier). `None`
-    /// where no tier holds it, which is noted as the function's interpreter fallback.
+    /// The tiers' answer to an entry of function `id` of `program` in instance `env`: the root tier's code that runs
+    /// it natively, after the compile the entry makes due (`wasm_activation::offer_entry`). `None` where no tier holds
+    /// it, and the interpreter runs the call.
     #[inline(always)]
     fn offer_compiled_in(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
         if self.execution_mode != ExecutionMode::Compiled {
             return None;
         }
-        // The common entry: the program's whole compile holds the function, which no counter,
-        // escalation or tier changes (the decisions below all start from a missing artifact).
-        if let Some(Some(baseline)) = self.programs.compiled(program)
-            && baseline.has_function(id as usize)
-        {
-            return Some(baseline);
-        }
-        self.offer_compiled_cold(program, env, id)
-    }
-
-    /// `offer_compiled_in` of a function the program's whole compile does not hold.
-    #[cold]
-    #[inline(never)]
-    fn offer_compiled_cold(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
-        if !cfg!(feature = "jit") || self.execution_mode != ExecutionMode::Compiled {
-            return None;
-        }
-        let _decided = match self.programs.compiled(program) {
-            Some(compiled) => compiled,
-            None => {
-                if self
-                    .programs
-                    .residual(program)
-                    .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm)
-                {
-                    self.host.before_native_compilation();
-                }
-                if self
-                    .programs
-                    .residual(program)
-                    .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm)
-                    && self.programs.wasm_module_starts_interpreted(program)
-                {
-                    // A Wasm module starts in the interpreter and compiles whole once it runs
-                    // long (`WasmModuleTier`); a small one compiles whole below, at once.
-                    self.programs.set_compiled(program, None);
-                    None
-                } else {
-                    let diagnose = jit_diagnostics_enabled()
-                        && self
-                            .programs
-                            .get(program)
-                            .is_some_and(|code| code.kind == quench_runtime::bytecode::ProgramKind::Wasm);
-                    let compiled = self.wasm_module_unit(program).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
-                    if diagnose && compiled.is_none() {
-                        let total_functions = self
-                            .programs
-                            .get(program)
-                            .map_or(0, |code| code.functions.len());
-                        eprintln!(
-                            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compile_failed\":true,\"total_functions\":{}}}",
-                            program.raw(),
-                            total_functions,
-                        );
-                    }
-                    self.programs.set_compiled(program, compiled);
-                    self.programs.settle_wasm_module_tier(program);
-                    self.programs.compiled(program).flatten()
-                }
-            }
-        };
-        // The program's first entry decided its whole compile above; the entry's counters and the
-        // compiles they make due are the staged rule both interpreters run.
         let mut tiers = GeneralTiers { vm: self, program, env };
         match quench_runtime::staged::wasm_activation::offer_entry(&mut tiers, id) {
             quench_runtime::staged::wasm_activation::EntryOffer::Held(code) => Some(code),
@@ -8730,43 +8514,12 @@ impl Vm {
         }
     }
 
-    /// Makes the claimed whole compile of selective Wasm module `program` (`WasmModuleTier`).
-    fn escalate_wasm_module(&mut self, program: ProgramId, env: Value) {
-        // The module's code is about to run natively, so the interpreter's views of it go
-        // first, and the compile reuses their memory, unless a frame of it is on the stack,
-        // whose lane run may hold their records, or a lane activation deferred beside this
-        // call (`runs_beside_activations`), a frame not on it. An interpreted run derives
-        // them again.
-        if !self.deferred_activations_run(program) && !self.frames.iter().any(|frame| frame.program == program) {
-            self.programs.release_lane_views(program);
-            // Their records' addresses name private-name sites' entries (`PrivateSiteHomes`).
-            self.private_site_homes.clear();
-        }
-        let diagnose = jit_diagnostics_enabled();
-        let compiled = self.wasm_module_unit(program).and_then(|unit| self.compile_program(program, env, unit)).map(Rc::new);
-        if diagnose {
-            let bytecodes: usize = self.programs.residual(program).map_or(0, |code| {
-                (0..code.functions.len())
-                    .filter_map(|index| code.function_get(index))
-                    .map(|function| function.code.len())
-                    .sum()
-            });
-            eprintln!(
-                "QUENCH_WASM_JIT_STATS {{\"program\":{},\"module_escalated\":true,\"compiled\":{},\"bytecodes\":{}}}",
-                program.raw(),
-                compiled.is_some(),
-                bytecodes,
-            );
-        }
-        self.programs.set_compiled(program, compiled);
-    }
-
-    /// Makes the root compile of function `id` of Wasm module `program` and installs it; whether
-    /// the tier keeps it.
+    /// Makes the root compile of function `id` of Wasm program `program` and installs it; whether the tier keeps it.
     fn compile_wasm_root(&mut self, program: ProgramId, env: Value, id: u32) -> bool {
         #[cfg(feature = "jit")]
         {
-            let tier = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), Some(id as usize), unit)).map(Rc::new);
+            self.host.before_native_compilation();
+            let tier = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), id as usize, unit)).map(Rc::new);
             tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
         }
         #[cfg(not(feature = "jit"))]
@@ -8951,43 +8704,20 @@ struct GeneralTiers<'a> {
 impl quench_runtime::staged::wasm_activation::WasmEntryTiers for GeneralTiers<'_> {
     type Code = Rc<CompiledProgram>;
 
-    fn whole(&mut self, function: u32) -> Option<Rc<CompiledProgram>> {
-        self.vm.programs.compiled(self.program).flatten().filter(|compiled| compiled.has_function(function as usize))
-    }
-
-    fn note_module_work(&mut self) -> bool {
-        matches!(self.vm.programs.compiled(self.program), Some(None))
-            && self.vm.programs.note_wasm_module_entry(self.program)
-    }
-
-    fn compile_whole(&mut self) -> quench_runtime::staged::wasm_activation::Compile {
-        use quench_runtime::staged::wasm_activation::Compile;
-        if !self.vm.programs.claim_wasm_module_escalation(self.program) {
-            return Compile::Refused;
-        }
-        self.vm.escalate_wasm_module(self.program, self.env);
-        Compile::Made
-    }
-
     fn root(&mut self, function: u32) -> Option<Rc<CompiledProgram>> {
         self.vm.programs.wasm_tier_containing(self.program, function)
     }
 
-    fn root_admissible(&mut self, function: u32) -> bool {
-        self.vm.programs.wasm_root_admissible(self.program, function)
-    }
-
-    fn note_root_entry(&mut self, function: u32) -> bool {
-        self.vm.programs.note_wasm_root_entry(self.program, function, false)
+    fn root_due(&mut self, function: u32) -> bool {
+        self.vm.programs.wasm_root_due(self.program, function)
     }
 
     fn compile_root(&mut self, function: u32) -> quench_runtime::staged::wasm_activation::Compile {
         use quench_runtime::staged::wasm_activation::Compile;
+        if !self.vm.programs.claim_wasm_root(self.program, function) {
+            return Compile::Refused;
+        }
         if self.vm.compile_wasm_root(self.program, self.env, function) { Compile::Made } else { Compile::Refused }
-    }
-
-    fn note_fallback(&mut self, function: u32) {
-        self.vm.programs.has_compiled_function_or_note_fallback(self.program, function as usize);
     }
 }
 

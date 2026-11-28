@@ -190,23 +190,46 @@ fn calls(vm: &mut Vm, instance: &WasmInstance, indices: &[i32]) -> Vec<Result<i3
 fn vm_running(compiled: bool) -> Vm {
     let mut vm = Vm::new(crate::SystemHost);
     if compiled {
-        vm.programs.compile_wasm_modules_at_first_entry();
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
     }
     vm
 }
 
+/// Installs the compiled root of each function of `instance`'s module that has none yet. The
+/// argmin of `tier_policy::predicted_tier` decides first calls; these tests need the tier.
+fn install_roots(vm: &mut Vm, instance: &WasmInstance) {
+    let program = vm
+        .programs
+        .find_shared(&instance.module.program)
+        .expect("registered Wasm program");
+    let environment = vm.root_value(instance.environment).expect("instance environment");
+    for function in 0..instance.module.program.function_count() {
+        if vm.programs.wasm_tier(program, function as u32).is_none() {
+            assert!(vm.install_compiled_root_for_test(program, environment, function));
+        }
+    }
+}
+
+/// Instantiates `module`, with its roots compiled when `compiled` (the VM runs compiled code).
+fn instantiate_running(vm: &mut Vm, module: &crate::WasmModule, compiled: bool) -> WasmInstance {
+    let instance = vm.instantiate_wasm_module(module).unwrap();
+    if compiled {
+        install_roots(vm, &instance);
+    }
+    instance
+}
+
 /// How many times the VM entered function `index` of `module`'s compiled code.
 pub fn entries(vm: &Vm, module: &crate::WasmModule, index: usize) -> Option<u64> {
     let program = vm.programs.find_shared(&module.program)?;
-    vm.programs.compiled(program).flatten()?.native_entries(index)
+    vm.programs.wasm_tier(program, u32::try_from(index).ok()?)?.native_entries(index)
 }
 
 #[test]
 fn the_tier_calls_through_a_row_and_traps_in_the_rules_order() {
     let run = |compiled: bool| {
         let (mut vm, built) = (vm_running(compiled), module());
-        let instance = vm.instantiate_wasm_module(&built).unwrap();
+        let instance = instantiate_running(&mut vm, &built, compiled);
         let (table, other) = (
             vm.wasm_table(&instance, 0).unwrap(),
             vm.wasm_table(&instance, 1).unwrap(),
@@ -238,8 +261,8 @@ fn a_write_to_a_table_changes_the_target_of_the_next_call_in_the_tier() {
     let run = |compiled: bool| {
         let mut vm = vm_running(compiled);
         let (own, foreign) = (module(), module_returning(SEVEN + 2));
-        let instance = vm.instantiate_wasm_module(&own).unwrap();
-        let other = vm.instantiate_wasm_module(&foreign).unwrap();
+        let instance = instantiate_running(&mut vm, &own, compiled);
+        let other = instantiate_running(&mut vm, &foreign, compiled);
         let table = vm.wasm_table(&instance, 0).unwrap();
         let (same_module, same_type, other_type) = (
             vm.wasm_function(&instance, 0).unwrap(),
@@ -269,8 +292,8 @@ fn a_write_to_a_table_changes_the_target_of_the_next_call_in_the_tier() {
 fn another_instances_function_in_a_shared_table_is_called_natively_once_it_is_published() {
     let mut vm = vm_running(true);
     let (own, foreign) = (module(), module_returning(SEVEN + 2));
-    let instance = vm.instantiate_wasm_module(&own).unwrap();
-    let other = vm.instantiate_wasm_module(&foreign).unwrap();
+    let instance = instantiate_running(&mut vm, &own, true);
+    let other = instantiate_running(&mut vm, &foreign, true);
     // The VM enters the other instance once, which publishes its code in its record.
     assert_eq!(
         vm.invoke_wasm(&other, 0, &[]).unwrap(),
@@ -295,8 +318,8 @@ fn another_instances_function_in_a_shared_table_is_called_natively_once_it_is_pu
 fn a_row_names_the_record_its_function_keeps_alive() {
     let mut vm = vm_running(true);
     let (own, foreign) = (module(), module_returning(SEVEN + 2));
-    let instance = vm.instantiate_wasm_module(&own).unwrap();
-    let other = vm.instantiate_wasm_module(&foreign).unwrap();
+    let instance = instantiate_running(&mut vm, &own, true);
+    let other = instantiate_running(&mut vm, &foreign, true);
     let table = vm.wasm_table(&instance, 0).unwrap();
     let function = vm.wasm_function(&other, 0).unwrap();
     vm.wasm_table_fill(table, 0, function, 1).unwrap();
@@ -351,8 +374,8 @@ fn a_call_into_another_instance_sees_the_memory_it_grew() {
     for compiled in [false, true] {
         let mut vm = vm_running(compiled);
         let (own, foreign) = (module(), growing_module());
-        let instance = vm.instantiate_wasm_module(&own).unwrap();
-        let other = vm.instantiate_wasm_module(&foreign).unwrap();
+        let instance = instantiate_running(&mut vm, &own, compiled);
+        let other = instantiate_running(&mut vm, &foreign, compiled);
         // The VM enters the other instance once, which publishes its code and memory.
         assert_eq!(vm.invoke_wasm(&other, 1, &[]).unwrap(), Some(WasmValue::I32(1)));
         let table = vm.wasm_table(&instance, 0).unwrap();

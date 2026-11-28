@@ -80,8 +80,6 @@ pub(crate) enum UnitKind {
     Base,
     /// A Wasm function's specialization (its lowered body and entry): always cleared.
     Wasm,
-    /// A Wasm module compiled whole at its first entry, when the runtime's first-entry flag allows it.
-    WasmEager,
     /// A hot regexp program's native search (`regexp_native::start`): always cleared, since only a VM
     /// under a compiling mode counts its searches toward one (`regexp_native::enable`).
     Regexp,
@@ -117,8 +115,6 @@ pub(crate) struct UnitFacts {
     pub(crate) indexes_typed: bool,
     /// The Cranelift function tiers run in this VM (`tier_policy::tiers_run`), for `UnitKind::Entry`.
     pub(crate) cranelift_allowed: bool,
-    /// The runtime compiles Wasm modules whole at their first entry.
-    pub(crate) wasm_first_entry: bool,
     /// The program is a Wasm program (`ProgramKind::Wasm`), for `UnitKind::WasmModule`.
     pub(crate) wasm_program: bool,
     /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
@@ -142,7 +138,7 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Body => quench_runtime::vm::tier_policy::may_compile(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Ahead | UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
-        UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
+        UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
             unreachable!("facts decide these kinds, in `specialize`"),
     }
 }
@@ -220,7 +216,6 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
             if !facts.amortizes && !facts.called_by_bodies { return Decision::Short; }
             !facts.indexes_typed
         }
-        UnitKind::WasmEager => facts.wasm_first_entry,
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program,

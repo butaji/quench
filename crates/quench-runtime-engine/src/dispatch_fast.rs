@@ -7916,16 +7916,6 @@ impl Vm {
             .unwrap_or(std::ptr::null())
     }
 
-    /// Whether a lane run of `program` credits its functions' loop work: a Wasm program in
-    /// compiled execution without an eager artifact (selective tiering) promotes its functions
-    /// one by one, by calls and by loop work.
-    fn credits_backedges_in_lane(&self, code: &ResidualProgram, program: ProgramId) -> bool {
-        code.kind == quench_runtime::bytecode::ProgramKind::Wasm
-            && self.execution_mode == quench_runtime::vm::ExecutionMode::Compiled
-            && matches!(self.programs.compiled(program), Some(None))
-            && self.programs.wasm_module_selective(program)
-    }
-
     /// Whether the instruction at `pc` of `view` runs in the lane.
     #[inline(always)]
     pub(crate) fn runs_in_lane(view: *const LaneView, pc: usize) -> bool {
@@ -7969,7 +7959,7 @@ impl Vm {
         let view = unsafe { &*view };
         let base = view.records();
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
-        let entered = self.enter_lane_floor(code, program);
+        let entered = self.enter_lane_floor();
         let start = LaneStart {
             code,
             program,
@@ -8006,14 +7996,11 @@ impl Vm {
         unsafe { pc_in_view(context.base, ip) }
     }
 
-    /// Raises the stack floor for a lane run of `program`: below the native stack's slack, or
-    /// at once where a collection is due or the run credits loop work, so its backward jumps
-    /// count in `safepoint_at` (`LaneContext::backedges_left`). The floor lives in the VM's
-    /// interrupt state, where a termination request raises it; entry sets it before reading
-    /// the request, the request raises it after setting itself, so one of the two sees the
-    /// other.
-    pub(crate) fn enter_lane_floor(&mut self, code: &ResidualProgram, program: ProgramId) -> LaneFloor {
-        let floor = if self.collection_due() || self.credits_backedges_in_lane(code, program) {
+    /// Raises the stack floor for a lane run: below the native stack's slack, or at once where a collection is
+    /// due. The floor lives in the VM's interrupt state, where a termination request raises it; entry sets it before
+    /// reading the request, the request raises it after setting itself, so one of the two sees the other.
+    pub(crate) fn enter_lane_floor(&mut self) -> LaneFloor {
+        let floor = if self.collection_due() {
             COLLECTION_DUE_FLOOR
         } else {
             stack_pointer().saturating_sub(LANE_STACK_SLACK)
