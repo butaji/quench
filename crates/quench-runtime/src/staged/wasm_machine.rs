@@ -27,6 +27,7 @@ pub(crate) struct ConcreteBytes<'a> {
 }
 
 /// A stage over a linear memory's bytes, which it reads and writes.
+#[quench_macros::test_visible]
 pub(crate) struct ConcreteMemory<'a> {
     pub(crate) memory: &'a mut [u8],
 }

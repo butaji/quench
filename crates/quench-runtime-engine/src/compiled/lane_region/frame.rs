@@ -78,8 +78,6 @@ pub(crate) struct EmitFrame<'a> {
     /// Whether the call `call_entry` last planned passes arguments proved to have its callee's proven entry's
     /// parameter types (`call_frames::EmitFrame::arguments_proven`), which `call_enter` reads.
     pub(crate) proven_arguments: std::cell::Cell<bool>,
-    /// Whether that call reads its closure and captures from the callee's bound words (`DirectCallee::bound`).
-    pub(crate) rebinds: std::cell::Cell<bool>,
     /// What a capture access reaches, where the lowering made it (`captures`).
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).

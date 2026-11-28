@@ -114,7 +114,7 @@ impl LaneMethod {
     /// (the globals that hold the callees it inlines, the atoms its stores hold unnamed by method
     /// caches and the values its folded reads hold of prototypes), whose change retires it and
     /// sets `invalidation`: the word its rows read, whose address its code names.
-    fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectCallee]>, (closed, realm_bound): (bool, bool), invalidation: Invalidation) -> Option<Self> {
+    fn of_base_body(body: Body, function: u32, registers: u16, direct: Box<[DirectArm]>, (closed, realm_bound): (bool, bool), invalidation: Invalidation) -> Option<Self> {
         // Each inlined callee's registers are the frame slots from the caller's end (`Frame::base`).
         let scratch_width = window_width(&body.frames, registers);
         let memory = super::code_heap::publishing("b-jit-body", function as usize, || CodeMemory::new(&body.code))?;
@@ -127,7 +127,7 @@ impl LaneMethod {
         let rows = super::base_region::row_entries(memory.pointer().addr(), body.number_guards, body.uses_this);
         Some(Self {
             dependencies: super::lane_compile::LaneDependencies::of(std::iter::empty(), &direct), stable: StableFacts { globals: body.stable, holders: body.holders, chains: body.chains, atoms: body.atoms, layouts: body.layouts, slots: body.slot_types, ..Default::default() }, invalidation, _code: Some(memory), entry,
-            recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.as_ref().is_some_and(|body| body.fault_poll)),
+            recovery_space: crate::dispatch_fast::LaneRecoverySpace::inlined(&body.frames).reaching(body.scratch), fault_poll: direct.iter().any(|callee| callee.body.body.as_ref().is_some_and(|body| body.fault_poll)),
             names_shapes: body.names_shapes || !direct.is_empty(), exits: ExitTable::default(), scratch_width, framed: true,
             caller_registers: registers, frame_reach: body.scratch,
             direct, proven_calls: false, closed, _records: body.records, constructors: Box::default(), inlined: body.frames, scalar: None, rows, realm_bound, proven: None, summary: None, withdrawn: Default::default(),
@@ -184,7 +184,7 @@ impl Vm {
         let natives = self.native_callees(program, function, code);
         // An arrow inlines as any callee does, unless it reads `this`: its lexical `this` is no receiver a site binds
         // (`inline::Refused::Receiver`), and a leave inside it makes its activation with its lexical `this` (`call_this_in_lane`).
-        let inline_body = |callee: &DirectCallee| self.inlinable_callee(program, callee.closure.callee, callee.target.function);
+        let inline_body = |callee: &DirectArm| self.inlinable_callee(program, callee.closure.callee, callee.body.target.function);
         Callees::of(code, candidates, &inline_body, stable, natives, plans)
     }
 
@@ -296,7 +296,7 @@ impl Vm {
             .map(|aot| { let facts = aot.function_facts(function); (region.header..=region.backedge).map(|pc| facts.element_view(pc)).collect() })
             .unwrap_or_default();
         let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), seen: &seen, facts: facts.as_deref(), typed: &typed };
-        // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
+        // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectArm`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)
     }

@@ -1239,43 +1239,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn conditional_local_field_copy_keeps_valid_native_metadata() {
-        let cases = [
-            ("value", "const factory = () => ({model:42}); function Copy() { const result = factory(); if (result === null) {} this.model = result.model; } if (new Copy().model !== 42) throw Error('field copy failed');"),
-            ("effects", r#"
-                const events = [], poison = {};
-                let fail = false;
-                const factory = () => ({get model() { events.push('get'); if (fail) throw poison; return 42; }});
-                function Copy() { const result = factory(); if (result === null) {} this.model = result.model; }
-                Object.defineProperty(Copy.prototype, 'model', {set(value) { events.push('set:' + value); }});
-                new Copy(); fail = true;
-                try { new Copy(); throw Error('missing getter error'); } catch (error) { if (error !== poison) throw error; }
-                if (events.join('|') !== 'get|set:42|get') throw Error('field copy reordered effects');
-            "#),
-        ];
-        for (name, source) in cases {
-            let program = crate::Engine::specialize(source, "local-field-copy.js").unwrap();
-            assert!(program.validate().is_ok(), "{:?}", program.field_sites);
-            let path = std::env::temp_dir().join(format!("quench-local-field-copy-{}-{name}", std::process::id()));
-            program.write_binary(&path).unwrap();
-            let program = crate::ResidualProgram::read_binary(&path).unwrap();
-            std::fs::remove_file(path).unwrap();
-            for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
-                let mut runtime = crate::Runtime::new(crate::SystemHost);
-                runtime.set_execution_mode(mode);
-                runtime.execute(&program).unwrap();
-            }
-            {
-                let native = crate::NativeJsProgram::publish(program).unwrap();
-                let mut runtime = crate::Runtime::new(crate::SystemHost);
-                runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
-                runtime.execute_native(&native).unwrap();
-                assert_eq!(runtime.native_execution_rejections(), 0);
-            }
-        }
-    }
-
-    #[test]
     fn local_field_keeps_the_pair_for_a_local_past_the_packed_field() {
         // Each captured binding and its function take a local, so the bindings declared after
         // them lie past what a packed field base holds; a field read of one (`hasOwn.call`)

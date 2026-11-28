@@ -15,7 +15,6 @@ pub(crate) struct WasmOptimizing<'s, 'a> {
     pub(crate) isa: &'s dyn cranelift_codegen::isa::TargetIsa,
     pub(crate) guarded: bool,
     pub(crate) fixed_base: Option<i32>,
-    pub(crate) diagnostics_enabled: bool,
 }
 
 /// One Wasm function of one program, to be specialized for `tier`.
@@ -44,7 +43,7 @@ impl Specializer for WasmSpecializer<'_, '_> {
     fn specialize(self, _program: &ResidualProgram) -> Result<Self::Residual, String> {
         let Self { index, plans, full_plan, reference_site_ids, tier, admitted } = self;
         let _ = admitted;
-        let WasmOptimizing { analysis, isa, guarded, fixed_base, diagnostics_enabled } = tier;
+        let WasmOptimizing { analysis, isa, guarded, fixed_base } = tier;
         // The body, then the entry, in the order the u-jit driver always built them.
         let body = analysis.build_function(
             isa,
@@ -54,7 +53,6 @@ impl Specializer for WasmSpecializer<'_, '_> {
             guarded,
             fixed_base,
             reference_site_ids,
-            diagnostics_enabled,
         );
         let plan = plans
             .get(index)

@@ -87,7 +87,7 @@ pub struct LaneStack {
     pub body_top: Box<std::cell::Cell<usize>>,
     /// The running body (`LaneMethod`) of each native header, by its total frame index (`body_table`).
     pub body_table: ZeroedWords,
-    /// The descriptor (`DirectCallee`) of each native header, by its total frame index (`native_table`).
+    /// The descriptor (`DirectBody`) of each native header, by its total frame index (`native_table`).
     pub native_table: ZeroedWords,
     /// The return trampoline of the native callbacks pushed as plain activations
     /// (`CallbackTrampoline`), at an address their headers name.
@@ -306,8 +306,6 @@ pub struct LaneView {
     /// (`NO_ACCUMULATOR` where it reads none): a lane body that leaves at it resumes
     /// with that register carried, as falling through from its producer would.
     pub accumulator_registers: Box<[u16]>,
-    pub plain_backward_jump_sites: usize,
-    pub osr_rejections: Option<Box<[(RegionRejection, usize)]>>,
     /// The `GetField`, `SetField` and `LoadCapture` records past its sites' loop headers, whose own-field hints a shape compaction clears.
     pub field_records: Box<[u32]>,
     /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
@@ -424,7 +422,6 @@ pub struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     pub fixed_base: Option<i32>,
-    pub diagnostics: Option<WasmJitDiagnostics>,
 }
 
 /// Publication owns future entry; active runs and direct callers own code leases.
@@ -659,7 +656,7 @@ pub struct EntryCell {
     /// and the body it belongs to is the one the call pinned (`proven_body`). Zero where the body has none or retired.
     pub proven_entry: std::cell::Cell<usize>,
     /// The address of the body `proven_entry` belongs to (`Rc::as_ptr`), so a call takes it only for the body whose
-    /// parameter types its caller proved (`DirectCallee::body`).
+    /// parameter types its caller proved (`DirectBody::body`).
     pub proven_body: std::cell::Cell<usize>,
     /// The address of the entry stub the engine built for unpublished cells (a body-convention function that enters
     /// nothing): `entry` takes it wherever no body is published, and `unpublish` restores it. Stored once per cell at
@@ -740,7 +737,7 @@ pub struct ActivationShape {
 pub type BodyEntry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64) -> BodyReturn;
 
 /// The ABI prefix of a call context, with the runtime's own field types (`staged::record_heads`).
-pub type CallContextFields = CallContextHead<Value, CompiledProgram, crate::heap::TableWords, ReferenceCallSiteDiagnostics, ProgramId, Option<Raised>>;
+pub type CallContextFields = CallContextHead<Value, CompiledProgram, crate::heap::TableWords, ProgramId, Option<Raised>>;
 
 /// The return trampoline of the native callbacks pushed as plain activations
 /// (`LaneStack::push_callback_header`), as JSC and V8 return into native code through a return
@@ -826,11 +823,6 @@ pub struct InstanceContext {
     pub memory_length: u64,
     pub guard_start: usize,
     pub guard_end: usize,
-    pub call_reference_diagnostic: usize,
-    pub reference_call_sites: *const ReferenceCallSiteDiagnostics,
-    pub reference_call_site_count: usize,
-    pub import_callout_counts: *const std::cell::Cell<u64>,
-    pub import_callout_count: usize,
     /// The base of the memory, which a callee that takes one is passed.
     pub memory_base: u64,
     /// The memory arguments of the artifact's bodies (`MemoryArguments::word`), or
@@ -924,7 +916,7 @@ pub struct LaneMethod {
     /// body's scratch and inlined windows, past the environment window); 0 where it writes none there.
     pub frame_reach: usize,
     /// The callees it calls by their compiled entries, which its code names.
-    pub direct: Box<[DirectCallee]>,
+    pub direct: Box<[DirectArm]>,
     /// Whether its code calls callees by their entries through an AOT image's call records
     /// (`DirectSite::Proven`, `AotImage::calls`), which name no `direct` callee: its runs bind the
     /// shadow frames those calls push, as a body with `direct` callees does (`Vm::stack_words_in_lane`).
@@ -943,7 +935,7 @@ pub struct LaneMethod {
     /// changes nothing it relies on (`ProgramStore::retire_native_calls_across_realms`).
     pub realm_bound: bool,
     /// A marker that its lowering made a summary, where it is a whole function's body: a direct caller's plan
-    /// reads the callee's result from the solve (`TypeSummary`, `DirectCallee::summary`).
+    /// reads the callee's result from the solve (`TypeSummary`, `DirectArm::summary`).
     /// Read through `summary()`, which a withdrawal ends.
     pub summary: Option<TypeSummary>,
     /// Whether its entry cell has withdrawn it (`EntryCell::withdraw`): a body the cell no longer publishes
@@ -959,8 +951,6 @@ pub struct LaneTier {
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
     pub history: std::cell::Cell<LaneBodyHistory>,
-    /// What its lane bodies did, under `QUENCH_TRACE=js-jit` (`LaneBodyStats`).
-    pub body_stats: LaneBodyStats,
     /// Bodies it specialized again past (`LaneView::note_lane_body_end`), whose code the
     /// direct callers that name them still run until they retire with them at a shape
     /// compaction.
@@ -1001,19 +991,6 @@ pub struct LoopSite {
     /// The sites of the function whose loops enclose this one (`install_loop_sites`), set once the
     /// sites are boxed: the same storage the records name the sites by, which lives as long as the lane view.
     pub enclosing: std::cell::OnceCell<Box<[*const LoopSite]>>,
-    /// Whether this VM requested OSR diagnostics when its lane view was derived.
-    pub diagnostics: bool,
-    pub lane_backedge_count: std::cell::Cell<u64>,
-    pub native_entry_attempts: std::cell::Cell<u64>,
-    pub native_region_runs: std::cell::Cell<u64>,
-    /// Bodies published for this loop (`plan_loop_body`) and runs of them (`run_loop_body`).
-    pub tier_ups: std::cell::Cell<u64>,
-    pub body_runs: std::cell::Cell<u64>,
-    pub entry_guard_misses: std::cell::Cell<u64>,
-    pub native_exits: std::cell::Cell<u64>,
-    pub widenings: std::cell::Cell<u64>,
-    pub compile_attempts: std::cell::Cell<u64>,
-    pub compile_successes: std::cell::Cell<u64>,
     pub tier: std::cell::RefCell<LoopTier>,
     /// The function's lane body planned to start at this loop's header (`run_loop_body`).
     pub body: std::cell::RefCell<LoopBody>,
@@ -1101,26 +1078,6 @@ pub struct TargetBody {
     /// records then read of the context: only where the tier could not claim it at the first resolution,
     /// which specialized its returns for good. None for a framed call form, whose entries never run a leaf.
     pub leaf: Option<LeafForm>,
-}
-
-/// Counters allocated only for opt-in benchmark diagnostics. These runs are
-/// intended to explain coverage; their timings are not qualification scores.
-pub struct WasmJitDiagnostics {
-    pub program: u32,
-    pub total_functions: usize,
-    pub compiled_functions: usize,
-    pub code_bytes: usize,
-    pub mapped_bytes: usize,
-    pub native_entry_requests: Vec<std::cell::Cell<u64>>,
-    pub interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
-    pub compiled_to_vm_callouts: std::cell::Cell<u64>,
-    pub compiled_import_callouts: std::cell::Cell<u64>,
-    pub compiled_known_callouts: std::cell::Cell<u64>,
-    pub compiled_reference_callouts: std::cell::Cell<u64>,
-    pub emscripten_memcpy_fast_path_hits: std::cell::Cell<u64>,
-    pub import_callout_names: Vec<(u32, u32, String, String)>,
-    pub import_callout_counts: Vec<std::cell::Cell<u64>>,
-    pub reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
 }
 
 /// The objects of one activation's `with` chain, kept inline up to the nesting a function usually has.
@@ -1341,16 +1298,14 @@ pub struct Case {
     pub record: u32,
 }
 
-/// A callee a lane body calls by its compiled entry (`lane_region`'s direct call): the
-/// target the lane would activate, fixed by the callee's identity, which the call guards,
-/// and its specialized body. The caller's body owns it.
+/// The body a lane body's direct call enters (`lane_region`'s direct call): what the closed world fixes per body
+/// (`FunctionFacts::call_targets`), never a closure. A native header names it (`native_table`); the closure the call
+/// entered is the header's callee word (`staged::frame::CONTEXT_CALLEE`), which the call wrote from its callee register.
+/// The caller's code owns it.
 #[derive(Clone)]
-pub struct DirectCallee {
+pub struct DirectBody {
     /// What the callee's body fixes about the call.
     pub target: FunctionTarget,
-    /// The closure the descriptor was made for (its identity, environment and captures), which the
-    /// call guards; another closure of the function rebinds the call's run-time words (`bound`).
-    pub closure: ClosureOperands,
     /// The callee's published body (`LaneBody::Specialized`): the caller's code calls its entry,
     /// so the caller retires with it, at a shape compaction (`LaneMethod::names_shapes`) or at
     /// a lifecycle edge (`ProgramStore::retire_dead_native_calls`).
@@ -1362,43 +1317,20 @@ pub struct DirectCallee {
     pub call: usize,
     /// The caller's base instruction pointer (its view's records), which the callee's header saves for the return.
     pub caller_base: usize,
+    /// The callee function's entry cell (`target.view`'s).
     pub cell: usize,
-    pub registers: u16,
-    /// The global object a sloppy callee binds for an `undefined` or `null` receiver, which
-    /// binds a direct object itself (`receiver_this_in_lane`); `None` for a strict callee, which
-    /// takes any receiver as it is.
-    pub sloppy: Option<Value>,
-    /// The callee's dense capture slots (`EnvironmentSlots::native_dense_view`).
-    pub capture_values: *const Value,
-    pub capture_len: usize,
-    /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`).
-    pub capture_stores: bool,
-    /// The closure of the function the site calls now and its capture word, which a u-jit call reads at run time.
-    pub bound: BoundClosure,
 }
 
-/// A direct call's closure and capture word (`DirectCallee::bound`): its own `callee` and captures, until the site's
-/// helper call resolves another closure of the same function and rebinds them (`direct_callee::rebind_closure`), so a
-/// closure made per call of the caller misses once, not per call. `read` says the code reads them (a Cranelift call
-/// guarded by them, `call_frames::EmitFrame::rebinds`). A collection unbinds a dead closure (`unbind_dead`): the words
-/// then name none, never a reused locator, and the next call misses once and rebinds.
-#[derive(Clone, Default, Debug)]
-#[repr(C)]
-pub struct BoundClosure {
-    pub callee: std::cell::Cell<u64>,
-    pub captures: std::cell::Cell<u64>,
-    pub read: std::cell::Cell<bool>,
-}
-
-impl BoundClosure {
-    pub fn new(callee: u64, captures: u64) -> Self {
-        Self { callee: std::cell::Cell::new(callee), captures: std::cell::Cell::new(captures), read: std::cell::Cell::new(false) }
-    }
-
-    /// Unbinds the closure if `live` says it died (`Value::DELETED` names no closure).
-    pub fn unbind_dead(&self, live: &impl Fn(Value) -> bool) {
-        if self.callee.get() != Value::DELETED.to_bits() && !live(Value::from_bits(self.callee.get())) { self.callee.set(Value::DELETED.to_bits()); }
-    }
+/// One arm of a direct call: the body it enters, and the closure of that body the arm calls, the one its creation edge
+/// bound (`ProgramStore::closure_cell` of an `Identity::Closure` body, or the closure a class header bound to a closed-set
+/// arm). That closure is its body's only one, so the arm's one compare of the callee register with it is the body's test;
+/// the call folds its operands (environment, captures pointer, an arrow's lexical `this` or a sloppy body's global) and
+/// its dense capture word (`entry_cell::capture_word`).
+#[derive(Clone)]
+pub struct DirectArm {
+    pub body: DirectBody,
+    pub closure: ClosureOperands,
+    pub captures: u64,
 }
 
 pub use super::fact_edge::ExitFact;
@@ -1480,30 +1412,6 @@ pub struct LaneBodyHistory {
     pub region_called: bool,
 }
 
-/// A view's lane-body counters, which only a diagnostics run keeps
-/// (`ProgramStore::js_jit_diagnostics_enabled`): its function, its compiles and the frames the
-/// last inlined, and its runs by how they ended (`LaneExit`), in that order.
-#[derive(Default)]
-pub struct LaneBodyStats {
-    pub function: std::cell::Cell<u32>,
-    pub compiles: std::cell::Cell<u32>,
-    pub frames: std::cell::Cell<u32>,
-    /// The last compile's inlined frames as `index:function<-parent@call-pc`, `+` marking an alternative.
-    pub shape: std::cell::RefCell<String>,
-    /// Completed, left at a caller PC, inside an inlined callee, in a native call's callee,
-    /// or irreversibly terminated.
-    pub ends: [std::cell::Cell<u32>; super::tier_events::Event::END_COUNT],
-    /// The PCs it left at, and inside inlined frames as `frame:pc`, with their counts.
-    pub leaves: std::cell::RefCell<Vec<(String, u32)>>,
-    /// Entries of the specialized body that ran in the lane instead (`body_admits_in_lane`).
-    pub refused: std::cell::Cell<u32>,
-    /// The leaves into a callee that only lacked a body while warming toward one, which count
-    /// toward nothing (`dispatch_fast::leave_counts_in_lane`).
-    pub warming_leaves: std::cell::Cell<u32>,
-    /// Why its body declined (`decline`).
-    pub declined: std::cell::Cell<&'static str>,
-}
-
 /// What a leaf's records read of the context its call runs them in (`leaf_body`), which is
 /// what the call makes its own and its return restores: the forms of its call
 /// (`script_call_leaf_prove_miss`), its entry (`CallEntry::leaf`) and its return records
@@ -1557,12 +1465,6 @@ pub enum Raised {
     Panic(Box<dyn std::any::Any + Send>),
 }
 
-pub struct ReferenceCallSiteDiagnostics {
-    pub function: usize,
-    pub pc: usize,
-    pub counts: std::cell::Cell<ReferenceCallSiteCounts>,
-    pub targets: std::cell::RefCell<Vec<ReferenceCallTargetCounts>>,
-}
 
 
 /// A forwarding constructor whose activation a construction skipped
@@ -1847,21 +1749,6 @@ pub struct Inlining {
 
 
 
-#[derive(Clone, Copy, Default)]
-pub struct ReferenceCallSiteCounts {
-    pub total: u64,
-    pub native: u64,
-    pub fallback: u64,
-    pub same_artifact_direct: u64,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct ReferenceCallTargetCounts {
-    pub function: usize,
-    pub total: u64,
-    pub native: u64,
-    pub same_artifact_native: u64,
-}
 
 
 
@@ -1881,15 +1768,8 @@ pub struct ResumeTable {
 #[derive(Default)]
 pub struct CallCode {
     pub inlined: Vec<InlinedCall>,
-    pub direct: Box<[DirectCallee]>,
+    pub direct: Box<[DirectArm]>,
     pub records: Vec<OwnedCallRecord>,
-    /// The callees its records were rebound to after their planned closure's guard missed
-    /// (`dispatch_fast::rebind_region_call`): each record's descriptor word names one of these, which
-    /// stay allocated for the code's life, as a frame running an earlier one keeps reading it.
-    pub rebound: std::cell::RefCell<Vec<Box<DirectCallee>>>,
-    /// The callee identities its entry checks once (`Held::Captured`): code that names one by a constant, so its
-    /// death retires the code. Any other callee a record names is guarded at each call (`names_dead`).
-    pub held: Box<[u64]>,
     /// The registers of the function the region belongs to: its inlined callees' follow them.
     pub caller_registers: u16,
     pub recovery: LaneRecoverySpace,
@@ -2003,9 +1883,6 @@ pub struct JsStepDispatch {
     /// A lane body's scratch window (`BodyRunContext::scratch`), where a leave inside an inlined
     /// callee writes the callee's registers.
     pub inlined: usize,
-    /// The lowering line of the guard a lane body last left at, where its code was compiled
-    /// for diagnostics (`VmFacts::diagnostics`); zero otherwise.
-    pub exit_line: u64,
     /// The element read past a present dense element (`general_elements`).
     pub element_get: usize,
     /// The VM's frameless call admissions (`frameless`), valid in the heap's collection
@@ -2540,7 +2417,7 @@ pub struct BaseImage {
 /// binding made (`CallRecord::callee_record` names one; a closed-set class's vector names one too).
 pub struct Held {
     pub callees: RefCell<FoldedRoots>,
-    pub descriptors: Box<[RefCell<Vec<Box<DirectCallee>>>]>,
+    pub descriptors: Box<[RefCell<Vec<Box<DirectArm>>>]>,
     pub records: RefCell<Vec<Box<UnsafeCell<CalleeRecord>>>>,
 }
 
@@ -2561,40 +2438,6 @@ pub struct LaneImage {
 pub enum BoundRecords {
     Owned(Box<[UnsafeCell<CallRecord>]>),
     Linked(&'static [UnsafeCell<CallRecord>]),
-}
-
-macro_rules! miss_reasons {
-    ($($variant:ident => $name:literal),+ $(,)?) => {
-        #[derive(Clone, Copy)]
-        pub enum Miss { $($variant),+ }
-        pub const MISS_NAMES: [&str; [$($name),+].len()] = [$($name),+];
-    };
-}
-miss_reasons! {
-    Form => "form",
-    NoScriptCalls => "no-script-calls",
-    CallConstructing => "call:constructing",
-    WithScope => "with-scope",
-    CallReturningNotAdmitted => "call:returning-not-admitted",
-    Receiver => "receiver",
-    Callee => "callee",
-    CalleeDeclined => "callee:declined",
-    EntryNotActivation => "entry-not-activation",
-    NoActivationRoom => "no-activation-room",
-    CallReadAnswer => "call:read-answer",
-    Busy => "target-or-collection",
-    Returning => "returning",
-    ConstructNotConstructor => "construct:not-constructor",
-    NoPlan => "no-plan",
-    HelperConstructContext => "helper-construct:context",
-    PlanNoUnit => "plan:no-unit",
-    PlanFrameNotAdmitted => "plan:frame-not-admitted",
-    PlanNoEntry => "plan:no-entry-instruction",
-    PlanNothingNative => "plan:nothing-native",
-    PlanNotAmortized => "plan:not-amortized",
-    PlanDependencies => "plan:dependencies",
-    NativeNotNative => "native:not-native",
-    NativeNotCompleted => "native:not-completed",
 }
 
 /// Compose a host's POSIX signal delivery with owned native-fault recovery.
@@ -2644,7 +2487,7 @@ pub struct Activation {
     /// descriptor, receiver, body and window, which emitted code writes for a direct call's frame
     /// (`ActivationKind::Native`) and which stays through its link (`NativeFrames`); only
     /// `window` for an activation the lane made. The callee is null for a frame the lane made.
-    pub callee: *const DirectCallee,
+    pub callee: *const DirectBody,
     pub this: u64,
     pub body: usize,
     /// The address of its window of registers.
@@ -2662,54 +2505,6 @@ pub struct Activation {
 
 /// Where the kind's tag lies in an activation.
 pub const KIND_OFFSET: usize = std::mem::offset_of!(Activation, kind);
-
-#[derive(Debug, Default)]
-pub struct OsrDiagnostics {
-    pub plain_backward_jump_sites: usize,
-    pub admitted_sites: usize,
-    pub promotion_only_sites: usize,
-    pub compile_attempts: u64,
-    pub compile_successes: u64,
-    pub currently_compiled_sites: usize,
-    pub native_entry_attempts: u64,
-    pub native_region_runs: u64,
-    pub tier_ups: u64,
-    pub body_runs: u64,
-    pub entry_guard_misses: u64,
-    pub exits: u64,
-    pub widenings: u64,
-    pub analysis_rejections: Vec<(RegionRejection, usize)>,
-    pub sites: Vec<OsrSiteDiagnostics>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OsrSiteDiagnostics {
-    pub header_pc: u32,
-    pub backedge_pc: u32,
-    pub status: OsrSiteStatus,
-    pub failure: Option<RegionAnalysisFailure>,
-    pub admitted: bool,
-    pub deferred_call: bool,
-    pub tier_threshold_reached: bool,
-    pub lane_backedge_count: u64,
-    pub analysis_rejection: Option<RegionRejection>,
-    pub call_boundary_pcs: Vec<u32>,
-    pub compile_attempts: u64,
-    pub compile_successes: u64,
-    pub native_entry_attempts: u64,
-    pub native_region_runs: u64,
-    pub entry_guard_misses: u64,
-    pub exits: u64,
-    pub widenings: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OsrSiteStatus {
-    Admitted,
-    CallBoundary,
-    PromotionOnly,
-    Rejected,
-}
 
 /// The words a VM frame's register file keeps spare past its environment window for the windows of the
 /// callees a loop region inlines (`base_region::function::inline_base`), which start past that window:
@@ -3150,10 +2945,6 @@ pub struct LaneContext {
     /// credits the work clock and refills it; zero while the floor is raised at entry or a
     /// collection is due (`note_allocation`), so every backward jump reaches it.
     pub fuel: u32,
-    /// Whether that callee left the lane because it has no body yet and is still warming
-    /// toward one (`body_activate_in_lane`): its caller's leave says nothing of the caller's own
-    /// specialization (`leave_counts_in_lane`).
-    pub callee_warming: bool,
     /// The leaf call whose records run (`script_call_leaf_prove_miss`), which holds what its
     /// activation would until its return or materialization; `NO_LEAF_CALL` for none.
     pub leaf: LeafCall,
@@ -3161,9 +2952,6 @@ pub struct LaneContext {
     /// (`region_payload_in_lane`): the heap bases a call it makes may move are reloaded there too
     /// (`region_call_in_lane`).
     pub region_payload: usize,
-    /// The `CallCode` of the native loop region running on this activation, zero for none: a call its
-    /// direct row missed rebinds the row's record there (`rebind_region_call`).
-    pub region_calls: usize,
 }
 
 /// The activation of a native's callback for calls passing `argc` values (`push_callback_in_lane`),
@@ -3548,12 +3336,6 @@ pub const NO_SCRIPT_GENERATION: ScriptGeneration = 0;
 /// displaced more live targets than it holds.
 pub const SCRIPT_CALL_TARGETS_INITIAL: usize = 256;
 
-impl Miss {
-
-    /// How many reasons there are.
-    pub const COUNT: usize = MISS_NAMES.len();
-}
-
 impl NativeIdentities {
 
     pub const fn new() -> Self {
@@ -3787,33 +3569,11 @@ impl CallCode {
         self.records.shrink_to_fit();
     }
 
-    /// Whether the code names a callee `live` says died.
+    /// Whether the code names a callee `live` says died: an inlined callee, or an arm's closure, which its code names by
+    /// constants (a guard, a header's callee word, a record's words), or an arm's body that retired.
     #[inline]
     pub fn names_dead(&self, live: impl Fn(Value) -> bool) -> bool {
-        if names_dead_callee(&self.inlined, &[], &live) || self.direct.iter().any(|callee| callee.method.as_ref().is_some_and(|method| !method.is_published())) {
-            return true;
-        }
-        // A dead callee a record's guard compares at each call only unbinds that record: its row misses from then on
-        // (`Value::DELETED` names no closure) and the helper rebinds it to the next closure it calls
-        // (`dispatch_fast::rebind_region_call`). One an entry check holds by a constant retires the code.
-        let unbind = |word: u64| for (_, callee) in self.records.iter().filter(|(_, callee)| callee.callee == word) {
-            // SAFETY: the records are read in place by the code on this thread, which no collection runs inside.
-            unsafe { (*std::ptr::from_ref(&**callee).cast_mut()).callee = Value::DELETED.to_bits() };
-        };
-        // A planned callee whose site has no record is named by constants (a Cranelift region's guard and capture
-        // words), as is one an entry check holds: its death retires the code.
-        // One whose code reads its closure from its bound words (`BoundClosure::read`) was unbound instead (`unbind_dead`).
-        let constant = self.direct.iter().filter(|callee| !live(callee.closure.callee)).any(|callee| {
-            let word = callee.closure.callee.to_bits();
-            if self.held.contains(&word) { return true; }
-            if callee.bound.read.get() { return false; }
-            if !self.records.iter().any(|(record, _)| record.call == callee.call as u64) { return true; }
-            unbind(word);
-            false
-        });
-        if constant { return true; }
-        self.rebound.borrow().iter().filter(|callee| !live(callee.closure.callee)).for_each(|callee| unbind(callee.closure.callee.to_bits()));
-        false
+        names_dead_callee(&self.inlined, &self.direct, &live)
     }
 }
 
@@ -3916,11 +3676,6 @@ impl InstanceContext {
             memory_length: 0,
             guard_start: 0,
             guard_end: 0,
-            call_reference_diagnostic: 0,
-            reference_call_sites: std::ptr::null(),
-            reference_call_site_count: 0,
-            import_callout_counts: std::ptr::null(),
-            import_callout_count: 0,
             memory_base: 0,
             abi: ABI_NOT_DIRECT,
             global_area: vec![std::ptr::null_mut(); slots].into(),
@@ -4142,90 +3897,12 @@ impl LaneView {
         self.tier.get_or_init(Box::default)
     }
 
-    /// The name of its body's state, for the diagnostics report (`LaneBodyStats::report`).
-    #[inline]
-    pub fn body_state_in_lane(&self) -> &'static str {
-        // SAFETY: as `lane_body`.
-        match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized => "unspecialized",
-            LaneBody::Compiling { .. } => "compiling",
-            LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Declined => "declined",
-        }
-    }
-
-    /// Its body's state, and whether the tier claimed its prologue and is still warming, for the
-    /// diagnostics report of a view that never compiled (`QUENCH_LANE_STATE`).
-    #[inline]
-    pub fn body_detail_in_lane(&self) -> (&'static str, bool, bool) {
-        (self.body_state_in_lane(), self.start.get() == self.prologue.get().cast_const(), self.warming())
-    }
-
     /// Starts activations at the first record again, once the tier declines the function.
     #[inline]
     pub fn release_from_tier(&self) {
         self.start.set(self.records());
     }
 
-    /// OSR tier coverage and outcomes, for opt-in JIT diagnostics.
-    pub fn osr_diagnostics(&self) -> OsrDiagnostics {
-        let mut sites = self.loops.iter().map(|site| {
-            let call_boundary_pcs = site.active_region().map_or_else(
-                || site.call_boundary_pcs.to_vec(),
-                LoopRegion::call_boundary_pcs,
-            );
-            let deferred_call = !call_boundary_pcs.is_empty();
-            OsrSiteDiagnostics {
-                header_pc: site.header,
-                backedge_pc: site.backedge,
-                status: if site.promotion_only {
-                    OsrSiteStatus::PromotionOnly
-                } else if site.analysis_failure.is_some_and(|failure| failure.is_call_boundary()) {
-                    OsrSiteStatus::CallBoundary
-                } else if site.analysis_failure.is_some() {
-                    OsrSiteStatus::Rejected
-                } else {
-                    OsrSiteStatus::Admitted
-                },
-                failure: site.analysis_failure,
-                call_boundary_pcs,
-                admitted: site.is_admitted(),
-                deferred_call,
-                tier_threshold_reached: site.is_hot(),
-                lane_backedge_count: site.lane_backedge_count.get(),
-                analysis_rejection: site.analysis_failure.map(|failure| failure.reason),
-                compile_attempts: site.compile_attempts.get(),
-                compile_successes: site.compile_successes.get(),
-                native_entry_attempts: site.native_entry_attempts.get(),
-                native_region_runs: site.native_region_runs.get(),
-                entry_guard_misses: site.entry_guard_misses.get(),
-                exits: site.native_exits.get(),
-                widenings: site.widenings.get(),
-            }
-        }).collect::<Vec<_>>();
-        sites.sort_unstable_by_key(|site| (site.header_pc, site.backedge_pc));
-        OsrDiagnostics {
-            plain_backward_jump_sites: self.plain_backward_jump_sites,
-            admitted_sites: self.loops.iter().filter(|site| site.is_admitted()).count(),
-            promotion_only_sites: self.loops.iter().filter(|site| site.promotion_only).count(),
-            compile_attempts: self.loops.iter().map(|site| site.compile_attempts.get()).sum(),
-            compile_successes: self.loops.iter().map(|site| site.compile_successes.get()).sum(),
-            currently_compiled_sites: self.loops.iter().filter(|site| site.tier.borrow().is_published()).count(),
-            native_entry_attempts: self.loops.iter().map(|site| site.native_entry_attempts.get()).sum(),
-            native_region_runs: self.loops.iter().map(|site| site.native_region_runs.get()).sum(),
-            entry_guard_misses: self.loops.iter().map(|site| site.entry_guard_misses.get()).sum(),
-            tier_ups: self.loops.iter().map(|site| site.tier_ups.get()).sum(),
-            body_runs: self.loops.iter().map(|site| site.body_runs.get()).sum(),
-            exits: self.loops.iter().map(|site| site.native_exits.get()).sum(),
-            widenings: self.loops.iter().map(|site| site.widenings.get()).sum(),
-            analysis_rejections: self
-                .osr_rejections
-                .as_deref()
-                .unwrap_or_default()
-                .to_vec(),
-            sites,
-        }
-    }
 }
 
 impl NativeJsProgram {
@@ -4379,7 +4056,7 @@ impl Admission {
     /// admission fails, and the paths that resolve again decide.
     pub const REFUSED: u64 = 1 << 63;
     /// The program's bits above `PROGRAM_SHIFT`, below the flag bits.
-    pub const PROGRAM_MASK: u64 = (1 << (Self::DIAGNOSED.trailing_zeros() - Self::PROGRAM_SHIFT)) - 1;
+    pub const PROGRAM_MASK: u64 = (1 << (Self::UNPROVEN.trailing_zeros() - Self::PROGRAM_SHIFT)) - 1;
 }
 
 impl AheadImages {
@@ -4436,40 +4113,6 @@ impl LaneArrayStep {
     #[inline]
     pub fn roots(&self) -> impl Iterator<Item = Value> {
         self.iteration.values(self.element).into_iter().chain([self.entry.env, self.entry.this])
-    }
-}
-
-impl LaneBodyStats {
-
-    /// Runs of the body, however they ended (`ends`): the tier census's entries.
-    #[inline]
-    pub fn runs(&self) -> u64 {
-        self.ends.iter().map(|end| u64::from(end.get())).sum()
-    }
-
-    /// The report line of a view that compiled a body, `QUENCH_LANE_BODY {...}`, with the
-    /// state its body ended the run in.
-    pub fn report(&self, program: usize, state: &str, op_at: &dyn Fn(u32, u32) -> Option<String>) -> Option<String> {
-        (self.compiles.get() != 0).then(|| {
-            let function = self.function.get();
-            let [completed, at, inlined, callee, terminated] = self.ends.each_ref().map(std::cell::Cell::get);
-            // A leave names the instruction it left at, in the function it left in. Places are
-            // generated compile, line and PC numbers and opcode names, never guest text.
-            let leaves = self.leaves.borrow().iter().map(|(at, count)| {
-                let place = match at.split_once('#') {
-                    Some((place, site)) => {
-                        let op = site.split_once('@').and_then(|(function, pc)| op_at(function.parse().ok()?, pc.parse().ok()?));
-                        format!("{place} f{site} {}", op.unwrap_or_default())
-                    }
-                    None => at.clone(),
-                };
-                format!("[\"{place}\",{count}]")
-            }).collect::<Vec<_>>().join(",");
-            format!(
-                "QUENCH_LANE_BODY {{\"program\":{program},\"function\":{function},\"compiles\":{},\"frames\":{},\"shape\":\"{}\",\"state\":\"{state}\",\"refused\":{},\"completed\":{completed},\"left_at\":{at},\"left_inlined\":{inlined},\"left_in_callee\":{callee},\"terminated\":{terminated},\"leaves\":[{leaves}]}}",
-                self.compiles.get(), self.frames.get(), self.shape.borrow(), self.refused.get(),
-            )
-        })
     }
 }
 
@@ -4691,7 +4334,7 @@ impl ScriptTargets {
 #[derive(Clone, Copy)]
 pub struct ActivationView {
     /// Its frame prefix: a record's own, a header's with no callee or body but its window.
-    pub callee: *const DirectCallee,
+    pub callee: *const DirectBody,
     pub this: u64,
     pub body: usize,
     pub window: usize,
@@ -4703,16 +4346,6 @@ pub struct ActivationView {
     pub kind: ActivationKind,
     /// What its completion carries, from its side record (`SidePayload`).
     pub payload: SidePayload,
-}
-
-impl Admission {
-    /// A bit the lane's admission carries while the tier's diagnostics count every entry
-    /// (`LaneStack::set_diagnosed`), which a proved call does not: no entry proved before they
-    /// were enabled admits a proved call, and none is proved while they are. Unlike the
-    /// conditions, targets made under them carry it too, so the unproved paths still hit.
-    pub const DIAGNOSED: u64 = 1 << 60;
-    /// The bits the lane's admission takes from `LaneStack::refused`.
-    pub const LANE_BITS: u64 = Self::CONDITIONS | Self::DIAGNOSED;
 }
 
 impl AheadImages {
@@ -4905,6 +4538,8 @@ impl ActivationView {
 impl Admission {
     /// Every bit only the lane's admission carries.
     pub const CONDITIONS: u64 = Self::REFUSED | Self::NO_SCRIPT_CALLS;
+    /// The bits the lane's admission takes from `LaneStack::refused`.
+    pub const LANE_BITS: u64 = Self::CONDITIONS;
 
     #[inline(always)]
     pub const fn program(self) -> ProgramId {
@@ -5043,7 +4678,6 @@ impl Default for LaneTier {
             tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
-            body_stats: LaneBodyStats::default(),
             callers: std::cell::RefCell::default(),
         }
     }
@@ -5120,103 +4754,6 @@ impl std::ops::DerefMut for CallContext {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut CallContextFields {
         &mut self.head
-    }
-}
-
-impl Drop for CompiledProgram {
-    fn drop(&mut self) {
-        let Some(stats) = &self.diagnostics else {
-            return;
-        };
-        let entries = stats
-            .native_entry_requests
-            .iter()
-            .enumerate()
-            .filter_map(|(function, count)| {
-                let count = count.get();
-                (count > 0).then(|| format!("[{function},{count}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let fallbacks = stats
-            .interpreter_fallback_entries
-            .iter()
-            .enumerate()
-            .filter_map(|(function, count)| {
-                let count = count.get();
-                (count > 0).then(|| format!("[{function},{count}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let reference_sites = stats
-            .reference_call_sites
-            .iter()
-            .filter_map(|site| {
-                let counts = site.counts.get();
-                (counts.total > 0).then(|| {
-                    format!(
-                        "[{},{},{},{},{}]",
-                        site.function, site.pc, counts.total, counts.native, counts.fallback
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut reference_targets = Vec::new();
-        for site in &stats.reference_call_sites {
-            for target in site.targets.borrow().iter() {
-                if target.total > 0 {
-                    reference_targets.push(format!(
-                        "[{},{},{},{},{},{}]",
-                        site.function,
-                        site.pc,
-                        target.function,
-                        target.total,
-                        target.native,
-                        target.same_artifact_native
-                    ));
-                }
-            }
-        }
-        let reference_targets = reference_targets.join(",");
-        let import_callout_targets = format_import_callout_targets(
-            &stats.import_callout_names,
-            &stats.import_callout_counts,
-        );
-        let attributed_import_callouts = stats
-            .import_callout_counts
-            .iter()
-            .map(std::cell::Cell::get)
-            .fold(0u64, u64::saturating_add);
-        debug_assert_eq!(
-            attributed_import_callouts,
-            stats.compiled_import_callouts.get(),
-            "per-import attribution must account for every compiled import callout"
-        );
-        let same_artifact_direct_hits = stats
-            .reference_call_sites
-            .iter()
-            .map(|site| site.counts.get().same_artifact_direct)
-            .fold(0u64, u64::saturating_add);
-        eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
-            stats.program,
-            stats.compiled_functions,
-            stats.total_functions,
-            stats.code_bytes,
-            stats.mapped_bytes,
-            entries,
-            fallbacks,
-            stats.compiled_to_vm_callouts.get(),
-            stats.compiled_import_callouts.get(),
-            stats.compiled_known_callouts.get(),
-            stats.compiled_reference_callouts.get(),
-            import_callout_targets,
-            stats.emscripten_memcpy_fast_path_hits.get(),
-            reference_sites,
-            same_artifact_direct_hits,
-            reference_targets,
-        );
     }
 }
 
@@ -5318,51 +4855,6 @@ pub struct Views {
     pub write: *mut u8,
 }
 
-pub fn format_import_callout_targets(
-    names: &[(u32, u32, String, String)],
-    counters: &[std::cell::Cell<u64>],
-) -> String {
-    debug_assert_eq!(names.len(), counters.len());
-    names
-        .iter()
-        .zip(counters)
-        .filter_map(|((function, import_index, module, name), count)| {
-            let count = count.get();
-            (count > 0).then(|| {
-                format!(
-                    "{{\"function\":{function},\"import_index\":{import_index},\"module\":{},\"name\":{},\"count\":{count}}}",
-                    json_string(module),
-                    json_string(name)
-                )
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-pub fn json_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\u{08}' => escaped.push_str("\\b"),
-            '\u{0C}' => escaped.push_str("\\f"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            character if character <= '\u{1F}' => {
-                use std::fmt::Write;
-                write!(escaped, "\\u{:04x}", character as u32)
-                    .expect("writing to a String cannot fail");
-            }
-            character => escaped.push(character),
-        }
-    }
-    escaped.push('"');
-    escaped
-}
 
 /// Whether the frame header below `window` carries a side record.
 #[inline(always)]
@@ -5478,7 +4970,7 @@ impl LaneStack {
         let (forwards, kept, environment, record) =
             side.map_or((false, 0, false, std::ptr::null_mut()), |side| (side.forwards, side.kept, side.environment, side.record));
         let (callee_at, body) = match side {
-            Some(side) if side.native != NO_NATIVE => (self.native_table[side.native] as *const DirectCallee, self.body_table[side.native]),
+            Some(side) if side.native != NO_NATIVE => (self.native_table[side.native] as *const DirectBody, self.body_table[side.native]),
             _ => (std::ptr::null(), 0),
         };
         ActivationView {
@@ -5602,7 +5094,7 @@ impl CallbackTrampoline {
 
 impl LaneMethod {
 
-    /// The address of its compiled entry, which a direct caller calls (`DirectCallee`).
+    /// The address of its compiled entry, which a direct caller calls (`DirectBody`).
     #[inline]
     pub fn entry_address(&self) -> usize {
         self.entry as usize

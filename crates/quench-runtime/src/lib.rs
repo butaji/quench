@@ -154,7 +154,6 @@ pub use wasm::{
 pub use vm::AheadImages;
 pub use vm::layer_hooks::install_intl;
 pub use vm::wasm_js::enable_wasm_js;
-pub use vm::tier_events::{Event as TierEvent, TierEvents};
 pub use bytecode::{set_record_built, set_record_read, ImageRetention, KeptBytes, ProgramRecord, ResidualProgram, ModuleRequest, ModuleRequestPhase, FlowFunction, FlowInstruction};
 pub use module_identity::normalized_text as normalized_module_name;
 pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
@@ -250,19 +249,3 @@ pub mod native_image;
 pub use native_image::NativeImageSupport;
 
 pub mod native_link;
-
-// Library tests run with the layer crates compiled in as modules: a layer crate names this crate
-// `quench_runtime` and its own root `crate`, so both resolve here (`quench-layers` links the
-// layer crates into every other build).
-#[cfg(test)]
-extern crate self as quench_runtime;
-#[cfg(test)]
-#[path = "../../quench-runtime-intl/src/lib.rs"]
-mod intl_layer;
-#[cfg(test)]
-use intl_layer::*;
-#[cfg(test)]
-#[path = "../../quench-runtime-engine/src/lib.rs"]
-mod engine_layer;
-#[cfg(test)]
-use engine_layer::*;

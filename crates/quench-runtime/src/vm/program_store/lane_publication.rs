@@ -4,7 +4,6 @@
 use super::*;
 use crate::code_dependencies::PublishedCode;
 use crate::vm::engine_types::{CompiledOsrRegion, LaneMethod, PublishedLaneMethod};
-use crate::vm::tier_events::Event;
 
 /// Code that names callees by identity: a published body, or a body's plan whose code still
 /// compiles (`PendingLaneMethod`), whose `watch` the poll reads. Both hold their callees
@@ -32,11 +31,10 @@ impl NativeCallBinding {
     /// Whether the code still stands after a collection that kept the callees `live` names. Function
     /// bindings depend on the owned program definition, not a particular closure locator; realm/reset
     /// retirement still uses this inventory for every binding kind.
-    /// A rebound site's closure may be gone and its locator reused: it is unbound first (`BoundClosure::unbind_dead`).
     fn stands(&self, live: &impl Fn(Value) -> bool) -> bool {
         match self {
-            Self::Published(method) => stands(method.upgrade(), |method| { method.direct.iter().for_each(|direct| direct.bound.unbind_dead(live)); crate::vm::engine_calls::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor)) }),
-            Self::Region(region) => stands(region.upgrade(), |region| { region.calls.direct.iter().for_each(|direct| direct.bound.unbind_dead(live)); region.calls.names_dead(live) }),
+            Self::Published(method) => stands(method.upgrade(), |method| crate::vm::engine_calls::names_dead_callee(&method.inlined, &method.direct, live) || method.constructors.iter().any(|constructor| !live(*constructor))),
+            Self::Region(region) => stands(region.upgrade(), |region| region.calls.names_dead(live)),
             Self::Pending { watch, callees } => stands(watch.upgrade().filter(|watch| watch.is_published()), |_| callees.iter().any(|callee| !live(*callee))),
         }
     }
@@ -93,8 +91,6 @@ impl ProgramStore {
             return None;
         }
         if calls { self.native_call_bindings.borrow_mut().push(NativeCallBinding::Published(Rc::downgrade(&published))); }
-        self.tier_events.record(Event::Published);
-        self.tier_events.add(Event::Inlined, method.inlined.len());
         Some(published)
     }
 

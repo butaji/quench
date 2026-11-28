@@ -9,8 +9,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::{
-    CallContext, CompiledProgram, DiagnosticReferenceCallout, MemoryArguments,
-    ProgramId, Vm, diagnostic_reference_callout, displacement_base,
+    CallContext, CompiledProgram, MemoryArguments,
+    ProgramId, Vm, displacement_base,
 };
 use quench_runtime::Value;
 use quench_runtime::tier_surface::{Cell, TableWords};
@@ -74,11 +74,6 @@ switched! {
     memory_length: types::I64,
     guard_start: types::I64,
     guard_end: types::I64,
-    call_reference_diagnostic: types::I64,
-    reference_call_sites: types::I64,
-    reference_call_site_count: types::I64,
-    import_callout_counts: types::I64,
-    import_callout_count: types::I64,
     },
     tail: { instance: types::I64 },
 }
@@ -119,14 +114,6 @@ impl InstanceContext {
             self.compiled = Rc::as_ptr(compiled);
             self.table = compiled.table.as_ptr();
             self.abi = compiled.abi();
-            let stats = compiled.diagnostics.as_ref();
-            self.call_reference_diagnostic = stats.map_or(0, |_| {
-                diagnostic_reference_callout as DiagnosticReferenceCallout as usize
-            });
-            self.reference_call_sites = stats.map_or(std::ptr::null(), |stats| stats.reference_call_sites.as_ptr());
-            self.reference_call_site_count = stats.map_or(0, |stats| stats.reference_call_sites.len());
-            self.import_callout_counts = stats.map_or(std::ptr::null(), |stats| stats.import_callout_counts.as_ptr());
-            self.import_callout_count = stats.map_or(0, |stats| stats.import_callout_counts.len());
             if !self.retained.iter().any(|kept| Rc::ptr_eq(kept, compiled)) {
                 self.retained.push(Rc::clone(compiled));
             }
@@ -323,7 +310,7 @@ impl NativeRoots {
 mod tests {
     use super::*;
 
-    const WORDS: [usize; 4] = [0x1000, 0x2000, 0x3000, 0x4000];
+    const WORDS: [usize; 3] = [0x1000, 0x2000, 0x4000];
 
     /// A record whose words all differ from a fresh call context's.
     fn record() -> InstanceRecord {
@@ -331,10 +318,7 @@ mod tests {
         record.memory = Value::from_bits(0x22);
         record.memory_length = 7;
         (record.guard_start, record.guard_end) = (WORDS[0], WORDS[1]);
-        record.call_reference_diagnostic = WORDS[2];
-        record.reference_call_site_count = 3;
-        record.import_callout_count = 5;
-        record.table = WORDS[3] as *const usize;
+        record.table = WORDS[2] as *const usize;
         record
     }
 
@@ -354,7 +338,7 @@ mod tests {
             assert_eq!(bytes(&context, *at, length), bytes(&*record, *from, length), "{at} {from}");
         }
         assert_eq!(context.instance as usize, record.address());
-        assert_eq!(context.table as usize, WORDS[3]);
+        assert_eq!(context.table as usize, WORDS[2]);
     }
 
     #[test]

@@ -32,7 +32,7 @@ pub(crate) struct DirectFacts {
     /// The last arm of a site whose plan has no miss (`Miss::None`): once every arm is chained, the row
     /// need not check the callee register, the closed world having no other callee (`plan_call`).
     pub(crate) closed: bool,
-    /// The address of the callee's `DirectCallee`, which the body owns (`Callees::owned`, moved into the
+    /// The address of the callee's `DirectArm`, which the body owns (`Callees::owned`, moved into the
     /// published method or region whole, so the address holds): the native header's descriptor word
     /// (`CalleeRecord::descriptor`), as the u-jit's `push_native` writes it. Zero where none is known yet
     /// (an AOT record before its binding, `aot_image::bound`), which the row refuses to the helper.
@@ -45,26 +45,26 @@ impl DirectFacts {
     ///
     /// # Safety
     /// `callee.cell` is the address of the callee function's live entry cell.
-    pub(crate) unsafe fn of(callee: &DirectCallee, held: bool) -> Self {
+    pub(crate) unsafe fn of(callee: &DirectArm, held: bool) -> Self {
         // SAFETY: the caller's contract; the words are at the designed cell's offsets.
-        let word = |offset: i32| unsafe { ((callee.cell + offset as usize) as *const u64).read() };
+        let word = |offset: i32| unsafe { ((callee.body.cell + offset as usize) as *const u64).read() };
         Self {
             callee: callee.closure.callee.to_bits(),
-            cell: callee.cell,
+            cell: callee.body.cell,
             facts: CellFacts::of_word(word(ENTRY_CELL.facts_offset)),
-            call: callee.call as u64,
-            caller_base: callee.caller_base as u64,
-            function: callee.target.function,
-            captures: callee.capture_word(),
+            call: callee.body.call as u64,
+            caller_base: callee.body.caller_base as u64,
+            function: callee.body.target.function,
+            captures: callee.captures,
             env: callee.closure.context_words().0,
             capture: callee.closure.context_words().1,
-            global_this: callee.sloppy.map(|global| global.to_bits()),
+            global_this: callee.sloppy().map(|global| global.to_bits()),
             // A live callee is never an arrow: no direct row binds a lexical `this` (only an AOT image's proven row does).
             lexical: false,
-            registers: callee.registers,
+            registers: callee.body.target.registers,
             held,
             closed: false,
-            descriptor: std::ptr::from_ref(callee).addr() as u64,
+            descriptor: std::ptr::from_ref(&callee.body).addr() as u64,
         }
     }
 

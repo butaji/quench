@@ -2,7 +2,7 @@
 use super::*;
 use crate::bytecode::{Op, Register};
 use crate::staged::tests::ConcreteFrame;
-use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, PropertyFrame, Stage};
+use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, PropertyFrame};
 use crate::typed_ir::Type;
 use crate::ValueType;
 use crate::operator::BinaryOperator;

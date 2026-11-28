@@ -63,8 +63,7 @@ fn array_callback_activation_in_lane(
 /// `script_target_in_in_lane` of an array callback method's `callback` at its call record `ip`,
 /// whose `CallOperand::memo` slot, which no native's call reads, links the callback's cache
 /// entry as a script call's `call_link` links its callee's: the link, tested first, skips the
-/// set's hash. The record's `call_link` stays its own callee's, which a lane body reads
-/// (`site_targets_in_lane`).
+/// set's hash. The record's `call_link` stays its own callee's.
 #[inline(always)]
 fn callback_target_in_lane(
     cx: *mut LaneContext,

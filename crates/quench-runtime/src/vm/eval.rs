@@ -696,6 +696,7 @@ impl Vm {
         Ok(Some(id))
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn compile_embedding_host_script(
         &mut self, source: &str, name: &str, origin: (u32, u32),
     ) -> Result<crate::CompiledScript, JsError> {
@@ -719,6 +720,7 @@ impl Vm {
             && self.programs.owns_script(&script.state)
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn evaluate_embedding_compiled_script(
         &mut self, script: &crate::CompiledScript,
     ) -> Result<Value, JsError> {

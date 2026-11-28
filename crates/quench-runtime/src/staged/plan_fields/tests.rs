@@ -1,5 +1,5 @@
 use super::*;
-use crate::staged::Concrete;
+use crate::staged::{Concrete, Stage};
 use crate::Value;
 
 fn run(class: FieldClass, passed: Value) -> Option<Value> {

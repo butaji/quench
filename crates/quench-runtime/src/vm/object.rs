@@ -13,68 +13,6 @@ use mru_chain::record_mru_entry;
 /// (`general_store`).
 pub const FIELD_BYTE: u32 = 0xff;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_host::TestHost;
-
-    #[test]
-    fn native_only_field_probes_use_semantic_specialization_permission() {
-        let program = crate::Engine::specialize(r#"
-            var own={value:7};
-            function Static(){}
-            Static.value=8;
-            var inherited=Object.create({value:9});
-            var getterCalls=0;
-            var accessor={get value(){getterCalls++;return 11;}};
-            function readOwn(object){return object.value;}
-            function readCell(object){return object.value;}
-            function readInherited(object){return object.value;}
-            for(let i=0;i<4;i++){
-                if(readOwn(own)!==7||readCell(Static)!==8||readInherited(inherited)!==9)throw 'data';
-            }
-        "#, "native-field-permission.js").unwrap();
-        let native = crate::NativeJsProgram::publish(program).unwrap();
-        let program = native.residual();
-        let mut vm = Vm::new(TestHost::default());
-        vm.set_execution_mode(crate::ExecutionMode::NativeOnly);
-        vm.execute_native_program(&native, true).unwrap();
-        assert!(!vm.admits_in_lane(crate::vm::ProgramId::MAIN, program), "native semantics do not admit interpreter lane dispatch");
-        let site = |name: &str| {
-            let function = program.functions.iter().position(|body| body.header().name
-                .is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-            program.function(function).instructions().find_map(|instruction| match instruction.field_lookup() {
-                Some(crate::bytecode::FieldLookup::Atom { atom, cache_site, .. })
-                    if &program.atoms[atom as usize] == "value" => Some(cache_site),
-                _ => None,
-            }).unwrap()
-        };
-        let mut global = |name| {
-            let atom = vm.intern_atom(name);
-            vm.own_property(vm.realm.globals, atom).unwrap()
-        };
-        let own = global("own");
-        let function = global("Static");
-        let inherited = global("inherited");
-        let accessor = global("accessor");
-        let own_site = site("readOwn");
-        let cell_site = site("readCell");
-        let inherited_site = site("readInherited");
-        assert_eq!(vm.cell_own_field_hit(own, own_site), Some(Value::integer(7)));
-        assert_eq!(vm.cell_own_field_hit(function, cell_site), Some(Value::integer(8)));
-        assert!(matches!(vm.cached_field_hit(inherited, inherited_site), FieldCacheProbe::Hit(value)
-            if value == Value::integer(9)));
-        assert!(matches!(vm.cached_field_hit(function, cell_site), FieldCacheProbe::Hit(value)
-            if value == Value::integer(8)));
-        assert_eq!(vm.cell_own_field_hit(accessor, own_site), None,
-            "a data probe must leave accessor semantics untouched");
-        let value = vm.intern_atom("value");
-        assert_eq!(vm.get_field_cached(program, accessor, value, own_site).unwrap(), Value::integer(11));
-        let calls = vm.intern_atom("getterCalls");
-        assert_eq!(vm.own_property(vm.realm.globals, calls), Some(Value::integer(1)));
-    }
-}
-
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
 /// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
@@ -152,38 +90,6 @@ enum FieldCacheRead {
     Miss(usize),
     StringMiss { prototype: Value, site: usize },
     Hit(FieldCacheHit),
-}
-
-/// A census of shape creations by transition key (`QUENCH_TRACE=shapes`, `profile-memory`):
-/// which operations keep making a shape instead of finding it in the cached child index.
-#[cfg(feature = "profile-memory")]
-mod shape_trace {
-    use std::sync::Mutex;
-    use std::sync::OnceLock;
-
-    static CREATED: OnceLock<Mutex<std::collections::HashMap<String, u64>>> = OnceLock::new();
-
-    pub(super) fn record(label: String) {
-        let created = CREATED.get_or_init(|| {
-            // SAFETY: `report` is a plain function that outlives the process.
-            unsafe { libc::atexit(report) };
-            Mutex::new(std::collections::HashMap::new())
-        });
-        if let Ok(mut created) = created.lock() {
-            *created.entry(label).or_default() += 1;
-        }
-    }
-
-    extern "C" fn report() {
-        let Some(created) = CREATED.get() else { return };
-        let Ok(created) = created.lock() else { return };
-        let mut rows: Vec<_> = created.iter().collect();
-        rows.sort_unstable_by(|left, right| right.1.cmp(left.1));
-        eprintln!("QUENCH_SHAPE_TRACE created={}", rows.iter().map(|(_, count)| **count).sum::<u64>());
-        for (label, count) in rows.iter().take(20) {
-            eprintln!("  shape {count:>9} {label}");
-        }
-    }
 }
 
 impl Vm {
@@ -456,31 +362,6 @@ impl Vm {
         transition: ShapeTransition,
         storage_len: usize,
     ) -> u32 {
-        #[cfg(feature = "profile-memory")]
-        if crate::trace::Channel::Shapes.on() {
-            // Which transitions keep missing the cached child index, by key: a shape a
-            // repeated operation re-creates names the key that fails to dedupe.
-            let label = match &transition {
-                ShapeTransition::Add { key, .. } => match key {
-                    property_key::PropertyKey::String(atom) => format!("Add:{}", self.atom_name(*atom)),
-                    property_key::PropertyKey::Symbol(_) => "Add:<symbol>".to_owned(),
-                    property_key::PropertyKey::Private(..) => "Add:<private>".to_owned(),
-                },
-                ShapeTransition::Delete { key, .. } => match key {
-                    property_key::PropertyKey::String(atom) => format!("Delete:{}", self.atom_name(*atom)),
-                    _ => "Delete:<nonstring>".to_owned(),
-                },
-                ShapeTransition::Descriptor { slot, .. } => format!("Descriptor:{slot}"),
-                ShapeTransition::Dictionary { .. } => "Dictionary".to_owned(),
-                ShapeTransition::Root => "Root".to_owned(),
-                ShapeTransition::Vacant => "Vacant".to_owned(),
-                ShapeTransition::FunctionName { .. } => "FunctionName".to_owned(),
-                ShapeTransition::FunctionNameReconfigured => "FunctionNameReconfigured".to_owned(),
-                ShapeTransition::FunctionLengthReconfigured => "FunctionLengthReconfigured".to_owned(),
-                ShapeTransition::Constructed { .. } => "Constructed".to_owned(),
-            };
-            shape_trace::record(label);
-        }
         let next = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
         let dictionary_trigger = match transition {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
@@ -2045,6 +1926,7 @@ impl Vm {
 
     /// `primary_own_field_hit` for a receiver any heap cell holds, such as a function's own
     /// static field (`Strength.REQUIRED`), which a direct object's record lookup misses.
+    #[quench_macros::test_visible]
     #[inline(always)]
     pub(super) fn cell_own_field_hit(
         &mut self,
@@ -5009,46 +4891,6 @@ impl Vm {
         super::shape_layouts(&self.shapes)
     }
 
-    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_TRACE=js-jit`): the
-    /// polymorphic sites by how many receiver shapes they recorded, how many name only own
-    /// fields and of those how many find the field at one slot in every shape (a layout whose
-    /// subclasses share their parent's prefix reads them at a fixed offset), and how many name
-    /// prototype-held fields.
-    pub(super) fn field_site_report(&self) -> String {
-        let (mut sizes, mut own, mut one_slot, mut holders, mut overflowed) = ([0_usize; 4], 0, 0, 0, 0);
-        for set in &self.megamorphic_fields {
-            let entries: Vec<FieldCache> = match &set.overflow {
-                Some(overflow) => { overflowed += 1; overflow.values().copied().collect() }
-                None => set.recorded().copied().collect(),
-            };
-            let bucket = match entries.len() { 0..=2 => 0, 3..=4 => 1, 5..=16 => 2, _ => 3 };
-            sizes[bucket] += 1;
-            if entries.iter().all(|entry| entry.holder == NO_FIELD_HOLDER) {
-                own += 1;
-                if entries.windows(2).all(|pair| pair[0].slot == pair[1].slot) { one_slot += 1; }
-            } else {
-                holders += 1;
-            }
-        }
-        // The representation each own field a cache entry names holds across the live objects
-        // of its shape, the join of their values' classes (`SlotType`).
-        use crate::typed_ir::SlotType;
-        let classes: std::collections::HashMap<(u32, u32), SlotType> = std::collections::HashMap::new();
-        // A class cell holds no record, so the census reads no field type from one.
-        let mut reps = [0_usize; SlotType::ALL.len()];
-        let own_entries = (0..self.field_caches.len()).map(|index| self.field_caches.get(index)).chain(self.megamorphic_fields.iter().flat_map(|set| set.recorded().copied().collect::<Vec<_>>()))
-            .filter(|cache| cache.receiver != NO_FIELD_RECEIVER && cache.holder == NO_FIELD_HOLDER);
-        for cache in own_entries {
-            reps[classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(SlotType::None) as usize] += 1;
-        }
-        let classes = SlotType::ALL.iter().map(|class|
-            format!("\"{}\":{}", class.label(), reps[*class as usize])).collect::<Vec<_>>().join(",");
-        let reps = format!("QUENCH_FIELD_REPS {{{classes}}}");
-        reps + "\n" + &format!(
-            "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
-            self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
-        )
-    }
 }
 
 /// The slot type seed of `atom`, added to an instance of the class whose constructor is `function`

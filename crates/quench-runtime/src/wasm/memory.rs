@@ -58,6 +58,7 @@ const _: () = assert!(super::V128_BYTES <= HOST_PAGE);
 const RESERVATION_HINT: usize = 1 << 30;
 
 impl LinearBytes {
+    #[quench_macros::test_visible]
     pub(crate) fn heap(bytes: Vec<u8>) -> Self {
         Self {
             repr: LinearRepr::Heap(bytes),
@@ -94,6 +95,7 @@ impl LinearBytes {
     }
 
     /// The reservation's base and size when the memory is guarded.
+    #[quench_macros::test_visible]
     pub(crate) fn guard(&self) -> Option<(*mut u8, usize)> {
         match self.repr {
             LinearRepr::Reserved { base, .. } => Some((base, GUARDED_RESERVATION)),
@@ -209,6 +211,7 @@ impl std::ops::DerefMut for MemoryGuard<'_> {
 }
 
 impl MemoryStorage {
+    #[quench_macros::test_visible]
     pub(crate) fn new(bytes: LinearBytes, shared: bool) -> Self {
         if shared {
             Self::Shared(std::sync::Arc::new(SharedMemory::new(bytes)))

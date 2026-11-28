@@ -1,9 +1,13 @@
 //! An indirect call's target on the VM and in the tier: the trap of each check, the row a table
-//! carries beside its references through every event that writes it, and the calls through them.
+//! carries beside its references through every event that writes it, and the calls through them
+//! (moved from the core's `vm/wasm_indirect` tests, whose binary does not link the engine).
 
-use super::*;
-use crate::wasm::CanonicalSignature;
-use crate::{
+use crate::engine_prelude::*;
+use crate::ext_traits::*;
+use quench_runtime::heap::TableTarget;
+use quench_runtime::vm::engine_types::InstanceContext;
+use quench_runtime::wasm::CanonicalSignature;
+use quench_runtime::{
     Engine, WasmCallableType, WasmFunctionBody, WasmInstance, WasmTable, WasmTrap,
     WasmTypes, WasmValue,
 };
@@ -32,19 +36,19 @@ fn funcref_table(initial: u32, function: u32) -> WasmTable {
             maximum: Some(u64::from(initial) + 2),
             shared: false,
         },
-        initializer: crate::WasmReferenceInitializer::Function(function).into(),
+        initializer: quench_runtime::WasmReferenceInitializer::Function(function).into(),
     }
 }
 
 /// Function 0 returns seven, function 1 returns an i64, and function 2 calls the element of
 /// table 0 its argument names as a `() -> i32`. Table 0 holds three of function 0, table 1 one of
 /// function 1.
-fn module() -> crate::WasmModule {
+fn module() -> quench_runtime::WasmModule {
     module_returning(SEVEN)
 }
 
 /// `module` with function 0 returning `value`.
-fn module_returning(value: i32) -> crate::WasmModule {
+fn module_returning(value: i32) -> quench_runtime::WasmModule {
     Engine::lower_wasm_module_with_tables(
         "indirect-traps",
         [
@@ -92,7 +96,7 @@ fn signatures(vm: &Vm, table: Value) -> Vec<CanonicalSignature> {
 
 #[test]
 fn each_check_of_an_indirect_call_traps_as_the_rule_orders_them() {
-    let mut vm = Vm::new(crate::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     let instance = vm.instantiate_wasm_module(&module()).unwrap();
     let (table, other) = (
         vm.wasm_table(&instance, 0).unwrap(),
@@ -111,7 +115,7 @@ fn each_check_of_an_indirect_call_traps_as_the_rule_orders_them() {
 
 #[test]
 fn a_table_carries_the_signature_of_each_element_through_every_write() {
-    let mut vm = Vm::new(crate::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     let instance = vm.instantiate_wasm_module(&module()).unwrap();
     let (table, other) = (
         vm.wasm_table(&instance, 0).unwrap(),
@@ -150,7 +154,7 @@ fn rows(vm: &Vm, table: Value) -> Vec<TableTarget> {
 
 #[test]
 fn a_row_names_the_function_and_the_instance_of_its_element_through_every_write() {
-    let mut vm = Vm::new(crate::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     let built = module();
     let instance = vm.instantiate_wasm_module(&built).unwrap();
     let environment = vm.root_value(instance.environment).unwrap();
@@ -188,9 +192,9 @@ fn calls(vm: &mut Vm, instance: &WasmInstance, indices: &[i32]) -> Vec<Result<i3
 }
 
 fn vm_running(compiled: bool) -> Vm {
-    let mut vm = Vm::new(crate::SystemHost);
+    let mut vm = quench_runtime::test_support::vm(quench_runtime::SystemHost);
     if compiled {
-        vm.set_execution_mode(crate::ExecutionMode::Compiled);
+        vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     }
     vm
 }
@@ -211,7 +215,7 @@ fn install_roots(vm: &mut Vm, instance: &WasmInstance) {
 }
 
 /// Instantiates `module`, with its roots compiled when `compiled` (the VM runs compiled code).
-fn instantiate_running(vm: &mut Vm, module: &crate::WasmModule, compiled: bool) -> WasmInstance {
+fn instantiate_running(vm: &mut Vm, module: &quench_runtime::WasmModule, compiled: bool) -> WasmInstance {
     let instance = vm.instantiate_wasm_module(module).unwrap();
     if compiled {
         install_roots(vm, &instance);
@@ -220,7 +224,7 @@ fn instantiate_running(vm: &mut Vm, module: &crate::WasmModule, compiled: bool) 
 }
 
 /// How many times the VM entered function `index` of `module`'s compiled code.
-pub fn entries(vm: &Vm, module: &crate::WasmModule, index: usize) -> Option<u64> {
+pub fn entries(vm: &Vm, module: &quench_runtime::WasmModule, index: usize) -> Option<u64> {
     let program = vm.programs.find_shared(&module.program)?;
     vm.programs.wasm_tier(program, u32::try_from(index).ok()?)?.native_entries(index)
 }
@@ -335,7 +339,7 @@ fn a_row_names_the_record_its_function_keeps_alive() {
 
 /// Function 0 grows the memory by a page and returns its size in pages before; function 1
 /// returns its size in pages. One memory of one page, at most four.
-fn growing_module() -> crate::WasmModule {
+fn growing_module() -> quench_runtime::WasmModule {
     Engine::lower_wasm_module_with_tables(
         "grows",
         [
@@ -351,7 +355,7 @@ fn growing_module() -> crate::WasmModule {
         ],
         &WasmTypes::from_functions([FuncType::new([], [ValType::I32])]),
         &[],
-        &[crate::WasmMemory {
+        &[quench_runtime::WasmMemory {
             ty: wasmparser::MemoryType {
                 initial: 1,
                 maximum: Some(4),

@@ -1391,7 +1391,7 @@ mod tests {
             declared_types: None,
             source_name: String::new(),
             source: None,
-            record: super::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
+            record: crate::bytecode::ProgramRecord { atoms: AtomTable::default(), constants: vec![].into(), ..Default::default() },
             functions: vec![function.into()].into(),
             cache_sites: Default::default(),
             method_sites: vec![].into(),

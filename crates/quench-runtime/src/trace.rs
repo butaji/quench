@@ -74,14 +74,11 @@ setting! {
         /// At each full collection, the live values per container and how many have a narrow
         /// form: what 4-byte storage could save (`Heap::trace_storage_census`).
         StorageCensus = "storage-census",
-        Shapes = "shapes",
         Rewrite = "rewrite",
         /// Every loaded program's finished bytecode, printed at exit; `bytecode=lanes` prints
         /// each function's lane view instead (`Vm::report_lane_plan`): which handler each record runs.
         Bytecode = "bytecode",
         JsJit = "js-jit",
-        /// BaseJIT region exits by instruction, most frequent first (printed at exit).
-        BjitLeave = "bjit-leave",
         WasmJit = "wasm-jit",
         OsrReject = "osr-reject",
         JitPeak = "jit-peak",
@@ -108,8 +105,6 @@ setting! {
         JitCoverage = "jit-coverage",
         /// Whether a startup snapshot was restored, and why not.
         StartupSnapshot = "startup-snapshot",
-        /// Every run of a lane body that ends anywhere but its completion: function and exit.
-        BodyLeave = "body-leave",
         /// Each AOT image compile: how many functions got a lane body, and why each other did not.
         AotLanes = "aot-lanes",
     }

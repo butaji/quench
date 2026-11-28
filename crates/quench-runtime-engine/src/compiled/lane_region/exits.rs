@@ -182,7 +182,7 @@ impl Lowering<'_, '_> {
         }
         // A guard after another that leaves at the same PC from the same facts shares its
         // block: the leave it builds is the same, and SSA joins the variables' values.
-        if !self.vm.diagnostics && let Some(last) = self.pending.last()
+        if let Some(last) = self.pending.last()
             && last.pc == pc && last.values == state.values && last.homed == state.proofs.homed && last.virtuals == state.virtuals
             && last.virtual_arrays == state.virtual_arrays {
             return last.block;
@@ -202,10 +202,4 @@ impl Lowering<'_, '_> {
         named
     }
 
-    /// Records, for a diagnostics run, the lowering line that made a leave (`take_lane_exit_line`).
-    pub(super) fn record_line(&mut self, line: u32) {
-        if !self.vm.diagnostics { return; }
-        let line = self.raw_const(Lane::I64, i64::from(line));
-        self.store_word(regions::dispatch(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
-    }
 }

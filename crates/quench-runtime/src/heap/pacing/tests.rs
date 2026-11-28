@@ -48,7 +48,7 @@ fn policies_name_their_tables_and_page_release() {
 #[test]
 fn full_collection_follows_old_growth_or_the_allocation_cap() {
     for policy in MemoryPolicy::ALL {
-        full_collection_follows_old_growth_or_the_allocation_cap_under(policy.table());
+        full_collection_follows_old_growth_or_the_allocation_cap_under(policy.pacing());
     }
 }
 
@@ -76,12 +76,12 @@ fn full_collection_follows_old_growth_or_the_allocation_cap_under(pacing: Genera
 /// Throughput's table with aging turned on only by full collections' evidence, as it is
 /// once its first aged survivors outlive their second minor.
 fn aging_on_evidence() -> GenerationalPacing {
-    GenerationalPacing { ages_from_start: false, ..MemoryPolicy::Throughput.table() }
+    GenerationalPacing { ages_from_start: false, ..MemoryPolicy::Throughput.pacing() }
 }
 
 #[test]
 fn throughput_ages_from_its_first_collection_until_aged_survivors_outlive_their_second_minor() {
-    let pacing = MemoryPolicy::Throughput.table();
+    let pacing = MemoryPolicy::Throughput.pacing();
     let live = 1 << 20;
     let promoted = 1 << 16;
     let mut state = PacingState::default();
@@ -96,7 +96,7 @@ fn throughput_ages_from_its_first_collection_until_aged_survivors_outlive_their_
     let outliving = AgedFates { died: 1, promoted: 9 };
     pacing.plan(&mut state, CollectionOutcome { aged: outliving, ..minor(live, live, promoted) });
     assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
-    let memory_first = MemoryPolicy::MemoryFirst.table();
+    let memory_first = MemoryPolicy::MemoryFirst.pacing();
     assert_eq!(PacingState::default().promotion_age(&memory_first), memory_first.promotion_age);
 }
 
@@ -198,7 +198,7 @@ fn promotions_that_live_on_keep_the_first_age_and_memory_first_never_ages() {
     pacing.plan(&mut state, minor(live + promoted, live, promoted));
     pacing.plan(&mut state, full_after_promoting(live, promoted, promoted));
     assert_eq!(state.promotion_age(&pacing), pacing.promotion_age);
-    let pacing = MemoryPolicy::MemoryFirst.table();
+    let pacing = MemoryPolicy::MemoryFirst.pacing();
     let mut state = PacingState::default();
     pacing.plan(&mut state, minor(live + promoted, live, promoted));
     pacing.plan(&mut state, full_after_promoting(live, promoted, 0));
@@ -208,7 +208,7 @@ fn promotions_that_live_on_keep_the_first_age_and_memory_first_never_ages() {
 #[test]
 fn high_young_survival_switches_to_full_collections_and_probes_back() {
     for policy in MemoryPolicy::ALL {
-        high_young_survival_switches_to_full_collections_and_probes_back_under(policy.table());
+        high_young_survival_switches_to_full_collections_and_probes_back_under(policy.pacing());
     }
 }
 
@@ -243,7 +243,7 @@ fn high_young_survival_switches_to_full_collections_and_probes_back_under(pacing
 
 #[test]
 fn aging_turning_off_restores_the_table_promotion_age() {
-    let pacing = MemoryPolicy::Throughput.table();
+    let pacing = MemoryPolicy::Throughput.pacing();
     let live = 1 << 14;
     let mut state = PacingState::default();
     pacing.plan(&mut state, minor(live, live, 1 << 14));

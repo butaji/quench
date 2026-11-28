@@ -17,7 +17,7 @@ struct FramePrefix {
     window: usize,
 }
 
-/// The callee's descriptor (`DirectCallee`), null for a frame the lane made.
+/// The callee's descriptor (`DirectBody`), null for a frame the lane made.
 pub const CALLEE: usize = offset_of!(FramePrefix, callee);
 /// The callee's receiver, as value bits.
 pub const THIS: usize = offset_of!(FramePrefix, this);

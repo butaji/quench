@@ -84,7 +84,7 @@ pub(in super::super) fn push_passed_in_lane<const GENERAL: bool, const SETTLES: 
     debug_assert_eq!(SETTLES, target.body.settles(), "a settling target activates through its own call form");
     let vm = unsafe { vm(cx) };
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None)
+    enter_window_of_in_lane::<GENERAL, SETTLES>(cx, vm, r, ip, target, callee_registers, argc, this, constructs, None)
 }
 
 /// A plain call of `target`, of the running program, passed the `argc` values at `passed` (at
@@ -153,7 +153,6 @@ pub(in super::super) fn native_call_in_lane(cx: *mut LaneContext, target: &Scrip
     let exit = vm.run_lane_body(&run);
     // SAFETY: the window is the stack's top the fill moved; a returned call leaves the stack as it found it.
     unsafe { vm.lane_stack.values.set_top(window.0) };
-    record_end_in_lane(cx, own, method, exit);
     match exit {
         crate::compiled::LaneExit::Returned { value, .. } => Some(value),
         _ => unreachable!("a frameless body leaves nothing: its call form's leaves are Never"),
@@ -165,8 +164,6 @@ pub(in super::super) fn native_call_in_lane(cx: *mut LaneContext, target: &Scrip
 /// registers and records are the context's, the caller's are the leaf's; the entry is counted.
 #[inline(always)]
 pub(in super::super) fn begin_cell_leaf_in_lane(cx: *mut LaneContext, ip: Ip, r: Registers, target: &ScriptCallTarget, argc: u16, this: Value, window: Registers) {
-    unsafe { vm(cx) }.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
-    unsafe { vm(cx) }.programs.tier_events().record(Event::CellCrossed);
     // SAFETY: the running lane's context, and the callee's view outlives its program.
     // The staged leaf row (`call_leaf::enter_leaf`) writes the record, the receiver and the
     // environment, all the callee's in `CONTEXT_LEAF`.
@@ -191,11 +188,7 @@ pub(in super::super) fn cell_body_ended_in_lane(
         && !unsafe { (*cx).leaf.call }.is_null()
     {
         // SAFETY: the window held the callee's registers; the completed call leaves the stack as it found it.
-        unsafe {
-            (*cx).callee_warming = false;
-            vm(cx).lane_stack.values.set_top(window.0);
-        }
-        record_end_in_lane(cx, own, method, exit);
+        unsafe { vm(cx).lane_stack.values.set_top(window.0) };
         let (registers, next) = complete_leaf_in_lane(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
         return Resumed::At(registers, next, Carried::script(cx));
     }
@@ -238,5 +231,5 @@ pub(in super::super) fn enter_window_in_lane<const GENERAL: bool, const SETTLES:
     this: Value, constructs: bool,
     kept: Option<u16>,
 ) -> (Registers, Ip) {
-    enter_window_of_in_lane::<GENERAL, SETTLES, true>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, kept)
+    enter_window_of_in_lane::<GENERAL, SETTLES>(cx, unsafe { vm(cx) }, r, ip, target, callee_registers, argc, this, constructs, kept)
 }

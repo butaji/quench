@@ -155,7 +155,7 @@ impl Lowering<'_, '_> {
     /// record can: an inlined callee's `Return` is the unit's move and jump.
     pub(super) fn complete(&mut self, state: &mut State, pc: usize, register: Register) -> bool {
         let Some(super::lane_unit::Origin::Caller(record)) = self.unit.origins.get(pc).copied() else {
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         };
         self.native += 1;

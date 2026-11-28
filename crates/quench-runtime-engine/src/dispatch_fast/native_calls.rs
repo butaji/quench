@@ -4,6 +4,7 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::staged::call_complete::{concrete_returns_callee_completion, concrete_write_call_result};
+use crate::compiled::LANE_CALL_MISSED;
 use quench_runtime::staged::Concrete;
 use quench_runtime::vm::object_get::ordinary_chain::ChainRead;
 
@@ -622,7 +623,6 @@ impl<const ROW: u8> quench_runtime::staged::call_native::InPlaceBody<Concrete> f
         let (args, vm) = unsafe { (window_at(arguments, self.count), vm(self.cx)) };
         let (native, receiver) = (const { in_place_row_native(ROW) }, Value::from_bits(receiver));
         if let Some(value) = const { matches!(in_place_row_native(ROW), Native::DataViewGetFloat64 | Native::DataViewSetFloat64) }.then(|| vm.data_view_access_of(native, receiver, args)).flatten() {
-            if quench_runtime::vm::tier_policy::feeds_compiled_tiers(vm.execution_mode) { vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64); }
             return Some(value.to_bits());
         }
         vm.in_place_native_value_inline(self.code, native, self.callee, receiver, args).map(Value::to_bits)
@@ -675,14 +675,14 @@ pub(crate) fn native_call_handler(native: Native, i: &LaneInstruction, result_de
 pub(crate) fn body_native_call_in_lane(cx: *mut LaneContext, call: &super::body_forms::BodyCall, callee: Value, receiver: Value) -> (u64, bool) {
     use crate::compiled::LANE_CALL_COMPLETED;
     let vm = unsafe { vm(cx) };
-    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return (super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::NativeNotNative), false) };
+    let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return (LANE_CALL_MISSED, false) };
     let native = *native;
     // SAFETY: the context's program outlives the lane run; the values are registers of the
     // running function, which the native reads before anything can move them. A RegExp method takes the interpreter's steady call (`steady_regexp_in_lane`).
     let (code, args) = unsafe { (&*(*cx).code, call.values()) };
     let Some(value) = vm.in_place_native_value(code, native, callee, receiver, &args).or_else(|| super::regexp_calls::steady_regexp_in_lane(cx, unsafe { &*call.ip }, native, receiver, &args).and_then(Result::ok)) else {
         // A returning call the native makes out of line is the lane's to complete.
-        if call.site.returns { return (super::lane_body_stats::miss(vm, super::lane_body_stats::Miss::Returning), false); }
+        if call.site.returns { return (LANE_CALL_MISSED, false); }
         return (body_native_out_in_lane(cx, call, native, (callee, receiver), &args), false);
     };
     // A returning call's value completes the body: it reads the call's register, as it does a
@@ -747,7 +747,7 @@ fn body_native_out_in_lane(cx: *mut LaneContext, call: &super::body_forms::BodyC
         return status;
     }
     let Some(value) = call_native_in_lane(cx, ip, native, callee, receiver, args) else {
-        return super::lane_body_stats::miss(unsafe { vm(cx) }, super::lane_body_stats::Miss::NativeNotCompleted);
+        return LANE_CALL_MISSED;
     };
     // Guest code the native ran may have made the activations frames, whose registers these are.
     let after = unsafe { (*cx).registers };

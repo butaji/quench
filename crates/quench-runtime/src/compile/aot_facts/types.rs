@@ -77,7 +77,20 @@ pub(crate) struct Types {
     world: World,
     /// The String builtins the program leaves as the host installed them: the calls of them are typed by the string rules.
     strings: StringBuiltins,
+    /// Per element class root, the join of the stores of every class of it (`stored_elements`), made once from `cells`
+    /// on the first read: a read is then one lookup, not a walk over the class's members with a search each.
+    stored: StoredByClass,
 }
+
+/// `Types::stored`: derived from the cells and the classes, so it takes no part in the types' equality, and is made
+/// anew (`StoredByClass::default`) wherever the cells change (`bottom`, `widen`).
+#[derive(Default)]
+struct StoredByClass(std::cell::OnceCell<BTreeMap<ElementClass, Elements>>);
+
+impl PartialEq for StoredByClass {
+    fn eq(&self, _: &Self) -> bool { true }
+}
+impl Eq for StoredByClass {}
 
 impl Types {
     /// The cells `flows` store and return, with each call typed by the callees `facts` prove or
@@ -106,6 +119,7 @@ impl Types {
             parents: census.accessors.parents().clone(),
             world: facts.world,
             strings: scope.string_builtins(&Proofs::of(flows)),
+            stored: StoredByClass::default(),
         };
         let mut constants: BTreeMap<Key, Vec<i64>> = BTreeMap::new();
         for &(_, key, fact) in flows.iter().flat_map(|flow| &flow.writes) {
@@ -181,6 +195,7 @@ impl Types {
         self.receivers.values_mut().for_each(never);
         self.params.values_mut().flatten().for_each(never);
         self.unseen = Cell::NEVER;
+        self.stored = StoredByClass::default();
         self
     }
 
@@ -216,9 +231,16 @@ impl Types {
     /// cannot name may write an array of any class (`wild_elements`).
     pub(super) fn stored_elements(&self, class: ElementClass) -> Elements {
         if self.wild_elements { return Elements::ANY; }
-        self.elements.members(class)
-            .filter_map(|member| self.cells.get(&Key::Element(member)))
-            .fold(Elements::NEVER, |elements, stored| elements.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None, holes: stored.elements.holes }))
+        let by_root = self.stored.0.get_or_init(|| {
+            let mut by_root: BTreeMap<ElementClass, Elements> = BTreeMap::new();
+            for (key, stored) in &self.cells {
+                let Key::Element(member) = *key else { continue };
+                let joined = by_root.entry(self.elements.root(member)).or_insert(Elements::NEVER);
+                *joined = joined.join(Elements { ty: stored.ty, classes: stored.classes, length: stored.elements.length, view: View::None, holes: stored.elements.holes });
+            }
+            by_root
+        });
+        by_root.get(&self.elements.root(class)).copied().unwrap_or(Elements::NEVER)
     }
 
     /// The elements of the arrays of the unnamed class: an array no key names, and every array that may reach code the
@@ -272,6 +294,7 @@ impl Types {
                 _ => Type::NOT_NAN_NUMBER,
             };
         }
+        self.stored = StoredByClass::default();
         self
     }
 

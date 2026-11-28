@@ -186,14 +186,12 @@ impl Vm {
             callee_resume: std::ptr::null(),
             callee_acc: Value::UNDEFINED,
             body_site: None,
-            callee_warming: false,
             leaf: NO_LEAF_CALL,
             outer: NO_OUTER_WALK,
             root_walk: NO_OUTER_WALK,
             frame_storage: NO_FRAME_STORAGE,
             proofs: quench_runtime::tier_surface::ArrayStorageProofs::new(),
             region_payload: 0,
-            region_calls: 0,
         }
     }
 
@@ -209,8 +207,6 @@ impl Vm {
     ) -> Ip {
         self.lane_stack.refresh_activation_limit();
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
-        // The tier's diagnostics, which no proved call runs under (`Admission::DIAGNOSED`).
-        self.lane_stack.set_diagnosed(crate::compiled::admission::diagnosing(self));
         let epoch = self.cache_epochs.gc;
         let cx: *mut LaneContext = context;
         // The lane's admission mirrors the run's `script_calls` (`LaneStack::set_script_calls`);

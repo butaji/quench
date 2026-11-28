@@ -49,8 +49,8 @@ impl GlobalFrame<Concrete> for ScopeFrame {}
 impl crate::staged::CallFrame<Concrete> for ScopeFrame {}
 
 impl NumericFrame<Concrete> for ScopeFrame {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<u64> { unreachable!() }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<u64> { unreachable!() }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!() }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: crate::bytecode::Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { unreachable!() }
     fn prove_number(&mut self, stage: &mut Concrete, register: Register, _miss: ()) -> Option<()> {
         Value::from_bits(self.read(stage, register)).as_number().map(|_| ())
     }

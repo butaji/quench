@@ -107,7 +107,7 @@ fn the_number_and_local_slot_increments_are_the_one_rule() {
 fn integer_arithmetic_is_never_nan_and_a_non_integer_operand_may_be() {
     let integers = range(0, 10);
     assert!(!arithmetic(NumberArithmetic::Add, integers, integers).may_be_nan());
-    let huge = Type::int(IntRange::singleton(1 << 40));
+    let huge = Type::int(IntRange::singleton(1_i64 << 40));
     assert_eq!(arithmetic(NumberArithmetic::Multiply, huge, huge), Type::NOT_NAN_NUMBER, "an integer product beyond the word");
     assert_eq!(arithmetic(NumberArithmetic::Add, Type::NUMBER, integers), Type::NUMBER);
     assert_eq!(arithmetic(NumberArithmetic::Add, Type::NOT_NAN_NUMBER, integers), Type::NUMBER, "an infinity may be a non-integer operand");

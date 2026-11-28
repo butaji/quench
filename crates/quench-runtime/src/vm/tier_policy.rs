@@ -129,7 +129,7 @@ pub const WASM_COMPILED_INLINING_MAX_OPERATORS: usize = 32_768;
 pub fn wasm_module_inlines_leaves(mode: crate::ExecutionMode, module_operators: impl FnOnce() -> usize) -> bool {
     match mode {
         crate::ExecutionMode::Interpreted => true,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         crate::ExecutionMode::Compiled if crate::wasm::COMPILED_CALLS_KEPT_FOR_TEST.with(std::cell::Cell::get) => false,
         crate::ExecutionMode::Compiled => module_operators() <= WASM_COMPILED_INLINING_MAX_OPERATORS,
         #[cfg(feature = "native-execution")]
@@ -183,13 +183,6 @@ pub fn images_run_in_lane(mode: crate::ExecutionMode, programs: &crate::vm::prog
 #[inline(always)]
 pub fn regexp_stitches(stencils: bool) -> bool {
     stencils && base_runs() && !cranelift_runs()
-}
-
-/// Whether execution records the run-time feedback a compiled tier reads when it compiles later (such as
-/// `ProgramStore::note_js_jit_dataview_float64`): only where tiers compile at run time, compiled execution.
-#[inline(always)]
-pub fn feeds_compiled_tiers(mode: crate::ExecutionMode) -> bool {
-    mode == crate::ExecutionMode::Compiled
 }
 
 /// Whether a Wasm function runs as the module's native code rather than the lane's records: compiled execution. A lane

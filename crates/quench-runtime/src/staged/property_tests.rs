@@ -102,8 +102,8 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
 impl ElementFrame<Concrete> for Host<'_> {}
 
 impl NumericFrame<Concrete> for Host<'_> {
-    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numbers") }
-    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<u64> { unreachable!("no numbers") }
+    fn int_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Int32<u64>> { unreachable!("no numbers") }
+    fn number_operand(&mut self, _stage: &mut Concrete, _operand: Operand, _miss: ()) -> Option<crate::staged::Float64<u64>> { unreachable!("no numbers") }
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn int_fact(&self) {}
@@ -189,7 +189,7 @@ fn a_nested_chain_reads_each_link_from_the_previous_value() {
 /// The step of `operation` on a host frame, with its log.
 fn run(answers: bool, operation: Operation<u64, ()>) -> (Option<u64>, Vec<&'static str>) {
     let plans = Plans { read: FieldPlan::Host { atom: 1, site: 2 }, store: StorePlan::Add };
-    let mut frame = Host::new(0, &plans, vec![Value::integer(1).to_bits(); 4]);
+    let mut frame = Host::new(&plans, vec![Value::integer(1).to_bits(); 4]);
     frame.answers = answers;
     let mut stage = Concrete::pure();
     let word = match step(&mut stage, &mut frame, operation) {
@@ -225,7 +225,7 @@ fn a_store_plan_chooses_the_adding_or_the_vm_store_and_stores_the_value_it_was_g
     for (plan, name) in [(add, "field_add"), (host, "field_store_host")] {
         let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
         let value = Value::integer(4).to_bits();
-        let mut frame = Host::new(0, &plans, vec![0, Value::integer(1).to_bits(), value]);
+        let mut frame = Host::new(&plans, vec![0, Value::integer(1).to_bits(), value]);
         let mut stage = Concrete::pure();
         let stored = step(&mut stage, &mut frame, Operation::SetField { value: 2, base: Some(1), atom: 7, site: 3, strict: false });
         assert!(matches!(stored, Step::Value(word) if word == value));

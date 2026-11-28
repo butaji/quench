@@ -143,7 +143,7 @@ fn getter_entry(call: &LaneCall, site: &quench_runtime::staged::Invocation) -> q
 /// (`script_call_leaf_prove_miss`) as the staged call protocol's rows (`staged::invoke`), in its order:
 ///
 /// - `call_entry`: the site's entry, the link masked to the cache (no bounds test), tested whole by
-///   one admission compare (link-proofs.md: generation, program, the run's conditions, `DIAGNOSED`,
+///   one admission compare (link-proofs.md: generation, program, the run's conditions,
 ///   `UNPROVEN`), the argument count against its parameters, and a leaf row's form; the callee's
 ///   identity is the plan's guard (`Identity::Guarded`), the one compare `invoke` makes of it;
 /// - `this`: the plan binds as `direct_call_this_in_lane` does: an arrow's lexical `this` (and a plain

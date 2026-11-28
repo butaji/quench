@@ -32,6 +32,7 @@ impl Vm {
         Self::with_statics(host, crate::ExecutionInterrupt::default(), crate::host::HostStatics::restored::<T>(), &ExecutionTable::ALL)
     }
 
+    #[quench_macros::test_visible]
     pub(crate) fn new_with_execution_interrupt<T: crate::Host>(
         host: T,
         execution_interrupt: crate::ExecutionInterrupt,

@@ -6,7 +6,6 @@
 // builds. Nothing here names a runtime item: the file must compile in the stencil crate.
 #![allow(dead_code)]
 
-use core::cell::Cell;
 use core::sync::atomic::AtomicBool;
 
 /// The words of an ordinary object's record (`heap::cell::Object`): its payload word and its layout id.
@@ -87,11 +86,11 @@ pub struct FunctionRecord<O, K, V> {
 /// to and including `adapter_payload`, in order, which generated code loads by offset. The runtime embeds
 /// it as the first field `head` of `CallContext`, with `Deref`/`DerefMut`. Its non-word fields are
 /// parameters: `E` the environment value (`Value`), `C` the compiled artifact, `T` the table words' record,
-/// `D` the reference call-site diagnostics, `P` the program id and `R` the raised completion (`Option<Raised>`).
+/// `P` the program id and `R` the raised completion (`Option<Raised>`).
 /// The runtime instantiates them with its own types; `layout_offsets` instantiates them with words of the same
 /// size and alignment, and `base_rows` checks each of those sizes against the runtime type.
 #[repr(C)]
-pub struct CallContextHead<E, C, T, D, P, R> {
+pub struct CallContextHead<E, C, T, P, R> {
     /// The lowest stack address compiled code may use before a call traps as exhausted.
     pub stack_limit: usize,
     /// The attention flag the code polls (`ExecutionInterrupt::attention_flag`).
@@ -120,32 +119,16 @@ pub struct CallContextHead<E, C, T, D, P, R> {
     pub compiled: *const C,
     /// The program of the code running (the VM's; compiled code never reads it).
     pub program: P,
-    /// Number of Wasm-to-host callouts made by this native invocation.
-    pub import_callouts: *mut u64,
-    /// Number of direct known calls that had to use the VM fallback.
-    pub known_callouts: *mut u64,
-    /// Number of Wasm indirect-reference callouts made by this native invocation.
-    pub reference_callouts: *mut u64,
     /// The bound linear memory whose base and size this call uses.
     pub memory: E,
     /// Its exact current byte length, refreshed when a callout may grow it.
     pub memory_length: u64,
     /// What a callout that returned the raised status raised.
     pub raised: R,
-    /// Diagnostic-only ABI fields are appended so existing repr(C) offsets
-    /// used by generated code stay fixed.
-    pub call_reference_diagnostic: usize,
-    pub reference_call_sites: *const D,
-    pub reference_call_site_count: usize,
     /// The VM's poll page (`ExecutionInterrupt::poll_page`), whose fault ends the call as
     /// terminated; empty when compiled code checks the flag instead.
     pub poll_start: usize,
     pub poll_end: usize,
-    /// Diagnostic-only count of direct Emscripten same-memory copies.
-    pub emscripten_memcpy_fast_path_hits: *mut u64,
-    /// Per-import attribution, present only during opt-in diagnostic runs.
-    pub import_callout_counts: *const Cell<u64>,
-    pub import_callout_count: usize,
     /// A stack-owned adapter payload for JS and OSR entries that use this
     /// module's common native-entry trampoline without Wasm callouts.
     pub adapter_payload: *mut (),

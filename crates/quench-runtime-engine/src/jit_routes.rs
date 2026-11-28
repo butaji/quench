@@ -19,7 +19,7 @@ pub(crate) struct JitRoutes {
     pub(crate) body: crate::compiled::lane_compile::BodyWork,
     /// A numeric function's image (`js_compiled::start`).
     pub(crate) numeric: crate::js_compiled::NumericStart,
-    /// A Wasm program's code (`compile_program_with_diagnostics_and_root`).
+    /// A Wasm program's code (`compile_program_and_root`).
     pub(crate) wasm: crate::compiled::WasmCompile,
     /// The compiler of regexp programs (`regexp_native::enable`).
     pub(crate) regexp: fn(bool),

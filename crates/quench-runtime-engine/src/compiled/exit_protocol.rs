@@ -13,7 +13,7 @@
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use super::{lane_unit, LaneExit, LoopRegion};
+use super::{lane_unit, LaneExit};
 use quench_runtime::value::Value;
 use quench_bjit::call_record::{return_status_pc, LaneStatus};
 use std::collections::HashMap;
@@ -112,37 +112,16 @@ impl LaneExit {
 }
 
 /// How a loop region's run ended: its exit, in the one vocabulary every tier's leave word
-/// decodes to, and whether it ended inside the native frames a callee's entry pushed on the lane
-/// stack, where the lane reads and continues it (`dispatch_fast::region_left_in_lane`). Whether a
-/// leave at a caller PC is a guard inside the loop or the loop's normal continuation is a
-/// function of the region (`LoopRegion::holds_exit`), not a second exit vocabulary.
+/// decodes to.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RegionRun {
     pub(crate) exit: LaneExit,
-    pub(crate) nested: bool,
 }
 
 impl RegionRun {
     /// A run that ended in the region's own activation.
     pub(crate) const fn own(exit: LaneExit) -> Self {
-        Self { exit, nested: false }
-    }
-
-    /// Whether the run left the region before its loop was done: a guard inside the loop, a leave
-    /// in an inlined or entered callee, or a call that made its callee's activation.
-    pub(crate) fn left(&self, region: &LoopRegion) -> bool {
-        self.nested || matches!(self.exit, LaneExit::Inlined { .. } | LaneExit::Callee) || region.holds_exit(self.exit)
-    }
-}
-
-#[quench_macros::ext(LoopRegionOps3)]
-impl LoopRegion {
-    /// Whether `exit` is a leave at one of the loop's own PCs: a guard's exit, which the general
-    /// path executes, rather than the jump past the loop the lane resumes at. An inlining
-    /// region's loop ends at the caller's latch, not at the region's last instruction.
-    pub(crate) fn holds_exit(&self, exit: LaneExit) -> bool {
-        let latch = self.inlining.as_ref().map_or(self.backedge, |inlining| inlining.latch);
-        matches!(exit, LaneExit::At(_)) && exit.inside(self.header..=latch)
+        Self { exit }
     }
 }
 
@@ -211,19 +190,6 @@ impl ExitTable {
     pub(crate) fn site(&self, exit: LaneExit) -> Option<&ExitSite> {
         if !exit.at_place() { return None; }
         self.sites.binary_search_by_key(&exit.word(), |site| site.word).ok().map(|index| &self.sites[index])
-    }
-
-    /// The diagnostic name of the leave `exit` (`QUENCH_LANE_BODY`): its site id and, for an
-    /// inlined leave, where its sig stores each live value (`slot>scratch`).
-    pub(crate) fn describe(&self, exit: LaneExit) -> String {
-        let Some(site) = self.site(exit) else { return String::new() };
-        let sig = &self.sigs[site.sig as usize];
-        let fact = ExitFact::NAMES[site.fact as usize];
-        if sig.kind != ExitKind::Inlined { return format!(" s{} {fact}", site.id); }
-        let stores = sig.live.iter().map(|value| match value.source {
-            Source::Scratch(at) => format!("{}>{at}", value.slot),
-        });
-        format!(" s{} {fact} {}", site.id, stores.collect::<Vec<_>>().join(","))
     }
 }
 

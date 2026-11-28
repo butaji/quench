@@ -58,15 +58,10 @@ pub(in super::super) fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this:
 pub(in super::super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit) -> Resumed {
     let base = unsafe { (*cx).base };
     if let crate::compiled::LaneExit::Returned { pc, value } = left {
-        record_end_in_lane(cx, own, method, left);
-        // SAFETY: as `leave_counts_in_lane`; a completed run carries no warming callee.
-        unsafe { (*cx).callee_warming = false };
         // SAFETY: the record that completes the activation is one of its function's.
         return returned_in_lane(cx, unsafe { base.add(pc) }, value);
     }
-    let counts = leave_counts_in_lane(cx, left);
     let resumed = body_left_in_lane(cx, r, own, method, left);
-    if !counts { note_warming_leave_in_lane(cx, own) }
     body_resumed_in_lane(cx, ip, resumed)
 }
 
@@ -121,28 +116,6 @@ pub(in super::super) fn tier_enter_in_lane(cx: *mut LaneContext, function: u32, 
     }
     if let Some(own) = own && !may_claim { own.release_from_tier(); }
     None
-}
-
-/// The bodies the call at `pc` of function `function` may call, as the closed world proves them
-/// (`FunctionFacts::proven_call_targets`), each bound as a plain function of the running program:
-/// what a lane body inlines (`lane_unit::unit`). Where no target is proven, the body's own inlined
-/// calls (`lane_unit::InlinedCall`) are the targets, else none: the general call.
-pub(crate) fn site_targets_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: u32) -> Vec<crate::compiled::CallTarget> {
-    let proven: Vec<crate::compiled::CallTarget> = vm.programs.aot_facts(vm.active_program).map_or_else(Vec::new, |facts| {
-        facts.function_facts(function).proven_call_targets(pc).into_iter()
-            .map(|body| crate::compiled::CallTarget { callee: crate::compiled::CalleeBinding::Function, function: body })
-            .take(crate::compiled::tier_policy::POLYMORPHISM)
-            .collect()
-    });
-    if !proven.is_empty() {
-        return proven;
-    }
-    view.body_view_in_lane().map_or_else(Vec::new, |method| {
-        method.inlined.iter()
-            .filter(|frame| frame.parent.is_none() && frame.call == pc)
-            .map(|frame| frame.target)
-            .collect()
-    })
 }
 
 /// The dense capture slots of `callee`'s environment (`Vm::callee_capture_slots`).

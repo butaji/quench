@@ -35,19 +35,6 @@ impl LaneView {
         self.warming()
     }
 
-    /// Its tier state and history, for `QUENCH_TRACE=body-leave`.
-    pub(crate) fn tier_note(&self) -> String {
-        let h = self.tier().history.get();
-        // SAFETY: as `lane_body`; read only.
-        let state = match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized => "unspecialized",
-            LaneBody::Compiling { .. } => "compiling",
-            LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Declined => "declined",
-        };
-        format!("{state} unpaid={} demanded={} declined={:?}", h.unpaid, h.demanded, self.tier().body_stats.declined.get())
-    }
-
     /// Native code (a loop region or a body) called this function, which has no body to enter: the
     /// call left that code to run it in the lane, a crossing per call that only its body removes.
     /// Such a caller wants its body whatever its length or entries, as a compiled caller does
@@ -93,33 +80,19 @@ impl LaneView {
     }
 }
 
-/// The target of the callee the call at `pc` of `view` last reached itself, by the site's own
-/// record (`site_targets_in_lane`): the entry its record links is another callee's once the
-/// target cache replaced it.
-pub(crate) fn site_target(vm: &super::Vm, view: &LaneView, function: u32, pc: usize) -> Option<super::ScriptCallTarget> {
-    site_targets(vm, view, function, pc).next()
-}
-
-/// Every callee the call at `pc` of `view` reached (`site_targets_in_lane`), by its target, the
-/// latest first.
-pub(crate) fn site_targets<'a>(vm: &'a super::Vm, view: &LaneView, function: u32, pc: usize) -> impl Iterator<Item = super::ScriptCallTarget> + 'a {
-    super::site_targets_in_lane(vm, view, function, pc as u32).into_iter().filter_map(|site| {
-        // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
-        vm.script_call_entry(site.identity()?).map(|target| unsafe { *target })
-    })
-}
-
-
 /// Whether a first compile of `view` waits, before any planning, for callees that still compile: it
-/// then calls their bodies by their entries (`compiled::DirectCallee`). A callee that only lacks a
+/// then calls their bodies by their entries (`compiled::DirectArm`). A callee that only lacks a
 /// body is asked to warm toward one and is not waited for. The fact `admission::route_for_lane` reads.
 pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, function: u32, body: Option<&quench_runtime::bytecode::Function>) -> bool {
     let Some(body) = body else { return false };
+    // The callees are the call's proven targets (`FunctionFacts::proven_call_targets`), each by its view in the running program.
+    let Some(facts) = vm.programs.aot_facts(vm.active_program) else { return false };
+    let (views, _) = vm.programs.lane_tables(vm.active_program);
     let calls = |pending: fn(&LaneView) -> bool| body.code.iter().enumerate().any(|(pc, packed)| {
         crate::compiled::meaning_compiled::is_call(body.widened(*packed))
-            && site_target(vm, view, function, pc).is_some_and(|target| {
-                // SAFETY: a resolved target's view outlives its program.
-                target.body.program() == vm.active_program && !target.body.view.is_null() && !std::ptr::eq(target.body.view, view) && pending(unsafe { &*target.body.view })
+            && facts.function_facts(function).proven_call_targets(pc as u32).into_iter().any(|callee| {
+                views.get(callee as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
+                    .is_some_and(|target| !std::ptr::eq(target, view) && pending(target))
             })
     });
     // A callee declined for its length warms toward the body this one calls by its entry

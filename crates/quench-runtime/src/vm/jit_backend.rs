@@ -11,6 +11,9 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(feature = "jit")]
 mod select;
+/// The select lowering, which the engine's tests run as executable code.
+#[cfg(all(feature = "jit", feature = "test-support"))]
+pub use select::convert;
 pub mod relocatable_code;
 mod worker;
 mod isa;

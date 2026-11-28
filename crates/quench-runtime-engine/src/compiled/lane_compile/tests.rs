@@ -108,7 +108,6 @@ fn chain_dependencies_retire_at_their_own_prototypes_only() {
 /// registers, a status and a result word back, and neither a frame nor a register file to store to.
 #[test]
 fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
-    use super::{DirectCandidates, lane_unit};
     /// The CLIF instructions of the scalar entry's hot blocks, a loose bound on a call's cost.
     const HOT_INSTRUCTIONS: usize = 80;
     let program = quench_runtime::Engine::specialize("function fib(n){return n<2?n:fib(n-1)+fib(n-2);} fib(3);", "scalar-entry.js").unwrap();
@@ -121,12 +120,10 @@ fn a_recursive_numeric_function_lowers_a_frameless_scalar_entry() {
     let function = target.body.function;
     // SAFETY: a resolved target's view outlives its program.
     let view = unsafe { &*target.body.view };
-    let mut direct = vec![DirectCandidates::new(); program.function(function as usize).code.len()];
-    for pc in program.function(function as usize).instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).map(|(pc, _)| pc) {
-        let site = crate::dispatch_fast::direct_callee_in_lane(&vm, view, function, pc, 1, target).expect("fib calls itself directly");
-        direct[pc].push(site);
-    }
-    let (plan, _) = vm.plan_lane_method(&program, function, &|_| (0, 0), &direct, &[], None, &|_, _, _, _| true).expect("fib plans");
+    let body = program.function(function as usize);
+    let direct = crate::compiled::direct_callee::direct_callees_in_lane(&mut vm, view, function, &program, body);
+    assert!(body.instructions().enumerate().filter(|(_, instruction)| instruction.op().is_call()).all(|(pc, _)| !direct[pc].is_empty()), "fib calls itself directly");
+    let (plan, _) = vm.plan_lane_method(&program, function, &|_| (0, 0), &direct, None, &|_, _, _, _| true).expect("fib plans");
     let scalar = plan.lowered.scalar.as_ref().expect("fib has a scalar entry");
     let clif = scalar.to_string();
     assert!(clif.contains("(i64, i64, i32) -> i32, i64"), "the entry takes the context, the captures' word and an int32: {clif}");

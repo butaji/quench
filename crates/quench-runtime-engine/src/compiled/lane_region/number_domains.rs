@@ -65,7 +65,7 @@ impl Lowering<'_, '_> {
         // loader resolves; any other linking lowering has no symbol for it, so the record leaves and
         // the lane computes it (the image's `wrapUp` otherwise branched into that process's binary).
         if self.helpers.links() && !self.helpers.names_symbols() {
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         }
         let int = self.proved_int(state, [left, right]) && !self.left_here;

@@ -176,6 +176,7 @@ pub(super) enum StaticKey {
 #[cfg(test)]
 mod tests {
     use crate::bytecode::Op;
+    use crate::vm::EngineVm;
     use crate::test_host::TestHost;
     use crate::vm::Vm;
     use crate::Engine;

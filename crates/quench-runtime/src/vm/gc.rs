@@ -468,6 +468,7 @@ impl Vm {
         self.frame_pool.shrink_to(POOLED_FRAMES_KEPT_BY_FULL_COLLECTIONS);
     }
 
+    #[quench_macros::test_visible]
     pub(super) fn collect_slow(&mut self, program: &ResidualProgram, full: bool) {
         self.collect_inner(program, full, Roots::Full, None);
     }

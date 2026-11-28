@@ -4,7 +4,7 @@
 
 use super::wasm_machine::ConcreteInstance;
 use super::wasm_memory::{
-    Access, AccessWasmMemoryExt, Memory, MemoryWasmMemoryExt, WasmMemory, WasmMemoryWrite,
+    Access, Memory, MemoryWasmMemoryExt, WasmMemory, WasmMemoryWrite,
     access_of_load, access_of_store, copy, fill, load, memory_load_direct_op, memory_of,
     memory_store_direct_op, size, store,
 };

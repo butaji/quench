@@ -5,7 +5,7 @@ pub(crate) struct LanePlan {
     pub(crate) unit: lane_unit::Unit,
     pub(crate) lowered: lane_region::LoweredLane,
     pub(crate) fields: Vec<Option<Vec<NativeFieldLoad>>>,
-    pub(crate) direct: Box<[DirectCallee]>,
+    pub(crate) direct: Box<[DirectArm]>,
     /// Whether every call of it that has run is inlined or direct (`LaneMethod::closed`).
     pub(crate) closed: bool,
     pub(crate) function: u32,

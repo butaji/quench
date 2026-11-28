@@ -237,7 +237,7 @@ pub(super) fn activate_unproven_in_lane<const ARGC: u16>(cx: *mut LaneContext, r
         if vm.lane_stack.plain.depth.get() == 0 { vm.lane_stack.refresh_plain_bound(vm.lane_stack.values.top().addr()); }
     }
     let callee_registers = fill_window_in_lane(vm, target, passed, argc);
-    let (registers, base) = enter_window_of_in_lane::<false, false, true>(cx, vm, r, ip, target, callee_registers, argc, this, false, None);
+    let (registers, base) = enter_window_of_in_lane::<false, false>(cx, vm, r, ip, target, callee_registers, argc, this, false, None);
     Some(Resumed::At(registers, base, Carried::script(cx)))
 }
 
@@ -980,9 +980,6 @@ pub(super) fn native_value_in_lane(
                 vm.data_view_access_of(Native::DataViewSetFloat64, receiver, args)
             };
             if value.is_some() {
-                if quench_runtime::vm::tier_policy::feeds_compiled_tiers(vm.execution_mode) {
-                    vm.programs.note_js_jit_dataview_float64(native == Native::DataViewSetFloat64);
-                }
                 return value;
             }
         }

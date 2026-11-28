@@ -239,17 +239,7 @@ pub(crate) unsafe extern "C" fn body_general_step(_vm: u64, _residual: u64, cont
     // guest code and moves nothing: no step, no base to refresh.
     if let Some(status) = unsafe { decided_compare_jump(context as usize as *mut LaneContext, call_pc) } { return status; }
     // SAFETY: the caller's contract.
-    let traced = quench_runtime::trace::Channel::BodyLeave.on().then(|| {
-        let cx = context as usize as *mut LaneContext;
-        let function = running_function_in_lane(cx);
-        let op = unsafe { &*(*cx).code }.function(function as usize).code.get(call_pc as usize).map(|word| word.op());
-        (function, op, unsafe { self::vm(cx) }.lane_stack.has_frames())
-    });
-    let status = unsafe { stepped(context, |cx| body_general_step_in(cx, call_pc)) };
-    if let Some((function, op, activations)) = traced && status != crate::compiled::LANE_CALL_COMPLETED {
-        eprintln!("QUENCH_CALL_STATUS helper=step function={function} pc={call_pc} op={op:?} activations={activations} status={status}");
-    }
-    status
+    unsafe { stepped(context, |cx| body_general_step_in(cx, call_pc)) }
 }
 
 /// The owner step of the record at `call_pc` (`Op::steps_on_owner`), which a b-jit row makes in place of the general step

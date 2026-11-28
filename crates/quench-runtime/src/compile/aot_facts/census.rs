@@ -55,7 +55,7 @@ impl ElementClasses {
     }
 
     /// The root of `key`'s class: the class every class of it follows to.
-    fn root(&self, mut key: ElementClass) -> ElementClass {
+    pub(super) fn root(&self, mut key: ElementClass) -> ElementClass {
         while let Some(&parent) = self.parent.get(&key) { key = parent; }
         key
     }

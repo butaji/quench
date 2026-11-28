@@ -31,7 +31,8 @@ pub const INDEX_GROW_FAILURE: i64 = -1;
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
 mod control;
 mod inline;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
+#[quench_macros::test_visible]
 pub(crate) use inline::COMPILED_CALLS_KEPT_FOR_TEST;
 mod scalar;
 mod scalar_types;
@@ -115,6 +116,7 @@ pub struct WasmCustomSection {
 }
 
 /// A typed entry derived from a module's canonical signature table.
+#[quench_macros::test_visible]
 #[derive(Clone)]
 pub struct WasmFunction {
     pub(crate) module: WasmModule,
@@ -203,6 +205,7 @@ pub struct WasmExport {
 }
 
 /// Rooted instance bindings owned by one Runtime. Release with `release_wasm`.
+#[quench_macros::test_visible]
 pub struct WasmInstance {
     pub(crate) module: WasmModule,
     pub(crate) environment: crate::RootId,

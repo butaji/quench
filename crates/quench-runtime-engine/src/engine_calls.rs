@@ -184,17 +184,8 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_in_place
 fn quench_engine_fn_retire_running_lane_context() -> () { crate::dispatch_fast::retire_running_lane_context() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_retire_running_lane_context = quench_engine_fn_retire_running_lane_context;
 #[unsafe(no_mangle)]
-fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: &dyn Fn(Value) -> bool) -> bool { crate::compiled::direct_callee::names_dead_callee(inlined, direct, live) }
+fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: &dyn Fn(Value) -> bool) -> bool { crate::compiled::direct_callee::names_dead_callee(inlined, direct, live) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_names_dead_callee = quench_engine_fn_names_dead_callee;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_lane_miss_report(events: &quench_runtime::vm::tier_events::TierEvents) -> String { crate::dispatch_fast::lane_body_stats::miss_report(events) }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_lane_miss_report = quench_engine_fn_lane_miss_report;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_lane_unlowered_report() -> String { crate::dispatch_fast::lane_body_stats::unlowered_report() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_lane_unlowered_report = quench_engine_fn_lane_unlowered_report;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_census() -> (u64, u64, u64) { crate::compiled::base_region::census() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_census = quench_engine_fn_census;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str { crate::js_compiled::candidate_rejection_reason(program, function_id) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_candidate_rejection_reason = quench_engine_fn_candidate_rejection_reason;

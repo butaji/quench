@@ -54,7 +54,7 @@ use builtin::BuiltinCall;
 pub(crate) use chain::ChainRead;
 use chain::chained_reads;
 use super::{Exit, NO_SYMBOLS, SLOT, Symbolic};
-use super::super::direct_callee::DirectCallee;
+use super::super::direct_callee::DirectArm;
 use super::super::{LaneHelper, LaneHelpers};
 use quench_runtime::bytecode::{ImmediateLayout, Register, WideInstruction};
 use quench_runtime::staged::call::{CellFacts, ENTRY_ACTIVATES, ENTRY_CELL};
@@ -91,7 +91,7 @@ pub(crate) struct CallChain {
 /// and live after it (reloaded after it), each with the register whose frame slot it uses.
 pub(crate) struct CallPlan<'a> {
     pub(crate) shape: CallShape,
-    /// Each callee the site reached, latest first (`Layout::callees`).
+    /// Each arm of the site, in arm order (`Layout::callees`).
     pub(crate) direct: &'a [DirectFacts],
     /// The address of `body_call_helper` (`helper_address`).
     pub(crate) helper: HelperPlace,
@@ -206,7 +206,7 @@ pub(crate) fn plan_leaf(pc: u32, leaf: HelperPlace, operands: [Place; 2], holes:
 }
 
 /// The chain of a call (see the module doc for its layout and successors). A polymorphic site's chain
-/// holds one direct row per callee it reached, latest first: each refuses another callee to the next
+/// holds one direct row per arm, in arm order: each refuses another callee to the next
 /// (NEXT), the last to the helper row, so a site alternating between known callees calls each by its
 /// entry, as the interpreter's own link does, and only an unknown one takes the helper.
 pub(crate) fn plan_call(plan: &CallPlan) -> Result<CallChain, String> {

@@ -37,6 +37,28 @@ pub(crate) use quench_runtime::staged;
 /// The differential oracle the engine's tier tests run a program through.
 #[cfg(test)]
 pub(crate) mod test_oracle;
+// Tier tests that run programs through the engine against the interpreter (moved from the core's
+// library tests, which do not link the engine).
+#[cfg(test)]
+mod catch_tests;
+#[cfg(test)]
+mod owner_step_tests;
+#[cfg(test)]
+mod forced_deopt_tests;
+#[cfg(test)]
+mod forced_deopt_corpus_tests;
+#[cfg(test)]
+mod lane_entry_tests;
+#[cfg(test)]
+mod lane_loop_tests;
+#[cfg(test)]
+mod shape_stability_tests;
+#[cfg(test)]
+mod native_frame_tests;
+#[cfg(test)]
+mod osr_retirement_tests;
+#[cfg(test)]
+pub(crate) mod tier_tests;
 
 /// What every layer module sees: the VM core, the layer's modules and its extension traits.
 #[allow(unused_imports)]
@@ -183,11 +205,10 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::code_heap::views::ViewsOps1 as _;
     #[cfg(target_os = "linux")] pub use crate::compiled::code_heap::views::ViewsOps2 as _;
     #[cfg(target_vendor = "apple")] pub use crate::compiled::code_heap::views::ViewsOps3 as _;
-    pub use crate::compiled::direct_callee::DirectCalleeOps1 as _;
+    pub use crate::compiled::direct_callee::DirectArmOps1 as _;
     pub use crate::compiled::entry_cell::EntryCellOps1 as _;
     pub use crate::compiled::exit_protocol::ExitKindOps1 as _;
     pub use crate::compiled::exit_protocol::LaneExitOps2 as _;
-    pub use crate::compiled::exit_protocol::LoopRegionOps3 as _;
     pub use crate::compiled::exit_protocol::ExitTableOps1 as _;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1 as _;
     pub use crate::compiled::frameless::CalleeAdmissionsOps1 as _;
@@ -272,7 +293,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::generator_windows::WindowPlanOps1 as _;
     pub use crate::dispatch_fast::generator_yields::DispatchFastGeneratorYieldsVm as _;
     pub use crate::dispatch_fast::in_place_natives::DispatchFastInPlaceNativesVm as _;
-    pub use crate::dispatch_fast::lane_body_stats::LaneBodyStatsOps1 as _;
     pub use crate::dispatch_fast::lane_eval::LaneStackOps10 as _;
     pub use crate::dispatch_fast::lane_frames::ActivationViewOps1 as _;
     pub use crate::dispatch_fast::lane_frames::SidePayloadOps1 as _;

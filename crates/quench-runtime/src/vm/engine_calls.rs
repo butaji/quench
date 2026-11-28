@@ -73,10 +73,7 @@ unsafe extern "Rust" {
     safe fn quench_engine_fn_direct_memory(vm: &Vm, binding: Value) -> Option<(*mut u8, usize)>;
     safe fn quench_engine_fn_in_place_in_loop(native: Native) -> bool;
     safe fn quench_engine_fn_retire_running_lane_context() -> ();
-    safe fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: &dyn Fn(Value) -> bool) -> bool;
-    safe fn quench_engine_fn_lane_miss_report(events: &crate::vm::tier_events::TierEvents) -> String;
-    safe fn quench_engine_fn_lane_unlowered_report() -> String;
-    safe fn quench_engine_fn_census() -> (u64, u64, u64);
+    safe fn quench_engine_fn_names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: &dyn Fn(Value) -> bool) -> bool;
     safe fn quench_engine_fn_candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str;
     safe fn quench_engine_fn_settle_name_record(view: &LaneView, pc: usize) -> ();
     safe fn quench_engine_fn_native_js_lane_helpers() -> *const ();
@@ -305,16 +302,8 @@ pub fn in_place_in_loop(native: Native) -> bool { quench_engine_fn_in_place_in_l
 pub fn retire_running_lane_context() -> () { quench_engine_fn_retire_running_lane_context() }
 
 #[inline(always)]
-pub fn names_dead_callee(inlined: &[InlinedCall], direct: &[DirectCallee], live: &dyn Fn(Value) -> bool) -> bool { quench_engine_fn_names_dead_callee(inlined, direct, live) }
+pub fn names_dead_callee(inlined: &[InlinedCall], direct: &[DirectArm], live: &dyn Fn(Value) -> bool) -> bool { quench_engine_fn_names_dead_callee(inlined, direct, live) }
 
-#[inline(always)]
-pub fn lane_miss_report(events: &crate::vm::tier_events::TierEvents) -> String { quench_engine_fn_lane_miss_report(events) }
-
-#[inline(always)]
-pub fn lane_unlowered_report() -> String { quench_engine_fn_lane_unlowered_report() }
-
-#[inline(always)]
-pub fn census() -> (u64, u64, u64) { quench_engine_fn_census() }
 
 #[inline(always)]
 pub fn candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str { quench_engine_fn_candidate_rejection_reason(program, function_id) }
@@ -429,10 +418,7 @@ pub mod signatures {
     #[allow(non_camel_case_types)] pub type quench_engine_fn_direct_memory = fn(&Vm, Value) -> Option<(*mut u8, usize)>;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_in_place_in_loop = fn(Native) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_retire_running_lane_context = fn() -> ();
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_names_dead_callee = fn(&[InlinedCall], &[DirectCallee], &dyn Fn(Value) -> bool) -> bool;
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_lane_miss_report = fn(&crate::vm::tier_events::TierEvents) -> String;
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_lane_unlowered_report = fn() -> String;
-    #[allow(non_camel_case_types)] pub type quench_engine_fn_census = fn() -> (u64, u64, u64);
+    #[allow(non_camel_case_types)] pub type quench_engine_fn_names_dead_callee = fn(&[InlinedCall], &[DirectArm], &dyn Fn(Value) -> bool) -> bool;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_candidate_rejection_reason = fn(&ResidualProgram, u32) -> &'static str;
     #[allow(non_camel_case_types)] pub type quench_engine_fn_settle_name_record = fn(&LaneView, usize) -> ();
     #[allow(non_camel_case_types)] pub type quench_engine_fn_native_js_lane_helpers = fn() -> *const ();

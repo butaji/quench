@@ -243,6 +243,7 @@ impl Vm {
     /// over one captured binding `V` (`copy_within_capture`). The binding is named by its capture's depth
     /// and slot in the owner's environment, never by name. The capture location is retained; the view itself
     /// is deliberately re-read on every call because Emscripten replaces it after `WebAssembly.Memory.grow()`.
+    #[quench_macros::test_visible]
     pub(in crate::vm) fn emscripten_memcpy_view_capture(
         &self,
         function: Value,

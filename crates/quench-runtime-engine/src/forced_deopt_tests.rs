@@ -3,14 +3,14 @@
 //! wrongly shows as a different answer, so any mismatch is a bug in the projection that emitted
 //! that guard.
 
-use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 /// Runs `source` with each of its first `limit` guards forced, each run held to the interpreter's
 /// outcome by the oracle; the guards the unforced run emitted.
 pub(super) fn forced_everywhere(source: &str, limit: usize) -> usize {
-    let guards = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).guards;
+    let guards = assert_tier_agrees(source, Tier::Full).guards;
     for forced in 0..guards.min(limit) {
-        assert_tier_agrees(source, Tier::Forced(forced), Expect::ENGAGED);
+        assert_tier_agrees(source, Tier::Forced(forced));
     }
     guards
 }

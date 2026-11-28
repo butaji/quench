@@ -46,7 +46,7 @@ pub struct JsStepHead<V> {
     /// The record a lane body's completion runs (`LANE_BODY_RETURNED`).
     pub returned_pc: usize,
     /// A lane run's lane stack, where a direct call places its callee's registers and its
-    /// native frame (`DirectCallee`): the words that hold the values' and the activations'
+    /// native frame (`DirectBody`): the words that hold the values' and the activations'
     /// tops, which the VM's `LaneStack` owns (`Vm::lane_stack_words`), the end of the values'
     /// capacity, and the end of the frames the run nests (`SHADOW_FRAMES`).
     pub lane_values_top: usize,
@@ -106,7 +106,7 @@ pub struct JsStepHead<V> {
     /// the table's top word. (reconciled with u-jit F5 on merge)
     pub body_table: usize,
     pub body_top: usize,
-    /// The DirectCallee descriptor of each native frame, indexed as `body_table` (the u-jit half of F5).
+    /// The DirectBody descriptor of each native frame, indexed as `body_table` (the u-jit half of F5).
     pub native_table: usize,
     /// The return of an emitted call whose native header Rust observed, spilled into a record or linked
     /// (`LaneStack::pop_observed_header`): `extern "C" fn(vm, residual) -> u64`, which the b-jit direct
