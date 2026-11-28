@@ -1624,9 +1624,8 @@ pub type LeafForm = crate::staged::call_leaf::LeafForm;
 pub enum LoopBody {
     /// Not yet compiled.
     Idle,
-    /// Its code compiling on the code generator's thread; `wait` counts the backedges left
-    /// before the next look.
-    Compiling { pending: Box<dyn std::any::Any>, wait: u16 },
+    /// Its code compiling on the code generator's thread, polled at each backedge.
+    Compiling { pending: Box<dyn std::any::Any> },
     /// Its code, which a run enters at the loop's header.
     Ready { method: std::rc::Rc<PublishedLaneMethod> },
     Declined,
@@ -4194,10 +4193,8 @@ impl JsEntryFacts {
 
     #[inline]
 
-    pub fn of(program: &ResidualProgram, function: &Function, priced: bool) -> Self {
-        let has_calls = function.instructions().any(|instruction|
-            instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call);
-        Self { candidate: function_candidate(function, program) && (!priced || has_calls || pays_native_entry(function)) }
+    pub fn of(program: &ResidualProgram, function: &Function) -> Self {
+        Self { candidate: function_candidate(function, program) }
     }
 }
 

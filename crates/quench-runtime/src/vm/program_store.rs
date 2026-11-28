@@ -132,7 +132,7 @@ impl JsJitCallOutcome {
     }
 }
 
-use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MAX_TIER_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, LANE_VIEW_DEFERRED_RUNS};
+use crate::vm::tier_policy::{JS_JIT_MAX_FUNCTIONS, JS_JIT_MAX_MAPPED_BYTES, WASM_JIT_MAX_TIER_ROOTS, WASM_JIT_MAX_TIER_MAPPED_BYTES, JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES};
 // Tier observations include dynamically generated functions across all retained
 // programs. Web-SSR exposes more than 1,300 functions in one VM; keep a fixed
 // metadata bound large enough to observe that workload without changing the
@@ -453,9 +453,8 @@ struct ProgramEntry {
     planned_targets: std::cell::RefCell<std::collections::BTreeMap<(u32, u32, u32), Box<crate::vm::engine_types::PlannedTarget>>>,
     /// Whether every function's planned sites have registered their arms' targets (`register_planned_targets`).
     planned_registered: std::cell::Cell<bool>,
-    /// Per function: the runs it has made without its lane view (`entry_lane_view`,
-    /// `call_may_derive_in_lane`), up to `LANE_VIEW_DEFERRED_RUNS`.
-    lane_deferred: Vec<std::cell::Cell<u8>>,
+    /// Per function: whether it loops, and whether that is known (`function_loops`).
+    lane_loops: Vec<std::cell::Cell<u8>>,
     /// Sparse frontend-specific hotness state and compiled artifacts, owned
     /// by one VM-local tier manager.
     jit_tiers: JitTierManager,
@@ -673,7 +672,7 @@ impl ProgramStore {
         let body = entry.residual.function_get(function as usize)?;
         let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body, !cfg!(test)); // tests pin tiny fixtures
+            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body);
             #[cfg(any(test, feature = "test-support"))]
             let facts = if self.js_entry_specializations_enabled { facts } else { Default::default() };
             if facts.is_unset() {
@@ -1221,7 +1220,7 @@ impl ProgramStore {
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = FxHashMap::default();
         let views_in_lane = LaneViews::default();
-        let lane_deferred = zeroed_counts(program.functions.capacity());
+        let lane_loops = zeroed_counts(program.functions.capacity());
         let origin = if program.kind == crate::bytecode::ProgramKind::Eval { CompilationOrigin::Eval { caller: None } } else { CompilationOrigin::Source };
         self.context_epoch += 1;
         self.shared_ids.entry(Rc::as_ptr(&program) as usize).or_insert(id);
@@ -1253,7 +1252,7 @@ impl ProgramStore {
             class_prototypes: Default::default(),
             planned_targets: Default::default(),
             planned_registered: std::cell::Cell::new(false),
-            lane_deferred,
+            lane_loops,
             jit_tiers: JitTierManager::default(),
             scope: ProgramScope::Own,
             origin,
@@ -2371,16 +2370,12 @@ impl ProgramStore {
         (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
     }
 
-    /// The lane view a general-loop entry of `function` runs with. A function that may loop
-    /// gets it at its first entry; any other once its deferred runs are complete
-    /// (`LANE_VIEW_DEFERRED_RUNS`), so code that runs a few times without looping (a module
-    /// body) runs on the general path instead of first deriving a view of every instruction,
-    /// which costs more than those runs.
+    /// The lane view a general-loop entry of `function` runs with: derived at its first entry,
+    /// unless it still runs unlowered (`ResidualProgram::runs_tier0`).
     pub fn entry_lane_view<'s>(
         &'s self,
         id: ProgramId,
         function: u32,
-        may_loop: impl FnOnce(&crate::bytecode::Function) -> bool,
         derive: impl FnOnce(
             &crate::bytecode::Function,
             &[Value],
@@ -2395,29 +2390,19 @@ impl ProgramStore {
             return Some(view.as_ptr());
         }
         let code = entry.residual.function_get(function as usize)?;
-        if !deferred_run_completes(entry.lane_deferred.get(function as usize)?) && !may_loop(code) || entry.residual.runs_tier0(function as usize) {
+        if entry.residual.runs_tier0(function as usize) {
             return None;
         }
         Some(store_lane_view(entry, function, code, view, derive))
     }
 
-    /// Whether a lane call may derive `function`'s view now: it has one, or its earlier entries
-    /// and lane calls completed its deferred runs (`LANE_VIEW_DEFERRED_RUNS`), as
-    /// `entry_lane_view` defers its entries. A deferred call counts its run and takes the
-    /// general path.
-    /// An unlowered function derives only where `unlowered` (`Vm::call_may_derive_in_lane`); where
-    /// `now`, its deferred runs are skipped, uncounted.
-    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32, unlowered: bool, now: bool) -> bool {
+    /// Whether a lane call may derive `function`'s view now: it has one, or the function is one
+    /// of the program's (`Vm::call_may_derive_in_lane` lowers it first).
+    pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.entry_in_lane(id) else {
             return false;
         };
-        let derived = entry.views_in_lane.derived(function).is_some();
-        derived
-            || entry
-                .lane_deferred
-                .get(function as usize)
-                .is_some_and(|runs| now || deferred_run_completes(runs))
-                && (unlowered || !entry.residual.runs_tier0(function as usize))
+        entry.views_in_lane.derived(function).is_some() || entry.residual.function_get(function as usize).is_some()
     }
 
     pub fn view_in_lane<'s>(
@@ -2687,16 +2672,6 @@ fn census_label(entry: &ProgramEntry, function: u32) -> String {
         body.and_then(|body| body.name).map(|atom| code.atoms[atom as usize].to_string()).unwrap_or_default(),
         body.and_then(|body| body.source_span).map(|span| span.start),
     )
-}
-
-/// Count one view-less run of a function; true once its deferred runs are complete.
-fn deferred_run_completes(runs: &std::cell::Cell<u8>) -> bool {
-    let held = runs.get();
-    if held & loops::DEFERRED_RUNS >= LANE_VIEW_DEFERRED_RUNS {
-        return true;
-    }
-    runs.set(held + 1);
-    false
 }
 
 /// A program's lane views by function, derived on first use (`ProgramStore::entry_lane_view`).

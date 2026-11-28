@@ -20,16 +20,6 @@ pub struct Tiers {
 }
 
 
-/// The runs a loop-free function makes unlowered before a later call lowers it
-/// (`bytecode::tier0`): the runs a lane view waits for (`LANE_VIEW_DEFERRED_RUNS`), so the
-/// lowering lands before its view derives. Octane-code-load instructions against lowering
-/// at the first read: -9.8% at four, -8.2% at two; mobx-startup -0.5% at both.
-pub(crate) const TIER0_RUNS: u8 = 4;
-
-/// The calls past `TIER0_RUNS` whose lowering a live frame of the function blocked, after
-/// which its lane view derives from the unlowered record (`ResidualProgram::tier0_blocked`).
-pub(crate) const TIER0_BLOCKED_RUNS: u8 = 16;
-
 /// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
 /// (`base_region::inline_plan`). Which callees inline is `inlines`; this is the stitch's room.
 pub struct Stitch {
@@ -284,26 +274,6 @@ pub const fn by_policy(policy: crate::MemoryPolicy) -> &'static PolicyTiers {
     &BY_POLICY[policy as usize]
 }
 
-// Lane entry (dispatch_fast): the runs a lane entry must repay
-/// The shortest straight-line lane run the general loop enters. Entering
-/// builds the lane context and memory view, which one or two lane
-/// instructions do not repay: on V8-v7 fixed work, three keeps every
-/// JavaScript benchmark within one percent of the general path or better
-/// (one and two cost DeltaBlue three percent), and leaves Wasm loops,
-/// whose runs are long, unchanged.
-pub const LANE_ENTRY_MIN_RUN: usize = 3;
-
-/// `LANE_ENTRY_MIN_RUN` in a function with no loop the lane runs whole: each call the
-/// general loop makes into it enters the lane anew, so a run must repay a fresh lane
-/// context.
-pub const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
-
-/// The backedges between looks for a loop body's compiling code.
-pub const LOOP_BODY_POLL: u16 = 16;
-
-/// The widest backoff after declined entries: `2^16 - 1` entries pass untried between attempts.
-pub const MAX_ENTRY_BACKOFF: u32 = 16;
-
 // Lane bodies: compile admission (compiled/lane_compile, lane_region, lane_unit)
 /// The IR size above which a lane body's registers are allocated in one pass. The backtracking
 /// allocator's scratch memory grows with the function, and a body this large (JetStream-scale
@@ -382,22 +352,6 @@ fn accessor_shaped(body: &Function) -> bool {
 }
 
 // Lane bodies: history, recurrence and loop views (lane_body_tier, dispatch_frame, program_store)
-/// The backward jumps a JavaScript activation takes in the general path before its function's
-/// lane view is derived and the lane runs its loop (`Vm::note_back_edge`). Deriving a view
-/// costs some hundreds of instructions per instruction of the function; a module body that
-/// loops a few times (over its exports, say) ran faster without one.
-pub(crate) const HOT_LOOP_BACK_EDGES: u16 = 16;
-
-/// The loop work, in instructions its back edges span per instruction of the function, after
-/// which a view-less activation derives its function's lane view (`HotLoop`). A view costs
-/// some hundreds of instructions per instruction of the whole function, so a short loop in a
-/// large body that runs once (a module body filling a table) ran
-/// faster without one. Measured in instructions, warm compile cache, against deriving at
-/// `HOT_LOOP_BACK_EDGES` alone (x86_64 VM, 2026-10-26): @babel/core -11.0% (one: +0.9%,
-/// four: -9.9%), and within 0.2% on schema-utils, axios, semver, ajv, eslint, jiti, undici
-/// and source-map.
-pub(crate) const LANE_VIEW_LOOP_PAYBACK: u32 = 8;
-
 /// The tier a function runs in under default mode (design decision 4.9): the interpreter, or a compiled body. `Tier`
 /// names the compiled tiers only, so the interpreter is this enum's own variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -488,13 +442,6 @@ pub fn regexp_compiles(pattern_static_frequency: u64, pattern_size: usize) -> bo
     saved > cost
 }
 
-/// The runs a function makes on the general path before it derives its lane view, which costs
-/// about a thousand instructions per bytecode instruction, so a function that runs fewer times
-/// costs no view. Measured in instructions against deriving at the second run: four takes 3.3%
-/// from the jiti npm scenario (Babel's many functions that run a few times) and 0.1-0.6% from
-/// semver, ajv, Babel, color-convert and typescript-eslint; eight adds at most 0.3%.
-pub(crate) const LANE_VIEW_DEFERRED_RUNS: u8 = 4;
-
 // OSR loop regions: compile admission (compiled/osr_loop, osr_compile)
 /// The most instructions a region spans. Native code polls termination only at backward
 /// jumps, so the bound keeps compile time and code size proportional to small loop bodies.
@@ -557,16 +504,6 @@ pub const MAX_UNROLL_FACTOR: usize = 4;
 /// every worker fed (unbounded; the same rows, median of 8, were unchanged).
 pub const WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT: [Option<usize>; crate::MemoryPolicy::ALL.len()] =
     [None, Some(50_000)];
-
-/// `compiled`'s body run directly on `arguments`, its parameters, when each is a Number
-/// its guards admit: the call a known callee makes without a frame (`js_jit_compiled_call`).
-/// The lane records a loop-free body runs below which a frameless activation is cheaper than
-/// the JavaScript tier's native entry of it. A direct native entry (`tier_prologue_in_lane`,
-/// `direct_call`, the shared entry) costs about 380 machine instructions past the
-/// activation, and a lane record about 20 (callgrind, typescript-lib under `--jit`,
-/// 2026-10-28: 9.7M native entries of 3- to 12-instruction predicates such as
-/// `isLineBreak`), so a body shorter than this cannot recoup its entries.
-pub const JS_TIER_LANE_ENTRY_RECORDS: usize = 20;
 
 // Program JIT admission and clocks (program_store): artifact and mapped-byte budgets, Wasm module compiles
 pub(crate) const JS_JIT_MAX_FUNCTIONS: usize = 64;

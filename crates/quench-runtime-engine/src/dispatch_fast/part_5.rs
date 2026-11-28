@@ -499,19 +499,9 @@ pub(crate) fn derive_lane_view<'live>(
         specialize_plain_operators(&decoded, constants, &mut records, false, &|_, _| quench_runtime::typed_ir::Type::ANY);
         specialize_register_operands(&mut records);
     }
-    let min_run = if closes_loop(&decoded, &exits) {
-        LANE_ENTRY_MIN_RUN
-    } else {
-        LANE_ENTRY_MIN_CALL_RUN
-    };
-    // A resumed JavaScript loop body's straight tail jumps back to its head, so its run
-    // continues there; a Wasm body resumes nowhere, and following its jumps only made more
-    // of its PCs entries, whose lane runs a `return_call` chain left at once (TOD-19:
-    // `return_call_ref.wast` 510 -> 797 ms).
-    let runs = runs_ahead_in_lane(&decoded, &exits, min_run, !wasm);
-    let mut entries = vec![0u64; runs.len().div_ceil(u64::BITS as usize)];
-    for (pc, (run, reads)) in runs.iter().zip(&reads_accumulator).enumerate() {
-        if *run >= min_run && !reads {
+    let mut entries = vec![0u64; exits.len().div_ceil(u64::BITS as usize)];
+    for (pc, (&exit, reads)) in exits.iter().zip(&reads_accumulator).enumerate() {
+        if (!exit || quench_runtime::staged::awaits(decoded[pc].op())) && !reads {
             entries[pc / u64::BITS as usize] |= 1 << (pc % u64::BITS as usize);
         }
     }
@@ -1495,38 +1485,6 @@ pub(super) fn may_loop(function: &Function) -> bool {
     })
 }
 
-/// How many lane records control reaches from each PC before one that exits, counted up
-/// to `cap`: where `follows_jumps`, a `Jump` continues at its target, as a resumed loop body
-/// does, and any other record at the next PC. Each pass extends every count by one step, so
-/// `cap` passes reach the fixed point the capped counts allow; without jumps one pass does.
-/// An `Await` counts as `cap`: a resumed async frame's lane run that stops there suspends
-/// without the general loop (`Vm::stop_awaits_in_lane`), so a short run to it repays its entry.
-pub(super) fn runs_ahead_in_lane(decoded: &[WideInstruction], exits: &[bool], cap: usize, follows_jumps: bool) -> Vec<usize> {
-    let next = |pc: usize| match decoded[pc].op() {
-        _ if follows_jumps && quench_runtime::staged::jump_family(decoded[pc].op()) => decoded[pc].imm() as usize,
-        _ => pc + 1,
-    };
-    let mut runs = vec![0usize; exits.len()];
-    for _ in 0..cap {
-        let mut changed = false;
-        for pc in (0..exits.len()).rev() {
-            let run = if quench_runtime::staged::awaits(decoded[pc].op()) {
-                cap
-            } else if exits[pc] {
-                0
-            } else {
-                (1 + runs.get(next(pc)).copied().unwrap_or(0)).min(cap)
-            };
-            changed |= run != runs[pc];
-            runs[pc] = run;
-        }
-        if !changed {
-            break;
-        }
-    }
-    runs
-}
-
 /// Whether the straight-line run from the first instruction, through its unconditional jumps,
 /// reaches a `Return` before any record the lane exits at.
 pub(super) fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> bool {
@@ -1542,15 +1500,6 @@ pub(super) fn entry_run_returns(decoded: &[WideInstruction], exits: &[bool]) -> 
         }
     }
     false
-}
-
-pub(super) fn closes_loop(decoded: &[WideInstruction], exits: &[bool]) -> bool {
-    decoded.iter().enumerate().any(|(pc, &instruction)| {
-        let target = instruction.imm() as usize;
-        instruction.op().immediate_role() == ImmediateRole::JumpTarget
-            && target <= pc
-            && !exits[target..=pc].contains(&true)
-    })
 }
 
 /// The register field of `instruction` that reads `register`, as an

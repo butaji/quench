@@ -13,7 +13,6 @@ pub(crate) use quench_runtime::vm::engine_types::LoopBody;
 #[cfg(feature = "jit")]
 use crate::compiled::loop_tier_up::raise_tier_up;
 
-use crate::compiled::tier_policy::LOOP_BODY_POLL;
 #[quench_macros::ext(LoopBodyOps1)]
 impl LoopBody {
     pub(crate) const IDLE: Self = Self::Idle;
@@ -33,7 +32,6 @@ impl LoopBody {
                 if ready.is_none() { *self = Self::Idle; }
                 ready
             }
-            Self::Compiling { wait, .. } if *wait > 0 => { *wait -= 1; None }
             _ => None,
         }
     }
@@ -41,7 +39,7 @@ impl LoopBody {
     /// The state after the work for the body (`outcome`).
     fn after(outcome: LaneBodyOutcome) -> Self {
         match outcome {
-            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL },
+            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending },
             LaneBodyOutcome::Published(method) => Self::Ready { method },
             LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Self::Idle,
             // The predicted tier is the interpreter's pick, fixed by the program: the loop runs interpreted for good.
@@ -160,7 +158,7 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     let own = unsafe { &*(*cx).views }.get(site.function as usize).and_then(super::program_store::derived_lane_view)?;
     let ready = site.body.borrow_mut().ready();
     let Some(method) = ready else {
-        if !matches!(*site.body.borrow(), LoopBody::Declined | LoopBody::Compiling { wait: 1.., .. }) { plan_loop_body(cx, own, site); }
+        if !matches!(*site.body.borrow(), LoopBody::Declined) { plan_loop_body(cx, own, site); }
         return None;
     };
     if !body_admits_in_lane(cx, &method, NO_PENDING_ACTIVATIONS) { return None; }

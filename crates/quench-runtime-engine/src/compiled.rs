@@ -1813,7 +1813,7 @@ impl AnalysisState {
 /// normal return.
 use quench_runtime::wasm::trap::COMPILED_TRAPS as TRAPS;
 
-use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT, JS_TIER_LANE_ENTRY_RECORDS};
+use crate::compiled::tier_policy::{MAX_JIT_ROOT_FUNCTIONS, MAX_JIT_ROOT_BYTECODES_PER_FUNCTION, MAX_JIT_ROOT_CODE_BYTES, THREAD_BUDGET, UNROLL_BUDGET, MAX_UNROLL_FACTOR, WASM_COMPILE_INSTRUCTIONS_IN_FLIGHT};
 
 /// Linux process RSS and high-water mark, in KiB, for opt-in JIT diagnostics.
 #[cfg(target_os = "linux")]
@@ -7520,9 +7520,7 @@ impl Vm {
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
         }
-        let candidate = facts.candidate && program.function_get(function as usize).is_some_and(pays_native_entry);
-        // Inlining may erase a short body's calls; a call-free candidate still has
-        // to pay for native entry under the same cost policy.
+        let candidate = facts.candidate && program.function_get(function as usize).is_some();
         candidate || lane_claims
     }
 
@@ -8810,12 +8808,6 @@ impl Vm {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-
-/// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
-/// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
-pub(crate) fn pays_native_entry(body: &quench_runtime::bytecode::Function) -> bool {
-    body.code.len() >= JS_TIER_LANE_ENTRY_RECORDS || body.loops()
-}
 
 pub(crate) use quench_runtime::vm::engine_types::DirectTierEntry;
 
