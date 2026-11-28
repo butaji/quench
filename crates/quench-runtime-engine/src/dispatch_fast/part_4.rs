@@ -24,10 +24,6 @@ pub(crate) use returns::*;
 mod reads;
 #[allow(unused_imports)]
 pub(crate) use reads::*;
-#[path = "part_4/memos.rs"]
-mod memos;
-#[allow(unused_imports)]
-pub(crate) use memos::*;
 #[path = "part_4/async_calls.rs"]
 mod async_calls;
 #[allow(unused_imports)]

@@ -26,7 +26,7 @@ use super::types;
 use super::value;
 use super::AotFacts;
 use super::BodyForm;
-use super::super::body_forms::{body_entry, forwards_args, read_shape, returning_read};
+use super::super::body_forms::{body_entry, forwards_args, returning_read};
 use crate::staged::effects::CallForm;
 use crate::vm::engine_types::{CallEntry, Framed};
 use crate::bytecode::ResidualProgram;
@@ -134,7 +134,6 @@ fn body_forms(program: &ResidualProgram, facts: &AotFacts) -> Box<[BodyForm]> {
         BodyForm {
             entry: (!(frameless && entry == CallEntry::framed(Framed::Activates))).then_some(entry),
             returning: returning_read(body),
-            read: read_shape(body),
             forwards: forwards_args(body, &body.call_plan(program)),
         }
     })).collect()

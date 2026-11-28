@@ -613,8 +613,8 @@ pub(super) fn function_call_activation_in_lane(
     }
 }
 
-/// `passed_target_in_lane` of a forwarded call's `callee` at the call record `ip`, whose read
-/// memo slot links the callee's cache entry, as an array callback method's call links its
+/// `passed_target_in_lane` of a forwarded call's `callee` at the call record `ip`, whose
+/// `CallOperand::memo` slot links the callee's cache entry, as an array callback method's call links its
 /// callback's (`callback_target_in_lane`): the link, tested first, skips the set's hash and the
 /// cross-program and environment lookups for a callee the running program activates.
 #[inline(always)]

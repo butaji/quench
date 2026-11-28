@@ -239,8 +239,8 @@ use quench_runtime::vm::engine_types::FieldOperand;
 
 use quench_runtime::vm::engine_types::CallOperand;
 
-/// A `CallOperand::memo` that names no slot: no table holds this many.
-const NO_READ_MEMO: u32 = u32::MAX;
+/// A `CallOperand::memo` link that names no script target: no cache holds this many.
+const NO_OPERAND_LINK: u32 = u32::MAX;
 
 /// The `FieldOperand::shape` of a record whose hint is an inherited entry
 /// (`Vm::inherited_hint_operands`): no object's exact shape (`Object::exact_shape`, whose id
@@ -1908,11 +1908,6 @@ impl LaneStack {
         Admission(Admission::new(self.generation, program).0 | self.refused & Admission::DIAGNOSED)
     }
 
-    /// The admission a target or memo made now holds: the lane's, without its conditions.
-    #[inline(always)]
-    fn current_admission(&self) -> Admission {
-        Admission(self.admission.0 & !Admission::CONDITIONS)
-    }
 }
 
 pub(crate) use quench_runtime::vm::engine_types::DeferredLaneCall;
@@ -4997,7 +4992,7 @@ script_handler! {
         } else {
             let passed = ReadArguments { registers: r, base: arguments, passed: argc };
             // SAFETY: as `call_read_in_lane`.
-            unsafe { answered_call_in_lane(cx, ip, target, passed, this) }
+            unsafe { answered_call_in_lane(cx, target, passed, this) }
         };
         let Some(value) = value else {
             // An activation keeping values past the parameters, a full lane stack or another
@@ -6716,161 +6711,6 @@ impl ForwardRead {
         Some((self.method.run(vm, code, receiver)?, receiver))
     }
 }
-
-use quench_runtime::vm::engine_types::MemoLeaf;
-
-/// The memo shapes `script_call_memo_miss` takes as its parameter: a leaf's step
-/// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
-/// (`MemoRead::Forward`), so a site's handler makes its memo's steps with no dispatch on them.
-use quench_runtime::compile::body_forms::{MEMO_ELEMENT, MEMO_FIELD, MEMO_FORWARD, MEMO_LENGTH, MEMO_NESTED};
-
-#[quench_macros::ext(MemoLeafOps1)]
-impl MemoLeaf {
-    /// Its step's memo shape.
-    fn shape(&self) -> u8 {
-        match self {
-            Self::Field { .. } => MEMO_FIELD,
-            Self::Element { .. } => MEMO_ELEMENT,
-            Self::Length { .. } => MEMO_LENGTH,
-            Self::Nested { .. } => MEMO_NESTED,
-        }
-    }
-
-    /// The memo form of `read`, whose hits the active program's caches just answered; `None`
-    /// for a polymorphic or inherited read.
-    fn of(vm: &Vm, code: &ResidualProgram, read: LeafRead) -> Option<Self> {
-        let entry = |hit: FieldHit| match hit {
-            FieldHit::Own(cache) | FieldHit::Holder(cache) => vm.field_cache_entry(cache),
-        };
-        Some(match read {
-            LeafRead::Field { base, kind: RETURNING_FIELD_OWN | RETURNING_FIELD_HOLDER, cache } => {
-                Self::Field { base, field: vm.field_cache_entry(cache) }
-            }
-            LeafRead::Field { .. } => return None,
-            // The memo holds for its callee alone, whose environment fixes the home, so the
-            // site's shape and slot under it are a plain own field step.
-            LeafRead::Private { base, site, environment, .. } => {
-                Self::Field { base, field: vm.site_private_field_entry(site, environment)? }
-            }
-            LeafRead::Element { base, field, index } => Self::Element { base, field: entry(field), index },
-            LeafRead::Nested { site } => {
-                // SAFETY: a nested record of the running program names its site.
-                let site = unsafe { code.field_sites.get_unchecked(site as usize) };
-                let (base, field) = (site.base.0, vm.field_cache_entry(site.first.1));
-                match site.second {
-                    None => Self::Field { base, field },
-                    Some((atom, _)) if atom == vm.length_atom => Self::Length { base, field },
-                    Some((_, second)) => Self::Nested { base, field, second: vm.field_cache_entry(second) },
-                }
-            }
-        })
-    }
-
-    /// This memo with its steps as `Vm::formed_entry` makes them of the objects a call passing
-    /// `arguments` on `this` reads, which its steps just answered: each step then proves its
-    /// shapes and storage forms by whole-word compares (`Vm::record_field_formed_hit`).
-    fn formed(self, vm: &Vm, arguments: ReadArguments, this: Value) -> Self {
-        let base_of = |base: u16| read_base_in_lane(quench_runtime::bytecode::FieldBase(base), arguments, this);
-        let formed = |field: quench_runtime::vm::FieldCache, base: u16| base_of(base).map_or(field, |object| vm.formed_entry(field, object));
-        match self {
-            Self::Field { base, field } => Self::Field { base, field: formed(field, base) },
-            Self::Element { base, field, index } => Self::Element { base, field: formed(field, base), index },
-            Self::Length { base, field } => Self::Length { base, field: formed(field, base) },
-            Self::Nested { base, field, second } => {
-                let object = base_of(base).and_then(|object| vm.record_field_entry_hit(field, object));
-                let second = object.map_or(second, |object| vm.formed_entry(second, object));
-                Self::Nested { base, field: formed(field, base), second }
-            }
-        }
-    }
-
-    /// `LeafRead::run` of the read this memo records, of the step `shape` names (a constant
-    /// where it inlines); `None` for a memo of another step.
-    #[inline(always)]
-    fn run(
-        &self,
-        shape: u8,
-        vm: &Vm,
-        arguments: ReadArguments,
-        this: Value,
-        this_record: Option<&quench_runtime::tier_surface::Object>,
-    ) -> Option<Value> {
-        match *self {
-            Self::Field { base: field_base, field } if shape == MEMO_FIELD => memo_first_step(vm, field, field_base, arguments, this, this_record),
-            Self::Element { base: field_base, field, index } if shape == MEMO_ELEMENT => {
-                let array = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
-                vm.direct_dense_element(array, arguments.get(index)?)
-            }
-            Self::Length { base: field_base, field } if shape == MEMO_LENGTH => {
-                let array = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
-                vm.array_length_field(array, vm.length_atom)
-            }
-            Self::Nested { base: field_base, field, second } if shape == MEMO_NESTED => {
-                #[cfg(feature = "profile-field-primitives")]
-                vm.profile.field_primitives.hit(quench_runtime::profile::field_primitives::Path::MemoPairAttempt);
-                let object = memo_first_step(vm, field, field_base, arguments, this, this_record)?;
-                #[cfg(feature = "profile-field-primitives")]
-                vm.profile.field_primitives.hit(quench_runtime::profile::field_primitives::Path::MemoPairFirstHit);
-                let value = vm.record_field_formed_hit(second, object);
-                #[cfg(feature = "profile-field-primitives")]
-                if value.is_some() { vm.profile.field_primitives.hit(quench_runtime::profile::field_primitives::Path::MemoPairHit); }
-                value
-            }
-            _ => None,
-        }
-    }
-}
-
-
-use quench_runtime::vm::engine_types::MemoRead;
-
-#[quench_macros::ext(MemoReadOps1)]
-impl MemoRead {
-    /// Its memo shape (`MEMO_FIELD` .. `MEMO_FORWARD`).
-    fn shape(&self) -> u8 {
-        match self {
-            Self::Leaf(read) => read.shape(),
-            Self::Forward { read, .. } => MEMO_FORWARD | read.shape(),
-        }
-    }
-}
-
-
-use quench_runtime::vm::engine_types::ReadMemo;
-
-/// Slots of the read memo table (`LaneStack::read_memos`): it bounds the table's memory, and a
-/// table that fills starts again empty, so the sites that read since make their memos again.
-const READ_MEMOS: usize = 4096;
-
-
-
-
-
-script_handler! {
-    /// `script_call_full_miss` at a site whose read call made a memo (`memoize_read_in_lane`): the
-    /// memo's hits, of its shape `SHAPE` (`MemoRead::shape`), answer the call as the read
-    /// target's would. A call the memo does not answer takes the full form, which the site
-    /// then keeps; a run that admits no read call (`returning_call_admitted`) takes it
-    /// once.
-    fn script_call_memo_miss<SHAPE: u8>(cx, r, ip, i, view) {
-        let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-        // A run that admits no read call leaves the memo to the next.
-        if !unsafe { (*cx).script_calls } || (returns && !returning_call_admitted(cx)) {
-            sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
-        }
-        let Some(value) = (unsafe { memo_read_in_lane::<SHAPE>(cx, r, i) }) else {
-            requicken(ip, call_row::<{ protocol_family::SCRIPT_CALL | protocol_misses::script_call::FULL as u16 }>());
-            sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
-        };
-        if !returns {
-            r.set(i.a, value);
-            next!(cx, r, following(ip), Carried::script_in(cx, view))
-        }
-        lane_return_value!(cx, ip, value)
-    }
-}
-
-
 
 script_handler! {
     /// A value record that returns its result from the frame (`returning_kind`): the value

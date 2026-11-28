@@ -12,7 +12,6 @@ pub(crate) mod loops; pub(crate) use loops::loop_miss_of;
 pub(crate) mod construct; pub(crate) use construct::construct_miss_of;
 pub(crate) mod entry; pub(crate) use entry::entry_miss_of;
 pub(crate) mod returns; pub(crate) use returns::{return_miss_of, returning_code, operator_return_code, RETURN_KIND, CONSTANT_KIND};
-pub(crate) mod frame_call; pub(crate) use frame_call::frame_call_miss_of;
 pub(crate) mod leaf_call; pub(crate) use leaf_call::{leaf_call_miss_of, BUILTIN_KIND, MATH_KIND, REFLECT_GET_KIND};
 pub(crate) mod vector; pub(crate) use vector::vector_miss_of;
 pub(crate) mod generator; pub(crate) use generator::generator_miss_of;

@@ -38,7 +38,6 @@ fn pair_census_distinguishes_first_and_second_rejection() {
     let field = vm.field_cache_entry(cache);
     let mut site = FieldSite { base: FieldBase::THIS, first: (atom, cache), second: Some((atom, cache)),
         sink: None, sources: [FieldSite::NO_SOURCE; 3] };
-    let memo = MemoLeaf::Nested { base: FieldBase::THIS.0, field, second: field };
     for (receiver, intermediate, expected, counts) in [
         (first, second, Some(first), [1, 1, 1]),
         (Value::integer(0), second, None, [1, 0, 0]),
@@ -47,11 +46,8 @@ fn pair_census_distinguishes_first_and_second_rejection() {
         vm.store_property_slot(first, field.slot as usize, intermediate);
         vm.profile.field_primitives = Default::default();
         assert_eq!(nested_own_field_hit(&mut vm, &program, &site, receiver), expected);
-        assert_eq!(memo.run(MEMO_NESTED, &vm, ReadArguments::NONE, receiver), expected);
-        for paths in [[Path::NestedOwnPairAttempt, Path::NestedOwnPairFirstHit, Path::NestedOwnPairHit],
-            [Path::MemoPairAttempt, Path::MemoPairFirstHit, Path::MemoPairHit]] {
-            assert_eq!(paths.map(|path| vm.profile.field_primitives.count(path)), counts);
-        }
+        assert_eq!([Path::NestedOwnPairAttempt, Path::NestedOwnPairFirstHit, Path::NestedOwnPairHit]
+            .map(|path| vm.profile.field_primitives.count(path)), counts);
     }
     single_reads_count_no_pair(&mut vm, &program, &mut site, first);
 }

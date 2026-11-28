@@ -3794,8 +3794,6 @@ pub(crate) mod protocol_family {
     pub(crate) const ENTRY: u16 = 8 << 8;
     /// Returns and returning records (`return_miss_of`).
     pub(crate) const RETURN: u16 = 9 << 8;
-    /// Frame calls and memoized script calls (`frame_call_miss_of`).
-    pub(crate) const FRAME_CALL: u16 = 10 << 8;
     /// Leaf, Math and builtin native calls (`leaf_call_miss_of`).
     pub(crate) const LEAF_CALL: u16 = 11 << 8;
     /// Vector (SIMD) records (`vector_miss_of`).
@@ -3823,7 +3821,6 @@ pub(crate) const fn protocol_miss(miss: u16) -> Handler {
         F::CONSTRUCT => super::construct_miss_of(F::parameters(miss)),
         F::ENTRY => super::entry_miss_of(F::parameters(miss)),
         F::RETURN => super::return_miss_of(F::parameters(miss)),
-        F::FRAME_CALL => super::frame_call_miss_of(F::parameters(miss)),
         F::LEAF_CALL => super::leaf_call_miss_of(F::parameters(miss)),
         F::VECTOR => super::vector_miss_of(F::parameters(miss)),
         F::GENERATOR => super::generator_miss_of(F::parameters(miss)),

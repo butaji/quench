@@ -91,12 +91,6 @@ impl<'a> BodyCall<'a> {
         unsafe { &(*self.ip).call_link }
     }
 
-    /// Whether the call's record may be requickened to its read memo (`memoize_read_in_lane`): only a
-    /// register call's record has the layout the memo's handlers read.
-    pub(crate) fn memoizes(&self) -> bool {
-        matches!((self.site.callee, self.site.arguments), (Callee::Register(_), Arguments::Window { .. }))
-    }
-
     /// The receiver the call binds: a register, the activation's `this` or the field of it a cached
     /// read gives, or `undefined`. `None` where the helper cannot read it in place: a lexical `this`,
     /// a field the caches do not hold, or a construction's receiver, which its plan allocates.

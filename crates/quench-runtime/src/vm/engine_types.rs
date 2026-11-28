@@ -49,7 +49,7 @@ use crate::compile::aot_facts::AotFacts;
 /// usual frame stack. The register storage grows only between activations,
 /// so register windows stay put while any exists.
 pub struct LaneStack {
-    /// Per call record (by its `call_link`'s address), the callees it resolved or memoized,
+    /// Per call record (by its `call_link`'s address), the callees it resolved,
     /// in the order first seen, up to `tier_policy::POLYMORPHISM` (`note_site_callee`): the targets a region
     /// inlines as a guarded switch (`lane_unit::unit`). A link's slot may hold another site's
     /// callee since; this record alone names the site's own. A collection drops the callees it
@@ -124,9 +124,6 @@ pub struct LaneStack {
     /// every object the plan read keeps its values and layout, and the chains above them their
     /// layouts.
     pub construct_watches: Box<[Option<crate::heap::PrototypeValueWatch>; CONSTRUCT_PLANS]>,
-    /// The reads call sites answered (`ReadMemo`), each in the slot its record names
-    /// (`CallOperand::memo`).
-    pub read_memos: Vec<ReadMemo>,
     /// The store sites a general store called a setter at (`setters::met_setter`), one bit per
     /// cache index modulo `SETTER_SITE_BITS`; empty until the first such call, so a
     /// VM that never meets a setter holds none of it. Only a filter: a clear bit sends the
@@ -1097,18 +1094,6 @@ pub struct PlainFrames {
     pub bound: std::cell::Cell<usize>,
 }
 
-/// A call site's memo of its read (`MemoRead`), valid for `callee` in the generation and
-/// program it was made in, as `ScriptCallTarget` is.
-#[derive(Clone, Copy)]
-pub struct ReadMemo {
-    /// The call record that made it, whose slot (`CallOperand::memo`) it is.
-    pub site: Ip,
-    pub callee: Value,
-    pub admission: Admission,
-    pub this_binding: ThisBinding,
-    pub read: MemoRead,
-}
-
 /// A user function a lane `Call` may activate without a frame, valid as the general loop's
 /// `InLoopCallTarget` is: for `callee` while the collection epoch and realm it was resolved
 /// under hold, which its `generation` names. A target serves calls from `program`, the
@@ -1213,7 +1198,7 @@ pub struct WasmJitDiagnostics {
 /// The objects of one activation's `with` chain, kept inline up to the nesting a function usually has.
 pub type WithChain = SmallVec<[Value; WITH_CHAIN_INLINE_OBJECTS]>;
 
-/// A generation and a program in one word, so admitting a cached target or memo against the
+/// A generation and a program in one word, so admitting a cached target against the
 /// running lane (`LaneStack::admission`) is one compare.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Admission(pub u64);
@@ -1626,26 +1611,6 @@ pub struct LoopTier {
     pub pending: Option<Box<dyn std::any::Any>>,
 }
 
-/// What a call site's read target answered with (`script_call_memo_miss`), so the site's
-/// next call of the same callee makes the hits alone: the target's read, or a forwarding
-/// body's field and method reads and the read of the method they found. Every part depends
-/// on the callee alone, whose body is fixed, and on the shapes its steps name.
-#[derive(Clone, Copy)]
-pub enum MemoRead {
-    Leaf(MemoLeaf),
-    Forward {
-        /// The forwarding body's field read: the object `base` names, then its method.
-        base: u16,
-        field: crate::vm::FieldCache,
-        method_field: crate::vm::FieldCache,
-        /// The forwarding body's parameters, which it passes on in order.
-        params: u16,
-        /// The method the reads found, a `CallEntry::reads` target, whose `this` is not lexical.
-        method: Value,
-        read: MemoLeaf,
-    },
-}
-
 /// What entering an activation of a `PreparedShape` for one receiver reads
 /// (`enter_prepared_in_lane`): the shape's window layout and the target's view, environment and
 /// captures.
@@ -1956,20 +1921,6 @@ pub struct Inlining {
 
 
 
-/// A read a call site's memo makes (`MemoRead`): its field steps as copies of the field
-/// cache entries that answered them (`Vm::record_field_entry_hit`), so a step is one shape
-/// test. A read of a polymorphic or inherited entry, which probes further, has no memo.
-#[derive(Clone, Copy)]
-pub enum MemoLeaf {
-    /// The field of the object `base` names (`read_base_in_lane`).
-    Field { base: u16, field: crate::vm::FieldCache },
-    /// That field's array, then its dense element the parameter `index` names.
-    Element { base: u16, field: crate::vm::FieldCache, index: u16 },
-    /// That field's array, then its `length` (`Vm::array_length_field`).
-    Length { base: u16, field: crate::vm::FieldCache },
-    /// That field's object, then its own field `second`.
-    Nested { base: u16, field: crate::vm::FieldCache, second: crate::vm::FieldCache },
-}
 
 
 
@@ -2495,7 +2446,7 @@ pub union LaneOperand {
     /// A `GetField` record's immediate and the receiver shape of its own-field hint
     /// (`LaneInstruction::field_hint`).
     pub field: FieldOperand,
-    /// A call record's immediate and its read memo's slot (`CallOperand::memo`).
+    /// A call record's immediate and its callee link slot (`CallOperand::memo`).
     pub call: CallOperand,
     pub jump: isize,
     pub constant: Value,
@@ -2523,10 +2474,8 @@ pub struct NestedField {
     pub constructs: bool,
 }
 
-/// A call record's operand: its immediate, and the slot of `LaneStack::read_memos` its read
-/// memo was made in (`memoize_read_in_lane`), `NO_READ_MEMO` before its first. The slot is the
-/// site's alone until the table refills (`READ_MEMOS`), so which sites keep a memo does not
-/// depend on where their records lie.
+/// A call record's operand: its immediate, and the script call cache slot its callee link names
+/// (`Vm::script_call_index`), which holds no entry before the record's first link.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct CallOperand {
@@ -3594,7 +3543,6 @@ impl Default for LaneStack {
             cross_function_targets: Box::new([EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS]),
             construct_plans: Box::new([EMPTY_CONSTRUCT_PLAN; CONSTRUCT_PLANS]),
             construct_watches: Box::new([const { None }; CONSTRUCT_PLANS]),
-            read_memos: Vec::new(),
             setter_sites: Vec::new(),
             native_identities: NativeIdentities::new(),
             native_stack: crate::stack::StackLimit::CLOSED,
@@ -4236,7 +4184,6 @@ impl LaneStack {
         self.cross_targets.clear();
         *self.function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
         *self.cross_function_targets = [EMPTY_SCRIPT_CALL_TARGET; FUNCTION_TARGETS];
-        self.read_memos.clear();
     }
 
     /// Drops the callees a collection swept from the sites' records before any allocation
@@ -4251,7 +4198,7 @@ impl LaneStack {
     }
 
     /// Retires everything this stack resolved before the collection that ended under `key`
-    /// (the new epoch and the realm): call targets, function targets and read memos name
+    /// (the new epoch and the realm): call targets and function targets name
     /// callees, environments and storages the collection may have swept, whose heap indices
     /// the next allocations reuse. The collector calls it, so a lane run that continues past
     /// any call out that collected (a native such as `gc()`, a host callback, an allocation
@@ -4268,7 +4215,7 @@ impl LaneStack {
         self.admission = Admission(Admission::new(self.generation, program).0 | self.refused);
     }
 
-    /// Whether no cached target or memo admits a call (`Admission::REFUSED`): while a
+    /// Whether no cached target admits a call (`Admission::REFUSED`): while a
     /// construction's callee is pending (`Vm::construct_target`), under which a lane call leaves
     /// the lane, so the cached paths need not test it (`Vm::refresh_call_refusal`).
     #[inline]
@@ -4603,7 +4550,7 @@ impl Admission {
     /// Where the program sits in the word: above the generation.
     pub const PROGRAM_SHIFT: u32 = ScriptGeneration::BITS;
 
-    /// A bit no target's or memo's admission has: the lane's carries it while a condition
+    /// A bit no target's admission has: the lane's carries it while a condition
     /// no cached call may run under holds (`LaneStack::refuse_cached_calls`), so every
     /// admission fails, and the paths that resolve again decide.
     pub const REFUSED: u64 = 1 << 63;
@@ -4945,8 +4892,7 @@ impl Admission {
     /// A bit the lane's admission carries while the tier's diagnostics count every entry
     /// (`LaneStack::set_diagnosed`), which a proved call does not: no entry proved before they
     /// were enabled admits a proved call, and none is proved while they are. Unlike the
-    /// conditions, targets and memos made under them carry it too (`current_admission`), so
-    /// the unproved paths still hit.
+    /// conditions, targets made under them carry it too, so the unproved paths still hit.
     pub const DIAGNOSED: u64 = 1 << 60;
     /// The bits the lane's admission takes from `LaneStack::refused`.
     pub const LANE_BITS: u64 = Self::CONDITIONS | Self::DIAGNOSED;
@@ -4982,7 +4928,7 @@ impl LaneStack {
         self.frames_innermost().nth(above)
     }
 
-    /// Takes a new generation, which retires every target and memo resolved before
+    /// Takes a new generation, which retires every target resolved before
     /// (`enter_generation`, `Vm::enter_with_scope`).
     pub fn advance_generation(&mut self) {
         self.generation = self.generation.wrapping_add(1);
