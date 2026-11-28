@@ -3,11 +3,9 @@
 //! `Operation` from its holes and runs the family step over its places (`steps.rs`). Where the
 //! proof fails the guard yields `None` and the row leaves through its own miss edge.
 
-use super::object::Form;
 use super::register_frame::Frame;
 use super::stage::Stage;
 use super::value::tag_languages;
-use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
 /// `identity`: `source` holds exactly the word `expected` (bit identity, no conversion).
 #[inline(always)]

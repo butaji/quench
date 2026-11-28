@@ -16,10 +16,10 @@ mod wasm_rows;
 mod flow_rows;
 #[path = "steps/entries.rs"]
 mod entries;
-pub use keyed::*;
-pub use callee::*;
-pub use values::*;
-pub use locals::*;
+use keyed::*;
+use callee::*;
+use values::*;
+use locals::*;
 pub use wasm_rows::*;
 pub use flow_rows::*;
 pub use entries::*;

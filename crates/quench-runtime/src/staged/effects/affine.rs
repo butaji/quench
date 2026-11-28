@@ -1,6 +1,5 @@
 //! The element index of an operation as an affine form of the loop variables: its base, its coefficients and its indices.
 
-use super::*;
 
 /// What a linear form is linear in: the value a parameter holds on entry, or the value a register holds where the form was
 /// asserted (a loop-invariant one, `lengths::ceilings`).

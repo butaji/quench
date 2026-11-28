@@ -7,7 +7,6 @@
 use super::value::{is_direct_string, length_value};
 use super::region::Region;
 use super::Stage;
-use crate::Value;
 use crate::vm::wtf16::native_string as form;
 
 /// The record of the flat string `value` names among the string records at `record_base`, with

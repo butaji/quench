@@ -15,7 +15,6 @@ pub struct Backing<W> {
 /// The backing of the direct array `base` among the array records at `record_base`: `None`
 /// (leaving at `miss`) for any other value, or before the first array record exists
 /// (`record_base` zero), or for a narrow or double backing (`ENCODED_LEN`).
-#[inline(always)]
 /// The access of the words a backing's load reads: its header (`array_header`, the record's payload word and its
 /// extras) and its length. A caller proves a word readonly where nothing in its code writes the word.
 #[derive(Clone, Copy)]

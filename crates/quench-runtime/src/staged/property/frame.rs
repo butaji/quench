@@ -32,7 +32,7 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     fn receiver_record(&mut self, stage: &mut S, _owner: Owner, _object: S::Word, _readable: bool,
         miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> where Self: Sized {
         // A direct object is a live class cell with no record (`receiver_cell`), so the default has no record to name.
-        super::guard::no_record(stage, miss)?;
+        super::super::guard::no_record(stage, miss)?;
         None
     }
 

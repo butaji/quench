@@ -10,7 +10,7 @@ use crate::float_layout::{BINARY16, BINARY64, power_of_two};
 #[path = "fdlibm.rs"]
 mod fdlibm;
 #[cfg(not(stencil_build))]
-pub use fdlibm::{atan, atan2, cbrt};
+pub(crate) use fdlibm::{atan, atan2, cbrt};
 
 /// The `f64` rounding and root operations as machine primitives: the standard library's methods in the
 /// runtime, `core`'s float math in the stencil build, which has no standard library.

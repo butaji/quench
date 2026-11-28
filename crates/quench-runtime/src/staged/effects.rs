@@ -23,7 +23,6 @@ pub use affine::*;
 pub use writes::*;
 pub use summary::*;
 pub use call_sig::*;
-pub use operation_effects::*;
 
 #[cfg(test)]
 mod tests {

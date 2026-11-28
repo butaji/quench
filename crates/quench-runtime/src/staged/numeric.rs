@@ -35,16 +35,16 @@ mod remainder;
 #[path = "numeric/increment.rs"]
 mod increment;
 pub use frame_trait::*;
-pub use operand::*;
-pub use math_ops::*;
-pub use unary::*;
+use operand::*;
+use math_ops::*;
+use unary::*;
 pub use bitwise::*;
-pub use int_case::*;
+use int_case::*;
 pub use decode::*;
 pub use relation::*;
-pub use arithmetic::*;
-pub use remainder::*;
-pub use increment::*;
+use arithmetic::*;
+use remainder::*;
+use increment::*;
 
 /// The representation both operands and the result of a Number operation have.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
