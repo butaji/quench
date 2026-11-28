@@ -1,6 +1,7 @@
 //! Number x Number semantics over `Stage`/`Frame`, shared by the interpreter and native tiers.
 
 use super::value::language;
+#[cfg(not(stencil_build))]
 use super::typing;
 use super::{Frame, Stage, Step};
 use crate::bytecode::{Operand, Register};
@@ -134,7 +135,7 @@ impl NumberOperation {
     /// int32 in the int32 domain; a bitwise, `~` or `Math.imul` is an int32 (`>>>` excepted: its uint32 result may pass
     /// `i32::MAX`, so it is a Number); a relation defines a Boolean; the Math functions and `ToNumeric` are Numbers, and so
     /// is a unary in the int32 domain, whose operand that is no int32 takes the float row.
-    #[cfg_attr(stencil_build, allow(dead_code))]
+    #[cfg(not(stencil_build))]
     pub fn result_domain(self) -> Type {
         match self {
             Self::Arithmetic { operation, domain, overflow, .. } =>

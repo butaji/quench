@@ -57,3 +57,7 @@ impl Places {
         }
     }
 }
+
+/// The stencil frame's global-name reads: every read declines to its call-out (the trait's defaults), the global object
+/// being a class cell whose slot rows the lane reads (`GlobalSlot`).
+impl crate::staged::GlobalFrame<StencilStage> for Places {}

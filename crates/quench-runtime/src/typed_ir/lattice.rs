@@ -109,8 +109,14 @@ impl StringFact {
         if self.count == 0 || other.count == 0 {
             return Self { atoms: [0; MAX_STRING_ATOMS], count: 0, length, flat };
         }
-        let atoms: Vec<u32> = self.atoms().iter().chain(other.atoms()).copied().collect();
-        Self::new(&atoms, length, flat)
+        // Both sides hold at most `MAX_STRING_ATOMS` each: a fixed buffer, no allocation (the stencils are `no_std`).
+        let mut atoms = [0u32; 2 * MAX_STRING_ATOMS];
+        let mut count = 0;
+        for &atom in self.atoms().iter().chain(other.atoms()) {
+            atoms[count] = atom;
+            count += 1;
+        }
+        Self::new(&atoms[..count], length, flat)
     }
 
     /// `join`, where a bound that `self` did not reach jumps to the length's own bound (0 or `u32::MAX`), so a loop that

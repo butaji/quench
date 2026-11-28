@@ -4,6 +4,7 @@
 use super::*;
 #[cfg(not(stencil_build))]
 use super::wasm_jump::{BranchTableWasmJumpExt, WasmJump, WasmJumpWasmJumpExt};
+#[cfg(not(stencil_build))]
 use crate::bytecode::{Function, ThrownValueSlot};
 #[cfg(not(stencil_build))]
 use super::{
@@ -451,6 +452,7 @@ impl<W, P> Operation<W, P> {
     /// jumps to the handler's block, one that binds a register of the `registers`-register activation moves the thrown value
     /// first. `None` for any other operation, and for a throw the interpreter's unwinding settles (a generator, an async
     /// function, a dynamic scope, a `with` scope to unwind, a handler that does not open after the throw, a local binding).
+    #[cfg(not(stencil_build))]
     pub fn handler_edge(&self, function: &Function, pc: u32, registers: Register) -> Option<HandlerEdge> {
         let Self::Throw { source } = self else { return None };
         if *source >= registers || !unwinds_to_handlers(function) {
@@ -476,6 +478,7 @@ pub enum HandlerEdge {
 
 /// Whether the exceptions of `function` reach its handlers by the interpreter's unwinding rule alone: a generator, an async
 /// function and a dynamic scope have state only its own unwinding settles.
+#[cfg(not(stencil_build))]
 fn unwinds_to_handlers(function: &Function) -> bool {
     !(function.is_generator || function.is_async || function.has_dynamic_scope_access())
 }
