@@ -263,10 +263,6 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The activation's `this` (`LaneContext::this`): `Value::DELETED` where the lane does
     /// not hold it.
     this: Value,
-    /// Whether the row trusts the activation's `this` as a direct object (`trusted_this_rows`,
-    /// `dispatch_fast::receiver_trusted`): the receiver fact holds, so a read through
-    /// `this` takes its record with no tag test.
-    trust_this: bool,
     /// The activation's local slots and their count, for a staged local operation.
     locals: Option<(*mut Value, usize)>,
     /// The lane context and what it makes, for a staged allocation or deletion row.
@@ -593,7 +589,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     /// A frame for an operation that reads no `this`.
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
-        Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, trust_this: false, locals: None, host: None, captures: None, decisions: None,
+        Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, locals: None, host: None, captures: None, decisions: None,
             capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, elements: None, geometry: None, typed: None, math: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
     }
 
@@ -4173,102 +4169,82 @@ unsafe fn iterator_pop_in_lane(cx: *mut ()) -> bool {
 // `generated_row`'s body, once per shard (`generated_row_shard`).
 mod generated_rows_0 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_1 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_2 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_3 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_4 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_5 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_6 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_7 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_8 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_9 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_10 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_11 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_12 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_13 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_14 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_15 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_16 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_17 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_18 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 mod generated_rows_19 {
     use super::*;
-    const TRUSTS_THIS: bool = false;
     include!("generated_row.rs");
 }
 

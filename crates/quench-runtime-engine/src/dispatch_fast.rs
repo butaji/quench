@@ -709,11 +709,6 @@ impl LaneView {
 
 
 
-/// The plain-to-trusted row pairs of the `this` sites. No load pass installs any of them: the own read of
-/// `this` is `own_formed_handler::<true>(None)`, and `SetThisField` takes only the unread, general and
-/// tracked store rows (`field_store_row_at`). So no record is rewritten and the table is empty.
-const TRUSTED_THIS_ROWS: [(Handler, Handler); 0] = [];
-
 /// Whether `function`'s `this` is a direct object in every activation, by the solve's receiver cell
 /// (`FactKey::Receiver`): the function's rows and code take it as one, with no tag test. A live receiver
 /// (`AotFacts::live`: new code may call the function with any `this`) is never trusted, since no edge
@@ -725,17 +720,6 @@ pub(crate) fn receiver_trusted(facts: Option<&quench_runtime::compile::aot_facts
         && cell.ty.is_subtype(quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY)))
 }
 
-/// The trusted form of a row that reads `this` (`TRUSTED_THIS_ROWS`), `None` for a row with no trusted form.
-pub(crate) fn trusted_this_form(handler: *const ()) -> Option<*const ()> {
-    TRUSTED_THIS_ROWS.iter().find(|(plain, _)| *plain as *const () == handler).map(|(_, trusted)| *trusted as *const ())
-}
-
-/// Gives each row of a view whose receiver is trusted (`receiver_trusted`) its trusted form.
-pub(crate) fn trust_this_rows(records: &mut [quench_runtime::vm::engine_types::LaneInstruction]) {
-    for record in records.iter_mut() {
-        if let Some(trusted) = trusted_this_form(record.handler) { record.handler = trusted; }
-    }
-}
 
 
 
