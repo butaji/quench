@@ -301,7 +301,8 @@ fn constant_atoms(program: &ResidualProgram) -> Vec<Option<u32>> {
 }
 
 /// The type a program constant denotes: a Number's integer range where it is an int32 (its singleton), else a Number;
-/// a string's exact length, which is an atom's (`atom`) where the program names its text, so the string is that atom;
+/// a string's exact length, which is an atom's (`atom`) where the program names its text, so the string is that atom, and
+/// flat, as the runtime makes a constant's text as one run of units (`JsString::from_str`, `JsString::from_units`);
 /// a BigInt's, a `null`'s, an `undefined`'s or a Boolean's exact type; `ANY` for any other constant.
 pub fn constant_type(constant: &Constant, atom: Option<u32>) -> Type {
     match constant {
@@ -313,11 +314,11 @@ pub fn constant_type(constant: &Constant, atom: Option<u32>) -> Type {
         Constant::String(text) => {
             let length = u32::try_from(text.encode_utf16().count()).unwrap_or(u32::MAX);
             let atoms: Vec<u32> = atom.into_iter().collect();
-            Type::string_atoms(&atoms, length, length)
+            Type::string_atoms(&atoms, length, length, true)
         }
         Constant::StringUnits(units) => {
             let length = u32::try_from(units.len()).unwrap_or(u32::MAX);
-            Type::string_length(length, length)
+            Type::string_length(length, length, true)
         }
         Constant::BigInt(_) => Type::language(ValueType::BigInt),
         _ => Type::ANY,
