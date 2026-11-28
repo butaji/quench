@@ -6,7 +6,7 @@
 //! delete departs a cell.
 
 use super::Heap;
-use super::class_space::{header_class, live_header};
+use super::class_space::header_class;
 use super::layouts;
 use crate::value::Value;
 use crate::value_vec::DictionaryTable;
@@ -60,7 +60,7 @@ impl Heap {
         let class = header_class(self.class_space.header(granule));
         let before = layouts::class_shape(class);
         let next = layouts::intern_class(shape, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
-        self.class_space.write_header(granule, live_header(next));
+        self.class_space.write_class(granule, next);
         self.set_class(before, shape);
     }
 
@@ -77,7 +77,7 @@ impl Heap {
         self.class_space.lay_out(granule, None, &[dictionary_word(id)]);
         let flags = layouts::class_flags(class) | u64::from(crate::staged::object_encoding::DICTIONARY_STORAGE);
         let next = layouts::intern_class(shape, layouts::class_link(class), flags, layouts::class_region(class));
-        self.class_space.write_header(granule, live_header(next));
+        self.class_space.write_class(granule, next);
         self.set_class(layouts::class_shape(class), shape);
         self.holder_fields_moved(granule);
     }

@@ -26,7 +26,8 @@ use super::{
     PARALLEL_MARK_MAX_THREADS, PARALLEL_MARK_SPLIT_THRESHOLD, PARALLEL_MARK_STACK_SIZE_BYTES, mark_bits,
     mark_word_if_new, weak, PushedProtos, EnvironmentRecord, SmallParts, SymbolData, WasmGcRecord,
 };
-use super::class_space::{ClassCellMarks, cell_fields_at, live_class_at, stub_record_at};
+use super::class_space::{ClassCellMarks, cell_fields_at, extras_id_at, live_class_at, stub_record_at};
+use super::extras_space::SharedExtras;
 use super::layouts;
 use super::dictionary_cell::dictionary_id_of;
 use super::spill::{SpillSpace, split_cell};
@@ -74,6 +75,8 @@ macro_rules! parallel_mark_view {
             cells: ClassCellMarks<'heap>,
             /// The spill arena a spilled cell's run is read from (`heap::spill`).
             spill: &'heap SpillSpace,
+            /// The cell extras a marked cell traces (`ExtrasSpace::trace`), read-only during the round.
+            extras: SharedExtras<'heap>,
             $($view: ParallelRecordMarks<'heap, $elem>,)*
             /// The keys weak map values wait for, which change only between rounds.
             ephemerons: &'heap weak::EphemeronWork,
@@ -99,6 +102,7 @@ macro_rules! parallel_mark_view {
                     class_base: heap.class_space.base,
                     cells,
                     spill,
+                    extras: SharedExtras(&heap.extras),
                     $($view: heap.$field.parallel_marks(),)*
                     ephemerons,
                     reads_closures,
@@ -308,7 +312,8 @@ impl<'heap> ParallelMarkView<'heap> {
                         let (fields, run) = split_cell(cell, self.spill, spill);
                         (fields, run, None)
                     };
-                    Heap::cell_children_marking(value, class, fields, run, table, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
+                    let extras = self.extras.0.get(extras_id_at(self.class_base, granule));
+                    Heap::cell_children_marking(value, class, fields, run, table, extras, mark_leaf, work, &mut object_roots, trace_kind, last_proto);
                 } else {
                     // A departed cell keeps its granule's mark while its Value lives (`ClassSpace::mark_cell`).
                     self.cells.mark_if_new(granule);

@@ -3,7 +3,7 @@
 //! (`Heap::cell_to_dictionary`), so no delete departs a cell.
 
 use super::Heap;
-use super::class_space::{header_class, live_header};
+use super::class_space::header_class;
 use super::layouts;
 use crate::value::Value;
 
@@ -26,7 +26,7 @@ impl Heap {
             self.class_space.fold_run(granule, spill);
         }
         let next = layouts::intern_class(parent, layouts::class_link(before), layouts::class_flags(before), region);
-        self.class_space.write_header(granule, live_header(next));
+        self.class_space.write_class(granule, next);
         self.set_class(layouts::class_shape(before), parent);
         self.holder_fields_moved(granule);
     }

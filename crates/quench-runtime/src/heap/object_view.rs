@@ -11,7 +11,7 @@
 #![allow(dead_code)]
 
 use super::cell::{Object, ProtoLink};
-use super::class_space::{header_class, live_header};
+use super::class_space::{header_class, header_with_class};
 use super::Heap;
 use crate::value::Value;
 use crate::value_vec::DictionaryTable;
@@ -77,7 +77,7 @@ impl CellViewMut<'_> {
     fn edit_class(&mut self, edit: impl FnOnce(&mut Object)) {
         let mut object = Object::of_class(header_class(*self.header));
         edit(&mut object);
-        *self.header = live_header(object.layout_id());
+        *self.header = header_with_class(*self.header, object.layout_id());
     }
 }
 
@@ -237,13 +237,13 @@ impl<'a> ObjectMut<'a> {
     }
 
     /// The class edge (R4-C4): makes `class` the object's class, its header word. A cell's header
-    /// holds the class id (`live_header`); a record takes it through `Object::set_class`. The caller
+    /// holds the class id in its low half (`header_with_class`); a record takes it through `Object::set_class`. The caller
     /// retires the readers of the old class (`Heap::set_class`).
     #[inline(always)]
     pub fn set_class(&mut self, class: u32) {
         match self {
             ObjectMut::Record(object) => object.set_class(class),
-            ObjectMut::Cell(cell) => *cell.header = live_header(class),
+            ObjectMut::Cell(cell) => *cell.header = header_with_class(*cell.header, class),
         }
     }
 

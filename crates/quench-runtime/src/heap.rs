@@ -231,6 +231,7 @@ mod departure;
 mod spill;
 mod dictionary_cell;
 mod class_delete;
+mod extras_space;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
 pub use object_view::{ObjectMut, ObjectRef};
@@ -657,6 +658,8 @@ pub struct Heap {
     /// Class cells (`class_space`): empty until a class cell is first allocated.
     #[allow(dead_code)]
     class_space: class_space::ClassSpace,
+    /// The extras of live class cells, by the id their header's high half names (`extras_space`).
+    extras: extras_space::ExtrasSpace,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
     function_records: FunctionRecordSpace,
@@ -3125,6 +3128,7 @@ impl Heap {
             let memory_profile = &mut self.memory_profile;
             let properties = &mut self.properties;
             let class_space = &mut self.class_space;
+            let extras = &mut self.extras;
             let payload_bytes = &mut self.payload_bytes;
             let live_payload_bytes = &mut live_payload_bytes;
             let mut collection_counts = (0, 0);
@@ -3157,7 +3161,7 @@ impl Heap {
                 });
                 // After the records: a departed cell dies with its record (its stub released in `dispose`), so
                 // the cell regions sweep only the cells whose Value is dead and not released yet.
-                class_space.sweep_cells(&mut *properties, full, age, |values, class| {
+                class_space.sweep_cells(&mut *properties, extras, full, age, |values, class| {
                     layouts::class_spill(class, values.shape_length(layouts::class_shape(class)))
                 });
                 // A function's own properties may take a young run too (`Heap::finished_run_object`):
@@ -4119,8 +4123,9 @@ impl Heap {
             self.gc_profile.marked += 1;
             self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
         }
+        let extras = self.extras.get(self.class_space.extras_id(granule));
         let (fields, run, table) = self.cell_marking_parts(granule, class);
-        Self::cell_children_marking(value, class, fields, run, table, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
+        Self::cell_children_marking(value, class, fields, run, table, extras, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
         self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
     }
 
@@ -5250,6 +5255,7 @@ impl Heap {
         fields: &[Value],
         run: &[Value],
         table: Option<&crate::value_vec::DictionaryTable>,
+        extras: Option<&cell::ObjectExtras>,
         mut mark_leaf: impl FnMut(Value, &mut Vec<Value>, &mut PushedProtos) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
@@ -5264,6 +5270,9 @@ impl Heap {
             }
         }
         object_roots(trace_kind, owner, class_shape(class), false, work);
+        if let Some(extras) = extras {
+            cell::trace_extras(extras, |value| work.push(value));
+        }
         let table_values = table.into_iter().flat_map(|table| table.values());
         for &value in fields.iter().chain(run).chain(table_values) {
             if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {

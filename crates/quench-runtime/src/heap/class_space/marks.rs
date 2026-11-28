@@ -3,6 +3,7 @@
 //! and the cell regions as record families. The cell layout and the region addressing stay in `class_space`.
 
 use super::{CELL_REGIONS, ClassCell1, ClassCell2, ClassCell3, ClassCell4, ClassCell5, ClassSpace, locate};
+use crate::heap::extras_space::ExtrasSpace;
 use crate::heap::pacing::PromotionAge;
 use crate::heap::records::{ParallelRecordMarks, RecordFamily};
 use crate::heap::spill::{SpillSpace, dispose_dead_runs};
@@ -62,12 +63,14 @@ impl ClassSpace {
     }
 
     /// Sweeps the cell regions (`RecordSpace::sweep`): an unmarked cell is freed, a dead cell that spilled frees its
-    /// run, and a dead dictionary cell its table in the value arena `values` (`dispose_dead_runs`). `spill_of` gives
+    /// run, a dead dictionary cell its table in the value arena `values`, and a dead cell its extras in `extras`
+    /// (`dispose_dead_runs`). `spill_of` gives
     /// the spill slot of a class over the arena's shape lengths (`layouts::class_spill`). Region 0's stubs die with
     /// their records and are not swept here.
     pub(in crate::heap) fn sweep_cells(
         &mut self,
         values: &mut ValueArena,
+        extras: &mut ExtrasSpace,
         full: bool,
         age: PromotionAge,
         spill_of: impl Fn(&ValueArena, u32) -> Option<u32>,
@@ -75,11 +78,11 @@ impl ClassSpace {
         let ClassSpace { regions, spill, base, .. } = self;
         let base = *base;
         let sweeps = [
-            regions.1.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell1, _>(&mut *spill, &mut *values, base, 1, &spill_of), |_| {}),
-            regions.2.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell2, _>(&mut *spill, &mut *values, base, 2, &spill_of), |_| {}),
-            regions.3.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell3, _>(&mut *spill, &mut *values, base, 3, &spill_of), |_| {}),
-            regions.4.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell4, _>(&mut *spill, &mut *values, base, 4, &spill_of), |_| {}),
-            regions.5.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell5, _>(&mut *spill, &mut *values, base, 5, &spill_of), |_| {}),
+            regions.1.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell1, _>(&mut *spill, &mut *values, &mut *extras, base, 1, &spill_of), |_| {}),
+            regions.2.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell2, _>(&mut *spill, &mut *values, &mut *extras, base, 2, &spill_of), |_| {}),
+            regions.3.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell3, _>(&mut *spill, &mut *values, &mut *extras, base, 3, &spill_of), |_| {}),
+            regions.4.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell4, _>(&mut *spill, &mut *values, &mut *extras, base, 4, &spill_of), |_| {}),
+            regions.5.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell5, _>(&mut *spill, &mut *values, &mut *extras, base, 5, &spill_of), |_| {}),
         ];
         sweeps.into_iter().fold((0, 0), |(live, freed), (swept_live, swept_freed)| (live + swept_live, freed + swept_freed))
     }

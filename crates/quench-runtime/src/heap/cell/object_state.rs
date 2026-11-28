@@ -2,6 +2,32 @@
 
 use super::*;
 
+/// The values an object's extras hold, which its sweep and marking trace: the boxed primitive, the function realm
+/// and the captured stack's roots. A record traces its extras through `Object::visit_extras_roots`; a live class
+/// cell's extras trace through `ExtrasSpace::trace`.
+#[inline(never)]
+pub(crate) fn trace_extras(extras: &ObjectExtras, mut visit: impl FnMut(Value)) {
+    let Some(extras) = extras.rare() else { return };
+    if let Some(value) = extras.boxed_primitive {
+        visit(value);
+    }
+    if let Some(realm) = extras.function_realm {
+        visit(realm);
+    }
+    match extras.stack_data.as_ref() {
+        Some(StackData::Captured { records, .. }) => {
+            for record in records {
+                record.visit_roots(&mut visit);
+            }
+        }
+        Some(StackData::CallSite(record)) => {
+            record.visit_roots(&mut visit);
+        }
+        Some(StackData::Formatted(value)) => visit(*value),
+        None => {}
+    }
+}
+
 impl Object {
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
     pub(crate) fn error(proto: Value) -> Self {
@@ -60,27 +86,9 @@ impl Object {
     }
 
     /// Visit internal primitive data, private-name homes and captured stack roots.
-    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) { if self.extras_pointer().is_some() { self.visit_extras_values(visit) } }
-
-    #[inline(never)] fn visit_extras_values(&self, mut visit: impl FnMut(Value)) {
-        let Some(extras) = self.extras().and_then(ObjectExtras::rare) else { return };
-        if let Some(value) = extras.boxed_primitive {
-            visit(value);
-        }
-        if let Some(realm) = extras.function_realm {
-            visit(realm);
-        }
-        match extras.stack_data.as_ref() {
-            Some(StackData::Captured { records, .. }) => {
-                for record in records {
-                    record.visit_roots(&mut visit);
-                }
-            }
-            Some(StackData::CallSite(record)) => {
-                record.visit_roots(&mut visit);
-            }
-            Some(StackData::Formatted(value)) => visit(*value),
-            None => {}
+    #[inline(always)] pub(crate) fn visit_extras_roots(&self, visit: impl FnMut(Value)) {
+        if let Some(extras) = self.extras() {
+            trace_extras(extras, visit);
         }
     }
 

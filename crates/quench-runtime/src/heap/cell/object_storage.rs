@@ -77,6 +77,16 @@ impl Object {
         self.extras_pointer().map(|extras| unsafe { &mut *extras })
     }
 
+    /// Installs `extras` (a departing cell's, from `ExtrasSpace::release`) on this record. The record's storage stays
+    /// where it is: the extras take its inline values and arena start, and the cell's own head fields otherwise.
+    pub(crate) fn install_extras(&mut self, extras: ObjectExtras) {
+        let storage = self.extras_mut();
+        let (inline_properties, arena_start) = (storage.head.inline_properties, storage.head.arena_start);
+        *storage = extras;
+        storage.head.inline_properties = inline_properties;
+        storage.head.arena_start = arena_start;
+    }
+
     /// The payload word of inline `values`, when each has a narrow form.
     #[inline(always)]
     pub(super) fn pack_inline(values: [Value; INLINE_PROPERTY_COUNT]) -> Option<u64> {
