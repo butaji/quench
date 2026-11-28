@@ -54,6 +54,7 @@ fn plain_local_form(op: Op) -> Option<Op> {
 pub mod aot_facts;
 pub mod signatures;
 pub mod call_plan;
+pub mod body_forms;
 pub mod call_graph;
 mod annex_b_targets;
 mod arrow;
@@ -2379,7 +2380,7 @@ pub(crate) struct LoweringTables<'t> {
 /// size rather than with its block lengths. The bound was picked without a measurement and
 /// must be checked on octane-code-load, where a coalescing pass once cost 4.7% of the run.
 /// It covers a leaf small enough for a call entry to recognise by its shape
-/// (`capture_append::recognizes`), which is 16 instructions or fewer.
+/// (`compile::body_forms::appends_capture`), which is 16 instructions or fewer.
 const LOOP_FREE_COALESCE_INSTRUCTIONS: usize = 128;
 
 /// Whether coalescing the copies frame-register promotion left repays its cost: a body that

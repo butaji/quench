@@ -25,6 +25,10 @@ use super::super::signatures::{self, Argument, CallSite};
 use super::types;
 use super::value;
 use super::AotFacts;
+use super::BodyForm;
+use super::super::body_forms::{body_entry, forwards_args, read_shape, returning_read};
+use crate::staged::effects::CallForm;
+use crate::vm::engine_types::{CallEntry, Framed};
 use crate::bytecode::ResidualProgram;
 
 /// Per function, the keys its settled cells were read from (`FunctionFacts::dependencies`): every key its steps
@@ -117,6 +121,23 @@ fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (A
     if facts.classes.is_empty() { return (facts, verified); }
     let classes = facts.classes.clone();
     solve_with(program, world, openers, &classes)
+}
+
+/// The body forms of every function of `program`, each classified once from the function and its bytecode (`body_forms`). The
+/// entry is the one a call takes, from the form the composed signature gives the body (`call_plan::entry_form`). A frameless body
+/// that no other frameless answer takes is `Frameless::Native` or `Framed::Activates` by its published native code, which the
+/// bytecode does not say, so its entry is None (`AotFacts::body_entry`).
+fn body_forms(program: &ResidualProgram, facts: &AotFacts) -> Box<[BodyForm]> {
+    (0..program.function_count()).map(|id| program.with_record(id, |body| {
+        let frameless = crate::compile::call_plan::entry_form(Some(facts), id as u32) == CallForm::Frameless;
+        let entry = body_entry(body, &program.constants, frameless, false);
+        BodyForm {
+            entry: (!(frameless && entry == CallEntry::framed(Framed::Activates))).then_some(entry),
+            returning: returning_read(body),
+            read: read_shape(body),
+            forwards: forwards_args(body, &body.call_plan(program)),
+        }
+    })).collect()
 }
 
 /// `solve` with the class ids `classes` the constructions and prototypes resolve to (`ClassIds::of`).
@@ -326,6 +347,9 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         if round + 1 == LENGTH_ROUNDS || next == feedback { break; }
         feedback = next;
     }
+    // The body forms read the settled signatures (`call_plan::entry_form`), so they are classified once the solve has settled.
+    let bodies = body_forms(program, &facts);
+    facts.bodies = bodies;
     facts.classes = built;
     if crate::trace::Channel::AotLanes.on() {
         let named = |atom: &u32| program.atoms.get(*atom as usize).map_or("?", |name| name.as_ref());
