@@ -1622,10 +1622,12 @@ impl ProgramStore {
     }
 
     /// Whether the root compile of `function` of Wasm program `id` is due at its first call (`wasm_activation::offer_entry`):
-    /// the function is unattempted, its predicted tier compiles it (`predicted_compiled`), and the root may be admitted.
+    /// the function is unattempted, a compile may start (`tier_policy::may_compile`), its predicted tier compiles it
+    /// (`compiled_tier`), and the root may be admitted.
     pub fn wasm_root_due(&self, id: ProgramId, function: u32) -> bool {
         self.wasm_root_admissible(id, function)
-            && self.predicted_compiled(id, function)
+            && crate::vm::tier_policy::may_compile()
+            && self.compiled_tier(id, function)
             && self.entry(id).is_some_and(|entry| entry.jit_tiers.wasm_unattempted(function))
     }
 
@@ -1637,12 +1639,16 @@ impl ProgramStore {
             && self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.claim_wasm_root(function))
     }
 
-    /// Whether the predicted tier of `function` of program `id` compiles it (`tier_policy::lane_body_tier`), read at
-    /// the function's entry: the argmin of design 4.9 that a JavaScript function's entry reads too (`predicted_tiers`).
-    pub(super) fn predicted_compiled(&self, id: ProgramId, function: u32) -> bool {
-        self.predicted_tiers(id)
-            .and_then(|table| table.get(function as usize).map(|row| row[0]))
-            .is_some_and(|pick| crate::vm::tier_policy::lane_body_tier(pick).is_some())
+    /// Whether the predicted tier of `function` of program `id` is a compiled one: the one predicate of design 4.9 that
+    /// every lane derive, entry and back-edge gate and the JavaScript and Wasm entries read. It is the argmin of the
+    /// function's entry column of `predicted_tiers`, or the u-jit of an ahead-of-time image (`tier_policy::body_tier`);
+    /// false for the interpreter's pick and for a function that does not exist. Which compiled tier a build allows is
+    /// the compile sites' question (`tier_policy::lane_body_tier`), not this one's.
+    pub fn compiled_tier(&self, id: ProgramId, function: u32) -> bool {
+        let Some(table) = self.predicted_tiers(id) else { return false };
+        let aot = self.residual(id).is_some_and(|program| self.ahead_images(id, program).is_some());
+        let predicted = table.get(function as usize).map_or(crate::vm::tier_policy::PredictedTier::Interpreter, |row| row[0]);
+        crate::vm::tier_policy::body_tier(aot, predicted) != crate::vm::tier_policy::PredictedTier::Interpreter
     }
 
     pub fn wasm_tier(
@@ -1820,10 +1826,11 @@ impl ProgramStore {
     }
 
     /// Whether an entry of `function` of program `id` compiles it now (`JitTierManager::note_js_entry`).
-    /// A compile is due where the model picks a compiled tier for the function
-    /// (`predicted_compiled`), within the tracking and code budgets.
+    /// A compile is due where a compile may start (`tier_policy::may_compile`) and the model picks a compiled tier for
+    /// the function (`compiled_tier`), within the tracking and code budgets.
     pub fn note_js_function_entry(&mut self, id: ProgramId, function: u32, numeric: bool) -> bool {
-        let (compiled_functions, predicted) = (self.jit_code_cache.js_functions, self.predicted_compiled(id, function));
+        let predicted = crate::vm::tier_policy::may_compile() && self.compiled_tier(id, function);
+        let compiled_functions = self.jit_code_cache.js_functions;
         let can_track = self.js_jit_tracked_functions < JS_JIT_MAX_TRACKED_FUNCTIONS;
         let Some(entry) = self.entry_mut(id) else {
             return false;
@@ -2359,8 +2366,8 @@ impl ProgramStore {
         (entry.views_in_lane.of(&entry.residual), &entry.constants[..])
     }
 
-    /// The lane view a general-loop entry of `function` runs with: derived at its first entry,
-    /// unless it still runs unlowered (`ResidualProgram::runs_tier0`).
+    /// The lane view a general-loop entry of `function` runs with: derived at its first entry where its predicted tier
+    /// compiles it (`compiled_tier`), and not while it still runs unlowered (`ResidualProgram::runs_tier0`).
     pub fn entry_lane_view<'s>(
         &'s self,
         id: ProgramId,
@@ -2379,19 +2386,19 @@ impl ProgramStore {
             return Some(view.as_ptr());
         }
         let code = entry.residual.function_get(function as usize)?;
-        if entry.residual.runs_tier0(function as usize) {
+        if entry.residual.runs_tier0(function as usize) || !self.compiled_tier(id, function) {
             return None;
         }
         Some(store_lane_view(entry, function, code, view, derive))
     }
 
-    /// Whether a lane call may derive `function`'s view now: it has one, or the function is one
-    /// of the program's (`Vm::call_may_derive_in_lane` lowers it first).
+    /// Whether a lane call may derive `function`'s view now: it has one, or its predicted tier compiles the function
+    /// (`compiled_tier`). An interpreted function is called from the general path.
     pub(super) fn call_may_derive_in_lane(&self, id: ProgramId, function: u32) -> bool {
         let Some(entry) = self.entry_in_lane(id) else {
             return false;
         };
-        entry.views_in_lane.derived(function).is_some() || entry.residual.function_get(function as usize).is_some()
+        entry.views_in_lane.derived(function).is_some() || self.compiled_tier(id, function)
     }
 
     pub fn view_in_lane<'s>(

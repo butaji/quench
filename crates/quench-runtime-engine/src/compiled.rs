@@ -7503,8 +7503,8 @@ impl Vm {
         }
     }
 
-    /// Whether the entry paths claim `function`: a numeric candidate that pays for a native
-    /// entry, or a body a lane body may take.
+    /// Whether the entry paths claim `function`: a numeric candidate the predicted tier compiles
+    /// (`ProgramStore::compiled_tier`), or a body a lane body may take.
     pub(crate) fn js_tier_may_claim(
         &mut self,
         program: &ResidualProgram,
@@ -7530,12 +7530,13 @@ impl Vm {
         let state = self.programs.js_tier(id, function);
         // Lane bodies claim every function the policy picks compiled: the pick is the entry's (not a loop's), and an
         // interpreted pick claims nothing. A function the numeric tier cannot take is still theirs to claim.
-        let lane_claims = admission::lane_bodies_enrolled(self)
-            && quench_runtime::vm::tier_policy::lane_body_tier(self.lane_pick(program, function, false)).is_some();
+        let compiled = self.programs.compiled_tier(id, function);
+        let lane_claims = admission::lane_bodies_enrolled(self) && compiled;
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
         }
-        let candidate = facts.candidate && program.function_get(function as usize).is_some();
+        // A numeric candidate claims where the same argmin compiles it, with no separate cost test of its entry.
+        let candidate = facts.candidate && compiled;
         candidate || lane_claims
     }
 
