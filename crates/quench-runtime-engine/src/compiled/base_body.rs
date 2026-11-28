@@ -283,7 +283,7 @@ impl Vm {
         let names = |site: u16, atom| self.native_function_name(site, atom);
         let fields = |site: u16| self.field_cache_filled(site);
         let known = Known {
-            program, stitch: &self.programs.tiers().stitch, stores: folds.then(|| self.method_cache_atoms.bits()),
+            program, stitch: &quench_runtime::vm::tier_policy::STITCH, stores: folds.then(|| self.method_cache_atoms.bits()),
             reads: folds.then_some(&reads as &dyn Fn(u16) -> Vec<NativeFieldLoad>),
             adds: folds.then_some(&adds as &dyn Fn(u16, quench_runtime::bytecode::Atom, bool) -> Option<quench_runtime::staged::add_plan::AddSite>),
             names: folds.then_some(&names as &dyn Fn(u16, quench_runtime::bytecode::Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>),
@@ -393,7 +393,7 @@ pub(crate) fn image_body(program: &ResidualProgram, function: u32) -> Result<Ima
     // boolean, a Number), and any other constant is the deleted marker, which no constant row takes (`value_row`).
     let constants: Vec<Value> = program.constants.iter().map(|constant| super::facts::immediate(constant).unwrap_or(Value::DELETED)).collect();
     let known = Known {
-        program, stitch: &super::tier_policy::STATIC_ROWS.stitch, stores: None, reads: None, adds: None, names: None,
+        program, stitch: &super::tier_policy::STITCH, stores: None, reads: None, adds: None, names: None,
         invalidation: None, constants: &constants, typeof_names: &[], instanceofs: None, presences: None, fields: None, globals: None, classes: &[], shapes: &[],
     };
     let spec = BodySpec { function, registers: body.registers, known, realm: None, widened: &[], seen: &[], kinds: &[], typed: &[] };

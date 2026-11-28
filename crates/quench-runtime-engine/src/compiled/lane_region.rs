@@ -3658,7 +3658,7 @@ impl Lowering<'_, '_> {
             state, edges, constants: &self.program.constants, this: self.entry.as_ref().map(|entry| entry.this),
             payload: self.payload, helpers: self.helpers, locals, polls: &mut self.polls,
             roots: &mut self.stable.roots, number_returns: &mut self.number_returns, fields,
-            call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda, tiers: self.vm.tiers,
+            call_out: sites.call_out, capture: sites.capture, html_dda: self.vm.html_dda,
             prototype: sites.prototype, table_entry: self.entry.as_ref(),
             held: self.held_view.take(), hole_leaves: std::mem::take(&mut self.hole_leaves), arrays_fixed: self.arrays_fixed, site, proven_arguments: Default::default(), rebinds: Default::default() };
         super::record_boxed_numbers();

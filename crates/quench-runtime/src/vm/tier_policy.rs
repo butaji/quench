@@ -1,4 +1,4 @@
-//! When code moves between tiers: every threshold the tier controllers read, in one table.
+//! When code moves between tiers: the predicted-tier and admission constants the tier controllers read, in one table.
 //!
 //! The controllers (`LoopTier` and `LoopSite`, `LaneBody`, `JsTierState`, `WasmTierState`)
 //! own their states and transitions; this module owns the numbers those transitions compare
@@ -10,15 +10,6 @@ use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
 pub use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
-
-/// The thresholds every tier controller reads.
-pub struct Tiers {
-    pub lane_body: LaneBody,
-    pub stitch: Stitch,
-    /// Whether the tier models admit every eligible compile, whatever it would repay.
-    pub admits_all: bool,
-}
-
 
 /// Stitch-inlining: the callee rows the b-jit stitcher splices in place of a direct-cell call row
 /// (`base_region::inline_plan`). Which callees inline is `inlines`; this is the stitch's room.
@@ -35,15 +26,19 @@ pub struct Stitch {
 }
 
 
-/// The frameless lane-body tier (`LaneView::tier_lane`).
-pub struct LaneBody {
-    /// The most entries between looks for a compiling body's code, which start one entry apart
-    /// and double (`LaneBody::Compiling`). A look costs a channel poll
-    /// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
-    /// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
-    /// most this many entries once ready.
-    pub compile_poll_interval: u16,
-}
+/// The stitch's room (`Stitch`) for every b-jit stitch.
+pub const STITCH: Stitch = Stitch {
+    max_total_instructions: 96,
+    window_registers: 32,
+    max_depth: 3,
+};
+
+/// The most entries between looks for a compiling body's code, which start one entry apart
+/// and double (`LaneBody::Compiling`). A look costs a channel poll
+/// and the specialization's bookkeeping, some 300 instructions, at each backward jump of
+/// a hot loop while the code compiles (Richards' first body: 300 ms); the code waits at
+/// most this many entries once ready.
+pub const COMPILE_POLL_INTERVAL: u16 = 64;
 
 /// The prototype links a specializer unrolls a staged walk over (`Stage::walk_prototypes`): an
 /// instance, its class chain and `Object.prototype` end within it, and each link is a block of
@@ -61,59 +56,6 @@ pub const POLYMORPHISM: usize = 4;
 pub fn arms_inline(plan: &crate::compile::call_plan::CallPlan, graph: &CallGraph, program: &ResidualProgram) -> bool {
     plan.arms.len() <= 3 && plan.arms.iter().all(|arm| inlines(graph, program, arm.function))
 }
-
-#[cfg(any(test, feature = "test-support"))]
-thread_local! { static FORCED_ADMISSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
-
-/// Makes the VMs this thread makes next admit every eligible compile (`ADMITTING`), as the floor
-/// row does: for tests of what compiled code does, on fixtures too small to repay a compile.
-#[cfg(any(test, feature = "test-support"))]
-pub fn force_admission() { FORCED_ADMISSION.set(true); }
-
-/// The rows a VM's tier controllers read, held by the VM from its construction: the measured
-/// thresholds a process runs by, or the floor row, which makes every eligible site compile on
-/// its first chance, so a Test262 run and the tier differential check each tier against the
-/// interpreter. Code compiled under a row takes it as a Static fact (`VmFacts::tiers`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TierRows { Measured, Floor }
-
-impl TierRows {
-    /// The rows a process starts with: the measured ones.
-    pub(crate) const PROCESS: Self = Self::Measured;
-
-    /// The rows a VM made now holds: `PROCESS`, admitting every compile where a test forced it.
-    pub(crate) fn made() -> &'static Tiers {
-        #[cfg(any(test, feature = "test-support"))]
-        if FORCED_ADMISSION.get() { return &ADMITTING; }
-        Self::PROCESS.table()
-    }
-
-    #[quench_macros::test_visible]
-    pub(crate) fn table(self) -> &'static Tiers {
-        match self { Self::Measured => &MEASURED, Self::Floor => &FLOOR }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl crate::vm::Vm {
-    #[quench_macros::test_visible]
-    /// A VM whose tier controllers read `rows`: a stress run needs no build of its own.
-    pub(crate) fn with_tier_rows<T: crate::Host>(host: T, rows: TierRows) -> Self {
-        let mut vm = Self::new(host);
-        vm.programs.hold_tiers(rows.table());
-        vm
-    }
-}
-
-/// Each threshold at the least value its controller accepts. Thresholds only price
-/// compilation, so this row must compute what `MEASURED` computes.
-const FLOOR: Tiers = Tiers {
-    lane_body: LaneBody { compile_poll_interval: 0, ..MEASURED.lane_body },
-    stitch: MEASURED.stitch,
-    admits_all: true,
-};
-
-
 
 /// The tier a lane body of a function with predicted tier `pick` runs in, or `None` where the interpreter runs it
 /// (design decision 4.9). The pick is the one input; the mode only names a compiled tier the mode allows, where it
@@ -134,24 +76,6 @@ pub fn lane_body_tier(pick: PredictedTier) -> Option<Tier> {
 /// The base a share in percent is a share of.
 pub const PERCENT: u64 = 100;
 
-
-const MEASURED: Tiers = Tiers {
-    lane_body: LaneBody { compile_poll_interval: 64 },
-    stitch: Stitch {
-        max_total_instructions: 96,
-        window_registers: 32,
-        max_depth: 3,
-    },
-    admits_all: false,
-};
-
-/// The rows code compiled for no particular VM is compiled under (`VmFacts::STATIC`).
-pub const STATIC_ROWS: &Tiers = &MEASURED;
-
-/// The measured rows admitting every eligible compile: for tests of what compiled code does, on
-/// fixtures too small to repay one (`force_admission`).
-#[cfg(any(test, feature = "test-support"))]
-const ADMITTING: Tiers = Tiers { admits_all: true, ..MEASURED };
 
 /// Whether a general loop may enter a JS tier. A parameter-initialization run (`stops`)
 /// observes every PC up to its stop, and a tier would run past it.

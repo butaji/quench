@@ -158,7 +158,6 @@ pub(crate) fn derive_lane_view<'live>(
     sites: &[quench_runtime::bytecode::FieldSite],
     plan: crate::compiled::admission::RecordPlan,
     diagnostics: bool,
-    tiers: &'static Tiers,
     facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
     planned: Vec<quench_runtime::vm::engine_types::PlannedSite>,
 ) -> LaneView {
@@ -427,7 +426,7 @@ pub(crate) fn derive_lane_view<'live>(
             constants,
             sites,
             live,
-            (diagnostics, tiers),
+            diagnostics,
             &mut records,
         )
     } else {
@@ -533,7 +532,6 @@ pub(crate) fn derive_lane_view<'live>(
     LaneView {
         records,
         entries,
-        tiers,
         memory_register,
         activation,
         target_body: std::cell::OnceCell::new(),
@@ -634,7 +632,7 @@ pub(super) fn install_loop_sites<'live>(
     constants: &[Value],
     sites: &[quench_runtime::bytecode::FieldSite],
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
-    (diagnostics, tiers): (bool, &'static Tiers),
+    diagnostics: bool,
     records: &mut [LaneInstruction],
 ) -> (Box<[LoopSite]>, Vec<(crate::compiled::RegionRejection, usize)>) {
     let backward = jump_row::<JUMP>(true) as *const ();
@@ -719,7 +717,6 @@ pub(super) fn install_loop_sites<'live>(
                     entering: std::cell::Cell::new(true),
                     enclosing: std::cell::OnceCell::new(),
                     diagnostics,
-                    tiers,
                     lane_backedge_count: std::cell::Cell::new(0),
                     native_entry_attempts: std::cell::Cell::new(0),
                     native_region_runs: std::cell::Cell::new(0),

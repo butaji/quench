@@ -26,7 +26,6 @@
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt, OperationOperationRecordsExt};
 #[allow(unused_imports)]
 use crate::ext_traits::*;
-use tier_policy::Tiers;
 use crate::dispatch_fast::{frame_word, set_frame_word, Activation};
 use quench_runtime::staged::frame::{CONTEXT_BODY, CONTEXT_THIS};
 use crate::engine_prelude::*;
@@ -1514,8 +1513,6 @@ pub(crate) struct VmFacts<'a> {
     pub(crate) html_dda: bool,
     /// Whether leaves record the guard they took (`JsStepDispatch::exit_line`).
     pub(crate) diagnostics: bool,
-    /// The thresholds the compiling VM's tier controllers read: a Static fact of the code it makes.
-    pub(crate) tiers: &'static Tiers,
     /// The Stable facts the code may fold under a code dependency: `None` for code that takes
     /// no dependency on this VM (`Division::Offline`).
     pub(crate) online: Option<OnlineFacts<'a>>,
@@ -1563,7 +1560,7 @@ pub(crate) struct HeldAtoms<'a> {
 impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
-    pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
+    pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, online: None, frozen: false,
         frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
 }
 
@@ -1571,7 +1568,7 @@ impl VmFacts<'static> {
 impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
-        VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
+        VmFacts { html_dda, diagnostics: admission::diagnosing(self), online: None, frozen: false,
             frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
     }
 }

@@ -331,7 +331,7 @@ impl Vm {
         if !self.programs.residual(self.active_program).is_some_and(|running| std::ptr::eq(running, program)) { return interpreted; }
         let predicted = self.programs.predicted_tiers(self.active_program);
         let aot = self.programs.ahead_images(self.active_program, program).is_some();
-        super::lane_facts::body_pick(self.programs.tiers(), aot, predicted.as_deref().unwrap_or(&[]), function, called_by_loop)
+        super::lane_facts::body_pick(aot, predicted.as_deref().unwrap_or(&[]), function, called_by_loop)
     }
 
     /// The call graph of `program`, where it is the running program (`ProgramStore::call_graph`): a graph of another

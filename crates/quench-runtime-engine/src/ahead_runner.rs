@@ -28,11 +28,11 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
     // A function's loop regions enter native code iff its predicted tier is not the interpreter (design decision 4.9:
     // the argmin, or the AOT mode's tier for an image, `lane_facts::body_pick`).
     let predicted = vm.programs.predicted_tiers(program);
-    let loop_regions = !matches!(crate::compiled::lane_facts::body_pick(vm.programs.tiers(), image, predicted.as_deref().unwrap_or(&[]), function, false),
+    let loop_regions = !matches!(crate::compiled::lane_facts::body_pick(image, predicted.as_deref().unwrap_or(&[]), function, false),
         quench_runtime::vm::tier_policy::PredictedTier::Interpreter);
     let mut view = crate::dispatch_fast::derive_lane_view(function, code, constants, vm.heap_reads(), kind, live, sites,
         crate::compiled::admission::record_plan(loop_regions && quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY)),
-        vm.programs.reports_on_drop(), vm.programs.tiers(), facts.as_deref(), planned);
+        vm.programs.reports_on_drop(), facts.as_deref(), planned);
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
     if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
     view
@@ -45,7 +45,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn view_in_lane<'a>(vm: &Vm, _program: ProgramId, _function: u32, code: &Function, constants: &[Value], _kind: ProgramKind,
     _live: &dyn Fn() -> Option<&'a std::rc::Rc<RegisterMasks>>, _sites: &[FieldSite], _image: bool) -> LaneView {
-    ahead_lane_view(code, constants, vm.programs.tiers())
+    ahead_lane_view(code, constants)
 }
 
 /// The lane view of an execution-only build: the body's own records, whose only entry is the
@@ -54,7 +54,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, _program: ProgramId, _function: u32, cod
 /// helpers read them (`body_calls::ends_run`, `push_passed_in_lane`, the general step); they
 /// carry no bytecode handler, since nothing dispatches them.
 #[cfg(not(feature = "jit"))]
-fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static quench_runtime::vm::tier_policy::Tiers) -> LaneView {
+fn ahead_lane_view(function: &Function, constants: &[Value]) -> LaneView {
     let count = function.code.len();
     let records = Records::new(body_records(function, constants), false);
     let mut entries = vec![0u64; count.div_ceil(u64::BITS as usize)];
@@ -63,7 +63,6 @@ fn ahead_lane_view(function: &Function, constants: &[Value], tiers: &'static que
     LaneView {
         records,
         entries: entries.into_boxed_slice(),
-        tiers,
         memory_register: None,
         activation: ActivationShape::of(function),
         target_body: std::cell::OnceCell::new(),

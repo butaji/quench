@@ -1,5 +1,4 @@
 use crate::vm::EngineLaneView;
-use crate::vm::tier_policy::{TierRows, Tiers};
 use super::wtf16::JsString;
 use crate::Value;
 use crate::bytecode::ResidualProgram;
@@ -617,14 +616,11 @@ pub struct ProgramStore {
     js_jit_dataview_float64_set_entries: u64,
     /// What the tiers did in this VM (`Vm::tier_events`).
     tier_events: super::tier_events::TierEvents,
-    /// The thresholds this VM's tier controllers read (`TierRows`), fixed at its construction.
-    tiers: &'static Tiers,
 }
 
 impl Default for ProgramStore {
     fn default() -> Self {
         crate::jit_coverage::sample_this_thread();
-        let tiers = TierRows::made();
         Self {
             native_call_bindings: Default::default(),
             lane_installed: Default::default(),
@@ -659,7 +655,6 @@ impl Default for ProgramStore {
             js_jit_dataview_float64_get_entries: 0,
             js_jit_dataview_float64_set_entries: 0,
             tier_events: Default::default(),
-            tiers,
         }
     }
 }
@@ -1789,12 +1784,6 @@ impl ProgramStore {
     }
 
     #[inline]
-    pub fn tiers(&self) -> &'static Tiers { self.tiers }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { self.tiers = tiers; }
-
-    #[inline]
     pub fn tier_events(&self) -> &super::tier_events::TierEvents {
         &self.tier_events
     }
@@ -2862,7 +2851,6 @@ mod lane_diagnostic_tests {
 
 #[cfg(test)]
 mod jit_code_cache_tests {
-    use crate::vm::tier_policy::TierRows;
     use super::{
         JIT_MAX_ARTIFACTS, JIT_MAX_MAPPED_BYTES, JS_JIT_MAX_FUNCTIONS,
         JS_JIT_MAX_MAPPED_BYTES, JitArtifactKind, JitCodeCacheBudget,
