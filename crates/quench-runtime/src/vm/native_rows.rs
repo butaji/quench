@@ -302,6 +302,11 @@ pub(super) const STRING_METHODS: &[(&str, Native, f64)] = &STRING_PROTOTYPE_ROWS
 /// `Math`'s functions, in installation order.
 pub(super) const MATH_FUNCTIONS: &[(&str, Native)] = &MATH_ROWS;
 
+/// The Math function named `name` (`Math.name`), where a row names one.
+pub fn math_function(name: &str) -> Option<Native> {
+    MATH_FUNCTIONS.iter().find(|(text, _)| *text == name).map(|&(_, native)| native)
+}
+
 /// Each native's row flags by discriminant: the union of the flags of the rows that name it.
 const NATIVE_FLAGS: [u8; Native::COUNT as usize] = {
     let mut flags = [0; Native::COUNT as usize];

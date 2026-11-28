@@ -203,7 +203,7 @@ pub(super) fn nested_row_site(vm: &Vm, code: &ResidualProgram, i: &LaneInstructi
 }
 
 /// Whether site `site` is a field read of a Math call's callee (`MATH_CALL_SITE`, `MATH_CALL2_SITE`,
-/// `MATH_CALL2_CONST_SITE`).
+/// `MATH_CALL2_CONST_SITE`), chosen at load (`fuse_math_calls`).
 pub(crate) const fn math_site(site: u8) -> bool {
     site == MATH_CALL_SITE || site == MATH_CALL2_SITE || site == MATH_CALL2_CONST_SITE
 }
