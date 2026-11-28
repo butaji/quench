@@ -6,6 +6,9 @@
 use super::spread::Passing;
 use super::{Arguments, NumericFrame, NumericStage, Operation, Protocol, Register, Step};
 use crate::bytecode::{FieldLookup, Operand};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The tag byte of each `CallOut`, which a helper-call row passes as its immediate.
 pub const TAG_EQUALITY: u8 = 0;

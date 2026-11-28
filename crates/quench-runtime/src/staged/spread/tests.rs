@@ -2,6 +2,9 @@ use crate::staged::OperationOperationExt;
 use super::*;
 use crate::bytecode::ImmediateLayout;
 use crate::staged::{CallOut, DecodeContext};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 type Row = Operation<u64, ()>;
 

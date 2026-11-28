@@ -9,6 +9,9 @@
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::frame_arm::{frame_arm, FrameArm};
 use crate::bytecode::{Class, Op, WideInstruction};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A family of staged operations. One record can mean more than one (a compare-jump is also a
 /// conditional jump), so a tier asks `means(instruction, meaning)` for each it cares about.

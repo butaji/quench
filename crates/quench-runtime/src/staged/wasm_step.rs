@@ -249,6 +249,9 @@ macro_rules! wasm_lane_list {
 }
 #[allow(unused_imports)]
 pub(crate) use wasm_lane_list;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A Wasm tier: what it makes of each family of steps, in its own terms (`Out`: the u-jit's
 /// fall-through flag, the b-jit's rows). `dispatch` is the one match over `Step` the tiers run,

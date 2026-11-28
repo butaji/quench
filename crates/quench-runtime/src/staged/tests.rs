@@ -4,6 +4,9 @@ use super::*;
 use crate::bytecode::Operand;
 use crate::heap::{Cell, Heap, Object};
 use crate::Value;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// The registers an allocation row reads from its window.
 fn window_values(allocation: Allocation) -> i32 {

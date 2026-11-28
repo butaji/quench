@@ -138,3 +138,6 @@ pub fn await_source<S: Stage, F: CallFrame<S>>(stage: &mut S, frame: &mut F, awa
 mod glue;
 #[cfg(not(stencil_build))]
 pub use glue::*;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;

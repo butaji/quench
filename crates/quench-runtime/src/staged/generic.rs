@@ -257,3 +257,6 @@ fn equality<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, d
 mod glue;
 #[cfg(not(stencil_build))]
 pub use glue::*;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;

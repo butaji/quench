@@ -16,6 +16,9 @@ use crate::wasm::memory::{
     LinearBytes, MemoryLoad, MemoryStore, WASM_PAGE_BITS, WASM_PAGE_BYTES, checked_range,
 };
 use crate::{WasmTrap, WasmType, WasmValue};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 const MEMORY_BYTES: usize = 24;
 const ADDRESSES: [u32; 9] = [0, 1, 7, 8, 16, 20, 23, 24, u32::MAX];

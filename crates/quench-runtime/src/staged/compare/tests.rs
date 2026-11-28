@@ -6,6 +6,9 @@ use crate::staged::{Concrete, Constant, Edge, Frame, GlobalFrame, NoPlans, Prope
 use crate::typed_ir::Type;
 use crate::ValueType;
 use crate::operator::BinaryOperator;
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::glue_prelude::*;
 
 /// A register file that records the decisions it is asked for, answering them with `answer`, and
 /// the facts a jump proves along its edges; `types` are the registers' proved types.
