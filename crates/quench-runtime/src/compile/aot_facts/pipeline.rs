@@ -118,10 +118,34 @@ pub fn analyze_as(program: &ResidualProgram, world: World) -> AotFacts {
 /// solve's own (`ClassIds::build`): a solve that splits no body runs once, and one that does runs again with the split
 /// classes, which change no construct site, body or key, so the table of the first run holds in the second.
 fn solve(program: &ResidualProgram, world: World, openers: Option<&[u32]>) -> (AotFacts, bool) {
-    let (facts, verified) = solve_with(program, world, openers, &ClassIds::default());
+    let (facts, verified) = solve_assumed(program, world, openers, &ClassIds::default());
     if facts.classes.is_empty() { return (facts, verified); }
     let classes = facts.classes.clone();
-    solve_with(program, world, openers, &classes)
+    solve_assumed(program, world, openers, &classes)
+}
+
+/// The rounds `solve_assumed` assumes an escape set in before it takes the untyped one.
+const ASSUMPTION_ROUNDS: usize = 3;
+
+/// `solve_with` from an assumption of the functions that escape, which the root's order (`frozen::undominated_closures`) takes as
+/// starting at any time. The untyped first pass makes every function escape (its values are all any), so taking its escapes
+/// there leaves no closure dominated, no binding single, and no construction resolved, and the solve then escapes everything
+/// by its own unresolved calls. So the solve assumes none escapes, and checks the assumption against the escapes it settles: a
+/// settled set within the assumption makes the order's seeds a superset of the functions that start at any time, so its
+/// dominance holds. A wider set joins the assumption and the solve runs again; past `ASSUMPTION_ROUNDS`, or where no round
+/// settles, it takes the untyped pass's escapes.
+fn solve_assumed(program: &ResidualProgram, world: World, openers: Option<&[u32]>, classes: &ClassIds) -> (AotFacts, bool) {
+    let mut assumed = std::collections::BTreeSet::new();
+    for _ in 0..ASSUMPTION_ROUNDS {
+        let (facts, verified, escaped) = solve_with(program, world, openers, classes, Some(&assumed));
+        match escaped {
+            Some(escaped) if escaped.is_subset(&assumed) => return (facts, verified),
+            Some(escaped) => assumed.extend(escaped),
+            None => break,
+        }
+    }
+    let (facts, verified, _) = solve_with(program, world, openers, classes, None);
+    (facts, verified)
 }
 
 /// The body forms of every function of `program`, each classified once from the function and its bytecode (`body_forms`). The
@@ -141,7 +165,9 @@ fn body_forms(program: &ResidualProgram, facts: &AotFacts) -> Box<[BodyForm]> {
 }
 
 /// `solve` with the class ids `classes` the constructions and prototypes resolve to (`ClassIds::of`).
-fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, classes: &ClassIds) -> (AotFacts, bool) {
+fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, classes: &ClassIds,
+    assumed: Option<&std::collections::BTreeSet<u32>>,
+) -> (AotFacts, bool, Option<std::collections::BTreeSet<u32>>) {
     let scope = Scope::of(program);
     let analyze_typed = |resolved: &std::collections::BTreeMap<value::Key, u32>, names: &std::collections::BTreeSet<u32>,
         types: Option<&types::Types>, feedback: &length_settle::Feedback| -> Vec<FunctionFlow> {
@@ -164,7 +190,11 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
     // The first pass's census names the callees the dominance check follows.
     let first_census = Census::of(&first, world, classes.clone());
     let first_facts = AotFacts::unsolved(world);
-    let first_escapes = escapes::escapes(&first, &first_facts, &first_census, &scope);
+    let first_escapes = match assumed {
+        Some(functions) => escapes::Escapes::assumed(functions.clone()),
+        None => escapes::escapes(&first, &first_facts, &first_census, &scope),
+    };
+    let mut settled_escapes = None;
     let (undominated, undominated_bodies) = frozen::undominated_closures(program, &first, &first_facts, &first_census, &first_escapes);
     let mut resolved = first_census.singles();
     resolved.retain(|key, _| !undominated.contains(&census::fact_key(*key)));
@@ -215,7 +245,9 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         let mut settled = false;
         let mut grown = BTreeMap::new();
         for _ in 0..types::TYPE_PASSES {
-            let next = types::Types::of(&analyze_typed(&resolved, &accessor_names, Some(&found), &feedback), &facts, &census, &scope).widen(&found, &mut grown);
+            let typed = analyze_typed(&resolved, &accessor_names, Some(&found), &feedback);
+            census.retype_wild(&typed);
+            let next = types::Types::of(&typed, &facts, &census, &scope).widen(&found, &mut grown);
             settled = next == found;
             found = next;
             if settled { break; }
@@ -239,6 +271,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.element_views.clear();
         facts.access_classes.clear();
         let mut settled_flows = analyze_typed(&resolved, &accessor_names, Some(&found), &feedback);
+        census.retype_wild(&settled_flows);
         built = ClassIds::build(&settled_flows, program.function_count() as u32);
         for (id, flow) in settled_flows.iter_mut().enumerate() {
             let id = id as u32;
@@ -282,6 +315,7 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
             facts.registers.insert(id, std::mem::take(&mut flow.registers));
         }
         let open_escapes = escapes::escapes(&settled_flows, &facts, &census, &scope);
+        settled_escapes = Some(open_escapes.functions.clone());
         // The class layouts read the settled shapes: each construction's classes are the settled ones.
         facts.layouts = class_layout::of_program(program, &settled_flows, &census, &facts.constructed_classes());
         if let Some(openers) = openers {
@@ -380,5 +414,5 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         eprintln!("aot-lanes: any fields {any} of {total}");
         eprintln!("aot-lanes: closed world {world:?}: {} call targets ({} guessed), {} closed sets, {} constructions, {} access classes, {} cells", facts.call_targets.len(), facts.guessed_calls.len(), facts.call_candidates.len(), facts.construct_targets.len(), facts.access_classes.len(), facts.cells.len());
     }
-    (facts, verified)
+    (facts, verified, settled_escapes)
 }

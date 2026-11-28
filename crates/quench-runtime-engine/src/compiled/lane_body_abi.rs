@@ -35,33 +35,72 @@ pub(crate) fn body_shim_signature(pointer: ir::Type) -> Signature {
     call_signature::typed_signature(shim_call_conv(), &[pointer, types::I64, types::I64, pointer, pointer], &[types::I32, types::I64])
 }
 
+/// The body shim's address and the entry stub's, decided once for the process: the stubs this process publishes
+/// (`published`), or those an image links ahead, which its init edge installs before any lane body runs
+/// (`install_linked`).
+static STUBS: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
+
+/// The process's lane stubs (`STUBS`): where none were installed, the ones this process publishes.
+fn stubs() -> (usize, usize) {
+    *STUBS.get_or_init(|| (published(build_body_shim), published(|isa| build_entry_stub(isa, InLane::Process))))
+}
+
 /// The address of the body shim: one SysV function for every lane body, which calls the body it
 /// receives as its fifth argument. Every native caller enters a body through it (`CallContext::body_shim`),
-/// so a body's convention is the shim's alone. Zero where the host has no native code.
+/// so a body's convention is the shim's alone. Zero where the host has no native code and links none.
 pub(crate) fn body_shim() -> usize {
-    static SHIM: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *SHIM.get_or_init(|| published(build_body_shim))
+    stubs().0
 }
 
 /// The address of the entry stub: the entry of every unpublished cell (`EntryCell::stub`). It has the lane body
 /// convention, as a body does, and calls `entry_stub_in_lane`, which enters nothing so its caller restarts the call.
-/// Zero where the host has no native code.
+/// Zero where the host has no native code and links none.
 pub(crate) fn entry_stub() -> usize {
-    static STUB: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *STUB.get_or_init(|| published(build_entry_stub))
+    stubs().1
+}
+
+/// Makes `body_shim` and `entry_stub`, the stubs an image linked ahead (`link_lane_stubs`), the process's. Binding the
+/// entry again installs the same pair; an error where the process already took other stubs, as nothing reads the image's.
+pub(crate) fn install_linked(body_shim: usize, entry_stub: usize) -> Result<(), String> {
+    let linked = (body_shim, entry_stub);
+    (*STUBS.get_or_init(|| linked) == linked).then_some(()).ok_or_else(|| "the lane stubs were taken before the image installed its own".to_owned())
+}
+
+/// Appends the lane stubs to the functions of an image's entry object for `target`: the body shim and the entry
+/// stub, exported by name (`LANE_BODY_SHIM_SYMBOL`, `LANE_ENTRY_STUB_SYMBOL`), and the import of
+/// `entry_stub_in_lane` the entry stub calls. The image's entry binder installs them (`linked_native_sources!`), so
+/// an image publishes no code for them.
+pub fn link_lane_stubs(functions: &mut Vec<crate::native_object::NativeFunction>, target: &quench_runtime::vm::jit_backend::NativeTarget) -> Result<(), String> {
+    use crate::native_object::NativeFunction;
+    let isa = quench_runtime::vm::jit_backend::relocatable_isa(target)?;
+    let in_lane = u32::try_from(functions.len()).map_err(|_| "native symbol count exceeds u32")?;
+    functions.push(NativeFunction::Import {
+        name: quench_runtime::vm::engine_types::ENTRY_STUB_IN_LANE_SYMBOL.into(),
+        signature: body_signature_under(isa.pointer_type(), isa.default_call_conv()),
+    });
+    functions.push(NativeFunction::Definition { name: quench_runtime::native_image::LANE_BODY_SHIM_SYMBOL.into(), function: build_body_shim(&*isa) });
+    functions.push(NativeFunction::Definition { name: quench_runtime::native_image::LANE_ENTRY_STUB_SYMBOL.into(), function: build_entry_stub(&*isa, InLane::Declared(in_lane)) });
+    Ok(())
 }
 
 /// Compiles the function `build` makes for the host and publishes its code for the life of the process: the
 /// memory is leaked, so the returned address stays callable. Zero where the host has no native code.
-fn published(build: fn(&dyn cranelift_codegen::isa::TargetIsa) -> ir::Function) -> usize {
+fn published(build: impl FnOnce(&dyn cranelift_codegen::isa::TargetIsa) -> ir::Function) -> usize {
     let Some(isa) = quench_runtime::vm::jit_backend::target_isa() else { return 0 };
     let Some(memory) = super::compile_entry(&*isa, build(&*isa)).and_then(|code| CodeMemory::new(&code)) else { return 0 };
     Box::leak(Box::new(memory)).pointer().addr()
 }
 
+/// Where the entry stub finds `entry_stub_in_lane`: at its address in this process, or by the object declaration
+/// that names it (`link_lane_stubs`).
+enum InLane {
+    Process,
+    Declared(u32),
+}
+
 /// The entry stub's function: it takes a lane body's arguments and calls `entry_stub_in_lane` with them, which the
 /// host's default convention takes, and returns its status and word.
-fn build_entry_stub(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Function {
+fn build_entry_stub(isa: &dyn cranelift_codegen::isa::TargetIsa, in_lane: InLane) -> ir::Function {
     let pointer = isa.pointer_type();
     let mut func = ir::Function::with_name_signature(ir::UserFuncName::user(ENTRY_STUB_NAMESPACE, 0), body_signature_in_lane(pointer));
     let mut builder_context = quench_runtime::vm::jit_backend::builder::take_context();
@@ -69,7 +108,14 @@ fn build_entry_stub(isa: &dyn cranelift_codegen::isa::TargetIsa) -> ir::Function
     let (block, parameters) = quench_runtime::vm::jit_backend::builder::enter(&mut builder);
     builder.seal_block(block);
     let target = builder.import_signature(body_signature_under(pointer, isa.default_call_conv()));
-    let address = builder.ins().iconst(pointer, quench_runtime::vm::engine_types::entry_stub_in_lane as BodyEntry as usize as i64);
+    let address = match in_lane {
+        InLane::Process => builder.ins().iconst(pointer, quench_runtime::vm::engine_types::entry_stub_in_lane as BodyEntry as usize as i64),
+        InLane::Declared(index) => {
+            let name = builder.func.declare_imported_user_function(ir::UserExternalName::new(crate::native_object::NATIVE_FUNCTION_NAMESPACE, index));
+            let callee = builder.import_function(ir::ExtFuncData { name: ir::ExternalName::user(name), signature: target, colocated: false, patchable: false });
+            builder.ins().func_addr(pointer, callee)
+        }
+    };
     let call = builder.ins().call_indirect(target, address, &parameters);
     let results = builder.inst_results(call).to_vec();
     builder.ins().return_(&results);

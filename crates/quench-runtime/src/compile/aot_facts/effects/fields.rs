@@ -137,7 +137,10 @@ pub(super) fn member_stores(ctx: &Ctx<'_>, pc: usize, instruction: WideInstructi
             events.writes.push((Key::Element(array.elements_key()), Word::of_cell(Cell { ty: stored.cell.ty, classes: stored.cell.classes, elements, sites: stored.cell.sites, global: stored.cell.global, prototype: stored.cell.prototype, identity: Identity::of_type(stored.cell.ty) })));
             // The stored value is an element of the array, which reads it back with the unnamed class.
             events.links.extend(stored.link(ElementClass::Unnamed));
-            if !index.is_number() { events.wild = events.wild.join(Holders::of(array.cell)); }
+            // A key of no value yet (`Type::NEVER`, a pass from the bottom) names no property: a later pass sees its value.
+            if !index.is_number() && index.cell.ty != Type::NEVER {
+                events.wild = events.wild.join(Holders::of(array.cell));
+            }
         }
         // A store whose operands the decode does not name (`IndexWrite`, `IndexSetHelper`) names no array: it may store
         // any value into an array of any class and change any length, so every class's elements are any (`wild_elements`).

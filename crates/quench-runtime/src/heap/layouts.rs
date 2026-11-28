@@ -263,6 +263,37 @@ pub fn set_class_methods(class: u32, vector: usize) {
     CLASS_METHODS[class as usize].store(vector, Ordering::Release);
 }
 
+/// The words of every layout id interned so far, id 1 first: a heap snapshot keeps them, since its class cells'
+/// headers name classes by id (`restore_words`).
+pub(crate) fn snapshot_words() -> Vec<u64> {
+    let _map = MAP.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    (1..NEXT.load(Ordering::Relaxed)).map(word).collect()
+}
+
+/// Gives each of a snapshot's layout words (`snapshot_words`) its id again, so the restored class cells' headers name
+/// the classes they named when written. False, writing nothing more, where this process already gave one of those ids
+/// another word or one of those words another id: the snapshot then does not fit this process.
+pub(crate) fn restore_words(words: &[u64]) -> bool {
+    let mut map = MAP.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let map = map.get_or_insert_with(FxHashMap::default);
+    let next = NEXT.load(Ordering::Relaxed) as usize;
+    let fits = words.len() < LAYOUT_CAPACITY && words.iter().enumerate().all(|(index, &word)| {
+        let id = index as u32 + 1;
+        let held = map.get(&word).copied();
+        if (id as usize) < next { self::word(id) == word } else { held.is_none() }
+    });
+    if !fits { return false; }
+    for (index, &word) in words.iter().enumerate().skip(next.saturating_sub(1)) {
+        let id = index as u32 + 1;
+        // SAFETY: an id at or past `NEXT`, below the capacity: no reader names it yet (`Table`).
+        unsafe { *table_base().cast_mut().add(id as usize) = word };
+        map.insert(word, id);
+    }
+    std::sync::atomic::fence(Ordering::Release);
+    NEXT.fetch_max(words.len() as u32 + 1, Ordering::Relaxed);
+    true
+}
+
 #[cold]
 #[inline(never)]
 fn intern_slow(word: u64, slot: usize) -> u32 {
@@ -283,6 +314,27 @@ fn intern_slow(word: u64, slot: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_layout_ids_restore_where_they_fit() {
+        let a = intern(0x0aaa_0000_0000_0001);
+        let words = snapshot_words();
+        assert_eq!(words[a as usize - 1], 0x0aaa_0000_0000_0001);
+        // The same process fits its own snapshot: every id already holds its word.
+        assert!(restore_words(&words));
+        // A snapshot naming a word under an id this process gave another word does not fit.
+        let mut taken = words.clone();
+        taken[a as usize - 1] = 0x0bbb_0000_0000_0002;
+        assert!(!restore_words(&taken));
+        // Ids past this process's own are given their words, and intern then finds them. Other tests intern in
+        // parallel, so the snapshot is retaken until no id was handed out between the read and the restore.
+        let grown = (0..8).find_map(|_| {
+            let mut grown = snapshot_words();
+            grown.push(0x0ccc_0000_0000_0003);
+            restore_words(&grown).then_some(grown)
+        }).expect("no interleaved intern in eight tries");
+        assert_eq!(intern(0x0ccc_0000_0000_0003) as usize, grown.len());
+    }
 
     #[test]
     fn interning_is_stable_and_reads_back() {

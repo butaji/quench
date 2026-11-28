@@ -11,6 +11,12 @@ macro_rules! linked_source_pool {
     };
 }
 
+/// The name of the body shim an image's entry object defines (`lane_body_abi::link_lane_stubs`), which its
+/// entry binder installs (`linked_native_sources!`, which spells the same name).
+pub const LANE_BODY_SHIM_SYMBOL: &str = "quench_lane_body_shim";
+/// The name of the entry stub an image's entry object defines, as `LANE_BODY_SHIM_SYMBOL`.
+pub const LANE_ENTRY_STUB_SYMBOL: &str = "quench_lane_entry_stub";
+
 /// Bind the compiler's metadata and static entry tables for an explicit host. The
 /// generated invocation contains only data; this macro owns the loading rules.
 #[macro_export]
@@ -28,6 +34,14 @@ macro_rules! linked_native_sources {
         /// this compiler, linked unmodified, and kept alive for the process.
         pub unsafe fn $entry() -> Result<$crate::NativeJsProgram, String> {
             unsafe extern "C" { #[link_name = $entry_link] static $entry_symbol: u8; }
+            // The lane stubs the entry's object links ahead (`LANE_BODY_SHIM_SYMBOL`, `LANE_ENTRY_STUB_SYMBOL`).
+            unsafe extern "C" {
+                #[link_name = "quench_lane_body_shim"] static QUENCH_LANE_BODY_SHIM: u8;
+                #[link_name = "quench_lane_entry_stub"] static QUENCH_LANE_ENTRY_STUB: u8;
+            }
+            // SAFETY: the compiler emits both stubs into the entry's object (`link_lane_stubs`).
+            unsafe { $crate::NativeJsProgram::install_linked_lane_stubs(
+                std::ptr::addr_of!(QUENCH_LANE_BODY_SHIM).addr(), std::ptr::addr_of!(QUENCH_LANE_ENTRY_STUB).addr()) }?;
             let bytes: $crate::KeptBytes = std::rc::Rc::new(&include_bytes!($entry_metadata)[..]);
             let program = $crate::ResidualProgram::from_binary_bytes(bytes)?;
             // SAFETY: the compiler emits the metadata and this linked table together.

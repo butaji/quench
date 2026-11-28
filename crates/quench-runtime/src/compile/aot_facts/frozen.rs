@@ -100,12 +100,26 @@ pub(super) fn undominated_closures(program: &crate::bytecode::ResidualProgram, f
         let closures: Vec<u32> = sites.iter().filter_map(|(_, _, word)| word.cell.ty.body_index()).collect();
         if closures.is_empty() { continue; }
         let key_reads = reads.get(&key).map_or(&[][..], Vec::as_slice);
-        if wild(census, key) || dominating_store(&order, flows, facts, census, sites, key_reads).is_none() {
+        if wild(census, key) || (!prologue_store(program, key, sites) && dominating_store(&order, flows, facts, census, sites, key_reads).is_none()) {
             keys.insert(key);
             bodies.extend(closures);
         }
     }
     (keys, bodies)
+}
+
+/// Whether the one write of slot `key` is a hoisted declaration of its owner: made in the owner's prologue, which only makes
+/// closures and stores them into the owner's slots, so it runs on entry before any code that could read a slot (a load, a
+/// call, an access that may run a getter). Each activation of the owner makes its own slots, and every function that reads
+/// one runs only after a call, which the prologue makes none of: no read sees the slot before its store, however often the
+/// owner runs and whatever escapes (`dominating_store` asks the root alone, which a CommonJS body is not).
+fn prologue_store(program: &crate::bytecode::ResidualProgram, key: FactKey, sites: &[(u32, u32, Word)]) -> bool {
+    use crate::bytecode::Op;
+    let (FactKey::Slot { owner, .. }, [(function, pc, _)]) = (key, sites) else { return false };
+    if *function != owner { return false; }
+    program.with_record(owner as usize, |body| (*pc as usize) < body.code.len()
+        && body.instruction_at(*pc as usize).op() == Op::StoreEnvLocal
+        && (0..*pc as usize).all(|at| matches!(body.instruction_at(at).op(), Op::MakeClosure | Op::StoreEnvLocal)))
 }
 
 /// The writes and the reads of each frozen key group of `flows`, by key group (`fact_group`), in flow order.

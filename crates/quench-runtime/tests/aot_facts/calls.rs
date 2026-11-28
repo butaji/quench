@@ -117,6 +117,30 @@ fn a_richards_shaped_class_keeps_its_int32_parameters_in_a_closed_world() {
 }
 
 #[test]
+fn an_object_of_another_class_reaching_a_native_leaves_a_class_method_closed() {
+    // `print` reads any property of the `Other` it is handed, but no `Scheduler`, its prototype nor its constructor reaches
+    // unseen code: `m` keeps its parameter type.
+    let program = program("function Scheduler() { this.count = 0; } function Other() { this.x = 1; } \
+        Scheduler.prototype.m = function m(x) { return x | 1; }; \
+        Scheduler.prototype.run = function run() { return this.m(3); }; \
+        new Scheduler().run(); print(new Other());");
+    let facts = analyze(&program);
+    assert!(parameter(&program, &facts, "m", 0).ty.is_subtype(Type::INT32));
+}
+
+#[test]
+fn an_instance_reaching_a_native_opens_its_own_and_its_parents_methods_and_its_constructor() {
+    // `print` may read `m` off the instance, `p` up its chain, and call `constructor`: all three take any argument.
+    let program = program("class P { p(y) { return y | 1; } } \
+        class C extends P { constructor(z) { super(); this.z = z | 0; } m(x) { return x | 1; } } \
+        const c = new C(1); c.m(2); c.p(3); print(c);");
+    let facts = analyze(&program);
+    assert_eq!(parameter(&program, &facts, "m", 0).ty, Type::ANY);
+    assert_eq!(parameter(&program, &facts, "p", 0).ty, Type::ANY);
+    assert_eq!(parameter(&program, &facts, "C", 0).ty, Type::ANY);
+}
+
+#[test]
 fn a_host_callee_makes_no_program_closure_escape() {
     // `Math.abs` is read off a key no program write reaches: it holds no program closure, so `f` stays a closed slot.
     let program = program("(function () { function f(a) { return a | 1; } f(2); Math.abs(1); })();");
