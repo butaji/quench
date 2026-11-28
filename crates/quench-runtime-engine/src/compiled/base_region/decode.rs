@@ -78,6 +78,28 @@ impl Folded {
     }
 }
 
+/// A cache site's inline-cache entry as a row's operands (`Decoded::ic`). A shape-keyed entry is one word (`ic_hole`:
+/// the exact shape below 32 bits, the slot's byte offset above). A class-keyed entry (`NativeFieldLoad::class`) is the
+/// receiver's key (`class | CLASS_KEY`) below 32 bits and the field index above, with the holder cell's granule for a
+/// held read: the operands the class rows take (`ic_rows.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IcEntry {
+    Shape(u64),
+    Class { key_slot: u64, holder: Option<u32> },
+}
+
+impl IcEntry {
+    /// The entry's operands in the order the rows read them: the shape or key, the slot offset or index, and the holder
+    /// cell's granule (zero unless a class-keyed held read takes it).
+    pub(crate) fn words(ic: Option<IcEntry>) -> (u64, u64, u64) {
+        match ic {
+            Some(IcEntry::Shape(word)) => (word & u64::from(u32::MAX), word >> u32::BITS, 0),
+            Some(IcEntry::Class { key_slot, holder }) => (key_slot & u64::from(u32::MAX), key_slot >> u32::BITS, u64::from(holder.unwrap_or(0))),
+            None => (0, 0, 0),
+        }
+    }
+}
+
 /// An instruction as a row: its kind, destination, operands and branch target.
 pub(crate) struct Decoded {
     pub(crate) kind: Kind,
@@ -133,10 +155,9 @@ pub(crate) struct Decoded {
     /// writes only into a receiver of this shape (`plan::site_holes`, hole 4), as the site's live
     /// cache entry may name another shape, whose slot type nothing proved.
     pub(crate) slot_shape: Option<u32>,
-    /// A site read's or store's one own flat entry (`decode::fields::ic_hole`: the exact shape, and the
-    /// slot's byte offset above 32 bits), whose inline-cache row runs first and falls to the site row
-    /// on a miss (`plan::ic_plan`).
-    pub(crate) ic: Option<u64>,
+    /// A site read's or store's one own flat entry (`decode::fields::ic_entry`), whose inline-cache row runs first and
+    /// falls to the site row on a miss (`plan::ic_plan`).
+    pub(crate) ic: Option<IcEntry>,
     /// The step a store row's instruction runs as where the row declines its operand (`declines`):
     /// the instruction's own (`steps::lowering`).
     pub(crate) declined: Option<Step>,

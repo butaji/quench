@@ -23,6 +23,18 @@ fn folded_read(known: Known, site: u16) -> Option<(Folded, u64)> {
     (!load.function_shape).then_some((Folded { shape: load.shape, link: *link, holder: load.holder?, depth: chain.depth }, value.to_bits()))
 }
 
+/// The inline-cache operands of one own flat entry (`Decoded::ic`): the shape-keyed `ic_hole`, or a class-keyed entry's
+/// key (`class | CLASS_KEY`) and field index, with the holder cell's granule where the read is held (`IcHeldClass`).
+fn ic_entry(load: crate::compiled::object_slots::NativeFieldLoad) -> IcEntry {
+    match load.class {
+        Some(class) => IcEntry::Class {
+            key_slot: u64::from(quench_runtime::staged::field_cache_layout::CLASS_KEY | class) | u64::from(load.slot) << u32::BITS,
+            holder: load.holder.and(load.holder_cell),
+        },
+        None => IcEntry::Shape(ic_hole(load)),
+    }
+}
+
 /// The row of a named field read of a register (or of the receiver, `this`, which the payload
 /// holds) through the site's cache entry, or a nested lookup's two (`FieldSite`: `base.first.second`,
 /// with no sink field); a read the prototype holds is folded to its value where the code may hold
@@ -64,7 +76,7 @@ fn cached_read(known: Known, (object, first, second): (Option<Register>, u16, Op
             Decoded {
                 hole,
                 slot: second.is_none().then(|| own_slot_type(known, first)).flatten(),
-                ic: load.map(ic_hole),
+                ic: load.map(ic_entry),
                 typed: load.and_then(typed_slot),
                 ..row
             }
@@ -119,7 +131,7 @@ pub(crate) fn field_store_row(known: Known, instruction: WideInstruction) -> Opt
     let value = Some(Source::Register(instruction.register_a()));
     let site = instruction.cache_site_index();
     // A store of a Number into a slot that holds Numbers tries its inline-cache row first (`Decoded::ic`).
-    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| stores_number(load.ty)).map(ic_hole)).flatten();
+    let ic = (heap == Heap::SiteStore).then(|| own_flat_load(known, site).filter(|load| stores_number(load.ty)).map(ic_entry)).flatten();
     let slot = own_slot_load(known, site);
     Some(Decoded { base, hole: entry_offset(site), atom: Some(atom), slot: slot.map(|load| load.ty), slot_shape: slot.map(|load| load.shape), ic, ..Decoded::heap(heap, None, value, None) })
 }

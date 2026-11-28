@@ -12,7 +12,7 @@ pub(crate) const NO_HOLDER: u32 = u32::MAX;
 /// The key bit of a class key: a live direct-object receiver's entry names its class id OR'd with
 /// this bit (`class | CLASS_KEY`), so no class key equals a shape key. Class ids are below
 /// `heap::layouts::LAYOUT_CAPACITY` (1 << 22), which the layout table asserts, so they never reach this bit.
-pub(crate) const CLASS_KEY: u32 = 1 << 31;
+pub const CLASS_KEY: u32 = 1 << 31;
 
 /// Whether the receiver key `key` names a class (a live direct-object cell), not a shape. The empty
 /// `NO_RECEIVER` also carries the bit and names neither.
