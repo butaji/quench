@@ -116,32 +116,30 @@ impl Lowering<'_, '_> {
         self.step_with(state, frame::Edges::ValueGuarded { miss }, Operation::Call(CallOperation::Site(site)), StepWith { site: Some(Site::Call(call)), ..StepWith::default() });
     }
 
-    /// The layout id (`I64`) of the object `receiver` names, read from its record's header: a register's, or the fixed
-    /// `this`'s. A fixed class's receiver has no record: its class id (`fixed_receiver_class`) is its layout id, as the
-    /// method vector is keyed. A receiver that is no object leaves at `missed`.
+    /// The layout id (`I64`) of the object `receiver` names: its class cell's class word (`cell_class` of `cell_of`), the id
+    /// the method vector is keyed by. A fixed class's receiver names its class id (`fixed_receiver_class`) without a read.
+    /// A receiver that is no direct object leaves at `missed`.
     fn receiver_layout(&mut self, state: &mut State, receiver: quench_runtime::staged::Receiver, pc: usize, missed: ir::Block) -> ir::Value {
         if let Some(class) = self.fixed_receiver_class(pc, receiver) {
             return self.raw_const(Lane::I64, i64::from(class));
         }
-        let header = match receiver {
-            quench_runtime::staged::Receiver::Register(register) => {
-                let bits = self.tagged(state, register);
-                let class_base = headers::class_table_base(&mut self.builder, self.payload);
-                // The register's solver type proves its family where it names a direct object: no family test (`ObjectRecord::prove`).
-                let known = Some(state.values[usize::from(register)].value).filter(|fact| tag_proofs::proves_object(fact.ty));
-                ObjectHeader::prove(&mut self.builder, bits, class_base, known, missed)
+        let (bits, known) = match receiver {
+            quench_runtime::staged::Receiver::Register(register) => (self.tagged(state, register),
+                Some(state.values[usize::from(register)].value).filter(|fact| tag_proofs::proves_object(fact.ty))),
+            _ => {
+                let this = self.entry.as_ref().expect("entry facts").this;
+                (headers::this_word(&mut self.builder, this), None)
             }
-            _ => self.object_header(state, None, true, missed),
         };
-        // A record-less header (a fixed cell the solver names no class for) has no layout word: the receiver leaves.
-        if header.shape.is_none() {
-            self.goto(missed, &[]);
-            let unreached = self.builder.create_block();
-            self.builder.switch_to_block(unreached);
-            return self.raw_const(Lane::I64, 0);
+        // The register's solver type proves its family where it names a direct object: no family test.
+        if known.is_none() {
+            let object = quench_runtime::staged::value::is_direct_object(&mut super::object_slots::emit(&mut self.builder), bits);
+            emit_js_guard(&mut self.builder, object, missed);
         }
-        let loaded = header.word.unwrap_or_else(|| super::object_slots::shape_and_inline(&mut self.builder, header.address).1);
-        self.raw_unary(Unary::ZeroExtend(Lane::I64), loaded)
+        let mut stage = super::object_slots::emit(&mut self.builder);
+        let cell = quench_runtime::staged::object::cell_of(&mut stage, bits);
+        let class = quench_runtime::staged::object::cell_class(&mut stage, cell);
+        stage.raw_unary(Unary::ZeroExtend(Lane::I64), class)
     }
 
     /// The activation completes with `register`, by the staged return (`Frame::ret`) at the

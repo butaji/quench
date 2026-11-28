@@ -29,14 +29,16 @@ impl EmitFrame<'_> {
         };
         let facts = self.fields.as_ref()?;
         let admitted = facts.held.admitted?;
-        let header = self.proof_key(owner).map(|key| self.object_header(stage.builder, entry, key, false, miss));
+        // A store names its object's record; an ordinary object has none, so its store takes the host.
+        let Some(header) = self.proof_key(owner).and_then(|key| self.object_header(stage.builder, entry, key, false, miss)) else {
+            return self.field_store_host(stage, object, atom, site, value, miss);
+        };
         let (slow, done, packed) = (stage.builder.create_block(), stage.builder.create_block(), stage.builder.create_block());
         let packed_address = stage.builder.append_block_param(packed, types::I64);
         if let Some(bound) = binding.admitted { emit_js_guard(stage.builder, bound, slow); }
         emit_js_guard(stage.builder, admitted, slow);
         let id = stage.and_imm(object, u64::from(u32::MAX));
-        let address = emit_js_cached_field_slot(stage.builder, self.payload, object,
-            site, false, slow, Some(binding), header, Some(packed));
+        let address = emit_js_cached_field_slot(stage.builder, binding, header, slow, Some(packed));
         store::bound_full_store(stage, id, address, (value, fact), slow)?;
         stage.jump(done, &[]);
         stage.builder.switch_to_block(packed);

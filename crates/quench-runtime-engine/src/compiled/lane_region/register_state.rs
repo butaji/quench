@@ -93,9 +93,6 @@ pub(super) struct LocalProofs {
     /// The complete own-slot projection of an object, by its resolved tagged word and exact shape: a fact of the
     /// object, which any register holding the word shares (`keep_layout`).
     pub(super) layouts: BTreeMap<(ir::Value, u32), CheckedObject>,
-    /// The projection of the realm's global object a held slot's access proved (`call_out::global_layout`),
-    /// until an effect that may move the property arena retires it, as `layouts`.
-    pub(super) global: Option<(CheckedObject, usize)>,
     /// The exact shape of an object, by its resolved tagged word, that the object had when a proof
     /// (or definition) of it made the shape its type, and which a call keeps (`kept_shapes.rs`): the
     /// code holds it again at a use where the VM holds the shape stable.
@@ -185,7 +182,7 @@ impl State {
         Self { values: vec![RegisterFact::canonical(); registers], refinements: smallvec::SmallVec::new(), virtuals: smallvec::SmallVec::new(),
             virtual_arrays: smallvec::SmallVec::new(), proofs: LocalProofs {
             headers: smallvec::SmallVec::new(), records: smallvec::SmallVec::new(),
-            layouts: BTreeMap::new(), global: None, kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
+            layouts: BTreeMap::new(), kept_shapes: BTreeMap::new(), receivers: BTreeSet::new(),
             fields: smallvec::SmallVec::new(), int32_projections: smallvec::SmallVec::new(), numbers: smallvec::SmallVec::new(), stable: false, realm: false, specialized: false,
             arrays: smallvec::SmallVec::new(), typed: smallvec::SmallVec::new(), admitted_captures: smallvec::SmallVec::new(), homed: BitSet::new(),
             fresh: smallvec::SmallVec::new() } }
@@ -218,7 +215,6 @@ impl State {
         self.proofs.admitted_captures.clear();
         self.proofs.headers.clear();
         self.proofs.layouts.clear();
-        self.proofs.global = None;
         self.proofs.stable = false;
         for fact in &mut self.values {
             let unshaped = fact.value.ty.without_object_shape();
@@ -255,8 +251,6 @@ pub(super) struct Entry {
     /// caller registers no unit instruction writes. Records stay put in a run, which
     /// collects nothing; shapes are derived per use.
     pub(super) records: Vec<Option<ObjectRecord>>,
-    /// Per folded receiver shape, whether the receiver has it.
-    pub(super) receiver_shapes: BTreeMap<u32, Variable>,
     /// Per stored atom, whether the run admits direct stores of it.
     pub(super) store_atoms: BTreeMap<Atom, Variable>,
     /// The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`).

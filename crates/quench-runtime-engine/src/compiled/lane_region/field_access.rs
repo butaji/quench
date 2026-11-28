@@ -228,7 +228,7 @@ impl Lowering<'_, '_> {
     }
 
     /// A dominating proof of `owner`'s object (`headers::object_header`).
-    pub(super) fn object_header(&mut self, state: &mut State, owner: Option<Register>, read: bool, exit: ir::Block) -> ObjectHeader {
+    pub(super) fn object_header(&mut self, state: &mut State, owner: Option<Register>, read: bool, exit: ir::Block) -> Option<ObjectHeader> {
         let entry = self.entry.as_ref().expect("entry facts");
         headers::object_header(&mut self.builder, &mut self.registers, state, (entry, self.payload), owner, read, exit)
     }

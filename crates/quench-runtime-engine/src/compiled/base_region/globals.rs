@@ -3,8 +3,9 @@
 //!
 //! The code holds the global object's layout (`GlobalLayoutFact`: the slot stays a data property at
 //! its index until the object's shape, integrity or prototype use changes, or a lexical declaration
-//! shadows the name) and the slot's observed type (`SlotDependency`), so a row names the slot by a
-//! per-site byte offset and the object by its record id, and checks nothing per use. A realm proof
+//! shadows the name) and the slot's observed type (`SlotDependency`), so a row names the slot by its field-cache
+//! slot word and the object by its class cell's granule, addressed as `class_slot_address` addresses any cell's
+//! field, and checks nothing per use. A realm proof
 //! once at entry (`Heap::Realm`) says the VM runs the realm whose global object that is.
 //!
 //! 1. A load reads the slot live (`Heap::GlobalRead`), a Number where the slot's type says so.
@@ -46,9 +47,6 @@ impl Access {
             slot,
         })
     }
-
-    /// The field-cache slot word of the slot (`GlobalSlot::slot`), which the lane addresses in the global's class cell
-    /// (`staged::entry::class_slot_address`); a row holds the word itself, not a byte offset into an arena.
 
     /// Whether the slot's observed type is Numbers only, which a load of it yields.
     pub(crate) fn numeric(self) -> bool {
@@ -118,8 +116,8 @@ fn lexical_row(instruction: WideInstruction, slot: LexicalSlot) -> Option<Decode
     Some(Decoded { hole: slot.address as u64, lexical: Some(slot), ..row })
 }
 
-/// Whether `instruction` stores to a global name, which may write a field of the global object that a
-/// loop's entry record holds (`Facts::Entry`), or to a script-top-level lexical, which writes the realm's record.
+/// Whether `instruction` stores to a global name, which may write a field of the global object's class cell, or to a
+/// script-top-level lexical, which writes the realm's record.
 pub(crate) fn stores_name(instruction: WideInstruction) -> bool {
     store_op(instruction).is_some()
 }

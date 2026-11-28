@@ -673,46 +673,31 @@ fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
 }
 
 // `packed_slot`, when requested, receives a proved own-slot address holding a narrow
-// u32. The ordinary return addresses a full tagged Value in arena or holder extras. Neither
+// u32. The ordinary return addresses a full tagged Value in arena or inline extras. Neither
 // projection survives an operation that can change storage or collect the object.
 fn emit_js_cached_field_slot(
     builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    receiver: ir::Value,
-    site: u16,
-    allow_holder: bool,
+    binding: FieldSlotBinding,
+    header: object_slots::ObjectHeader,
     fallback: ir::Block,
-    binding: Option<FieldSlotBinding>,
-    header: Option<object_slots::ObjectHeader>,
     packed_slot: Option<ir::Block>,
 ) -> ir::Value {
     use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
     use quench_runtime::staged::object::plain_payload;
-    use quench_runtime::staged::region::Region;
     use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 
-    let base = receiver;
-
-    let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback));
     let FieldSlotBinding { holder, receiver: receiver_shape, slot, arena, .. } = binding;
+    // Only the receiver's own slot is read here; a prototype's slot is read through its class cell, not this one.
     let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
-    if !allow_holder {
-        emit_js_guard(builder, own, fallback);
-    }
+    emit_js_guard(builder, own, fallback);
 
-    let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header
-        .unwrap_or_else(|| {
-            let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
-            object_slots::ObjectHeader::prove(builder, base, class_base, None, fallback)
-        });
+    let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header;
     // A cached field read names a record, whose shape and storage form its header holds (a fixed class's cell takes `fixed_cells`).
     let (Some(shape), Some(inline)) = (shape, inline) else { unreachable!("a cached field read's header names a record") };
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
-    // A holder read uses only the receiver's shape and prototype link. Its own
-    // property representation is unrelated to the holder's slot address.
     let own_storage = |builder: &mut FunctionBuilder<'_>| {
         if let Some(packed_slot) = packed_slot {
             let packed = builder.create_block();
@@ -749,32 +734,8 @@ fn emit_js_cached_field_slot(
         stage.guard(plain, fallback);
         storage
     };
-    let address = if allow_holder {
-        let own_block = builder.create_block();
-        let holder_block = builder.create_block();
-        let join = builder.create_block();
-        builder.append_block_param(join, types::I64);
-        object_slots::emit(builder).branch_if(own, (own_block, &[]), (holder_block, &[]));
-        builder.switch_to_block(own_block);
-        let storage = own_storage(builder);
-        let address = arena.address(builder, storage, slot, fallback);
-        object_slots::emit(builder).goto(join, &[address]);
-
-        builder.switch_to_block(holder_block);
-        // S7f DESIGN: the prototype hop read the prototype's object record (the link's record id in the record table),
-        // which no ordinary object has. The holder read declines to the fallback until the hop reads the prototype's
-        // class cell (the lowered read's replacement for `object_record_at`).
-        object_slots::emit(builder).goto(fallback, &[]);
-        builder.seal_block(own_block);
-        builder.seal_block(holder_block);
-        builder.seal_block(join);
-        builder.switch_to_block(join);
-        builder.block_params(join)[0]
-    } else {
-        let storage = own_storage(builder);
-        arena.address(builder, storage, slot, fallback)
-    };
-    address
+    let storage = own_storage(builder);
+    arena.address(builder, storage, slot, fallback)
 }
 
 /// A word of the running dispatch's payload (`JsStepDispatch`).
@@ -868,11 +829,9 @@ fn class_mark_table() -> usize {
     std::mem::offset_of!(JsStepDispatch, head.class_mark_lists)
 }
 
-/// What a lane body knows of its receiver from entry on: the record, exact shape and
-/// storage mode found at entry, which only an adding store changes, after which the body reads
-/// them again (`Lowering::reload_receiver`); and the property arena's base, which an
-/// allocating helper may move, after which the body reloads it
-/// (`Lowering::reload_property_arena`).
+/// What a lane body knows of its receiver from entry on: `NO_FIELD_RECEIVER` as its shape, which no folded
+/// field matches (`emit_lane_receiver`); and the property arena's base, which an allocating helper may move,
+/// after which the body reloads it (`Lowering::reload_property_arena`).
 struct LaneReceiver {
     object: Variable,
     shape: Variable,
@@ -927,49 +886,26 @@ fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
     stage.goto(join, &[encoded]);
 }
 
-/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
-/// where the receiver is no direct object or the heap bases are absent, which no folded
-/// field matches.
-/// `trusted`: the receiver fact holds (`dispatch_fast::receiver_trusted`), so `this` is a direct
-/// object the binding checked once, and only the tables are tested.
-fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value, trusted: bool) -> LaneReceiver {
-    use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
+/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape and no record, which no folded
+/// field matches. An ordinary receiver is a class cell whose reads take its class word (`IcOp::GuardClass`), so no
+/// receiver record is walked here; a fixed class's receiver is named by its entry record (`fixed_cells`).
+fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> LaneReceiver {
+    use quench_runtime::staged::machine::Lane;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
         inline: builder.declare_var(types::I8),
         properties: builder.declare_var(types::I64),
     };
-    let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
-    let (found, done) = (builder.create_block(), builder.create_block());
-    // The payload is the stage's, so the record hop's class base reads the dispatch head (`Table::ClassSpace`).
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: Some(payload), facts: Default::default(), fresh: false };
+    let mut stage = object_slots::emit(builder);
     let none = stage.raw_const(Lane::I32, i64::from(quench_runtime::vm::NO_FIELD_RECEIVER));
     let null = stage.raw_const(Lane::I64, 0);
     let outside = stage.raw_const(Lane::I8, 0);
     stage.builder.def_var(receiver.shape, none);
     stage.builder.def_var(receiver.inline, outside);
     stage.builder.def_var(receiver.object, null);
-    // The direct object's granule must name a cell of the class space; its cell's header then names the record.
-    let granule = stage.raw_unary(Unary::Narrow(Lane::I32), this);
-    let granule = stage.raw_unary(Unary::ZeroExtend(Lane::I64), granule);
-    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, granule, i64::from(quench_runtime::staged::layout_offsets::CLASS_SPACE_GRANULES));
-    let has_classes = stage.raw_compare_imm(Relation::NotEqual, class_base, 0);
-    let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
-    let ok = if trusted { in_range } else {
-        let object = quench_runtime::staged::value::is_direct_object(&mut stage, this);
-        stage.raw_binary(Binary::And, object, in_range)
-    };
-    let ok = stage.raw_binary(Binary::And, ok, has_classes);
-    let ok = stage.raw_binary(Binary::And, ok, has_properties);
-    stage.branch_if(ok, (found, &[]), (done, &[]));
-    stage.builder.switch_to_block(found);
-    // S7f DESIGN: the object record table is gone and a receiver names no record, so the receiver stays
-    // `NO_FIELD_RECEIVER`, which the slow path decides (the class cell's receiver read replaces this walk).
-    stage.goto(done, &[]);
-    builder.switch_to_block(done);
     receiver
 }
 
@@ -3238,7 +3174,6 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
-    // S7f DESIGN: the object record table is gone, so every direct object is classed as `NonRecord` by the profile.
     #[cfg(feature = "profile-native-ops")]
     let storage = quench_runtime::vm::native_op_profile::StoreStorage::NonRecord;
     // Only the primary entry's hit proves its slot's representation (`general_store`). A site past one shape
@@ -4289,12 +4224,8 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         }
         let cache = vm.field_cache_entry(cache_site);
         if cache.holder != NO_FIELD_HOLDER {
-            if cache.receiver != object.exact_shape() {
-                "prototype-receiver-shape-miss"
-            } else {
-                // S7f DESIGN: a prototype holder's record is gone, so every prototype read is non-record here.
-                "prototype-non-record"
-            }
+            // A prototype's slot is read through the holder's class cell, which the native shape path does not read.
+            "prototype-holder"
         } else if cache.receiver != object.exact_shape() {
             "own-shape-miss"
         } else {

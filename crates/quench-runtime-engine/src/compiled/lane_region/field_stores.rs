@@ -262,10 +262,7 @@ impl Lowering<'_, '_> {
     fn after_store(&mut self, state: &mut State, join: StoreJoin) {
         self.forget_append_rooms(self.at);
         match join {
-            StoreJoin::Add => {
-                self.reshaped(state);
-                self.reload_receiver();
-            }
+            StoreJoin::Add => self.reshaped(state),
             StoreJoin::Host | StoreJoin::Bound => state.proofs.stable = false,
         }
     }
@@ -277,29 +274,6 @@ impl Lowering<'_, '_> {
         match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, held)) {
             quench_runtime::staged::Step::Value(_) => Some(()),
             _ => None,
-        }
-    }
-
-    /// The receiver's shape and storage kind again, and the entry's tests of its shape, after
-    /// a store that may have changed them (`emit_lane_receiver`, `Lowering::entry_facts`).
-    fn reload_receiver(&mut self) {
-        let entry = self.entry.as_ref().expect("entry facts");
-        let (object_var, shape_var, inline_var) = (entry.receiver.object, entry.receiver.shape, entry.receiver.inline);
-        let tests: Vec<(u32, Variable)> = entry.receiver_shapes.iter().map(|(shape, variable)| (*shape, *variable)).collect();
-        let object = self.builder.use_var(object_var);
-        let (found, done) = (self.builder.create_block(), self.builder.create_block());
-        let present = self.raw_compare_imm(Relation::NotEqual, object, 0);
-        self.branch_if(present, (found, &[]), (done, &[]));
-        self.builder.switch_to_block(found);
-        let (shape, _, inline, _) = super::object_slots::shape_and_inline(&mut self.builder, object);
-        self.builder.def_var(shape_var, shape);
-        self.builder.def_var(inline_var, inline);
-        self.goto(done, &[]);
-        self.builder.switch_to_block(done);
-        let shape = self.builder.use_var(shape_var);
-        for (expected, variable) in tests {
-            let same = self.raw_compare_imm(Relation::Equal, shape, i64::from(expected));
-            self.builder.def_var(variable, same);
         }
     }
 

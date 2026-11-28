@@ -25,7 +25,7 @@ impl EmitFrame<'_> {
     /// `headers::object_header` of `owner`'s object, after the shape its register's object had
     /// before the last call is held again.
     pub(crate) fn object_header(&mut self, builder: &mut FunctionBuilder<'_>, entry: &Entry, owner: Option<Register>,
-        read: bool, miss: ir::Block) -> ObjectHeader {
+        read: bool, miss: ir::Block) -> Option<ObjectHeader> {
         if let Some(register) = owner { self.hold_kept_shape(builder, register, miss); }
         headers::object_header(builder, self.registers, self.state, (entry, self.payload), owner, read, miss)
     }
