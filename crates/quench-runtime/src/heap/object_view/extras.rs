@@ -161,6 +161,24 @@ impl<'a> ObjectRef<'a> {
             ObjectRef::Cell(cell) => cell.extras.and_then(|extras| extras.global_values()),
         }
     }
+
+    /// Whether the object's prototype lookup is ready (`Object::prototype_lookup_ready`); a cell's is in its extras.
+    #[inline(always)]
+    pub fn prototype_lookup_ready(self) -> bool {
+        match self {
+            ObjectRef::Record(object) => object.prototype_lookup_ready(),
+            ObjectRef::Cell(cell) => cell.extras.is_some_and(ObjectExtras::prototype_ready),
+        }
+    }
+
+    /// Whether the object holds a `length` descriptor (`Object::has_length_descriptor`); a cell's fact is in its extras.
+    #[inline(always)]
+    pub fn has_length_descriptor(self) -> bool {
+        match self {
+            ObjectRef::Record(object) => object.has_length_descriptor(),
+            ObjectRef::Cell(cell) => cell.extras.is_some_and(|extras| extras.element_facts().has(ElementFacts::LENGTH_DESCRIPTOR)),
+        }
+    }
 }
 
 impl<'a> ObjectMut<'a> {

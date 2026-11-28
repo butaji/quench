@@ -941,7 +941,7 @@ impl Heap {
     #[inline]
     pub(crate) fn record_object(&self, reference: HeapReference) -> Option<&Object> {
         match reference {
-            HeapReference::ObjectRecord(granule) => Some(self.object_record_by_granule(granule)),
+            HeapReference::ObjectRecord(granule) => self.record_by_granule(granule),
             HeapReference::ArrayRecord(record_id) => {
                 // SAFETY: the tagged Value identifies an initialized live array record.
                 Some(unsafe { self.array_records.get_live(record_id) })
@@ -978,7 +978,8 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn record_prototype(&self, object: &Object) -> Option<&Object> {
         match object.proto_link().object_granule() {
-            Some(granule) => Some(self.object_record_by_granule(granule)),
+            // A class cell prototype names its granule too, but holds no record: its header is not a stub.
+            Some(granule) => self.record_by_granule(granule),
             None => self.record_object(object.proto().heap_reference()?),
         }
     }

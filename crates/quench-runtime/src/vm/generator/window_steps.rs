@@ -297,12 +297,12 @@ impl Vm {
     /// fields `[[Get]]` reads.
     pub fn own_iterator_result_parts(&self, result: Value) -> Option<(Value, bool)> {
         let (prototype, header) = self.iterator_result_header?;
-        let object = self.heap.object_record(result)?;
+        let object = self.heap.direct_object_view(result)?;
         if object.shape() != header.shape() || object.proto() != prototype {
             return None;
         }
-        let value = self.heap.property_get(object, crate::vm::iterators::ITERATOR_RESULT_VALUE_SLOT)?;
-        Some((value, self.heap.property_get(object, crate::vm::iterators::ITERATOR_RESULT_DONE_SLOT)?.as_bool()?))
+        let value = self.heap.property_get_ref(object, crate::vm::iterators::ITERATOR_RESULT_VALUE_SLOT)?;
+        Some((value, self.heap.property_get_ref(object, crate::vm::iterators::ITERATOR_RESULT_DONE_SLOT)?.as_bool()?))
     }
 
     /// The iterator result of a generator step that stopped with `value`: the reused object a step

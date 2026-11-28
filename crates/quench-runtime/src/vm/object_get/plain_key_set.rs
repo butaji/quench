@@ -2,7 +2,7 @@
 //! where the write lands, and that proof is the write's only lookup. The plain `[[Delete]]`
 //! of a string key on one such object, decided by its shape alone.
 
-use super::super::{Atom, Object, PropertyKey, Value, Vm};
+use super::super::{Atom, ObjectRef, PropertyKey, Value, Vm};
 
 /// Where a plain `[[Set]]` lands, as the chain walk proved it.
 enum PlainWriteTarget {
@@ -23,7 +23,7 @@ impl Vm {
         }
         let mut current = object;
         loop {
-            let data = self.heap.ordinary_object(current)?;
+            let data = self.heap.ordinary_view(current)?;
             if self.plain_write_refused(current, data, key) {
                 return None;
             }
@@ -32,7 +32,7 @@ impl Vm {
                 if attributes.accessor || !attributes.writable {
                     return None;
                 }
-                return Some(match self.heap.property_get(data, slot).filter(|_| current == object) {
+                return Some(match self.heap.property_get_ref(data, slot).filter(|_| current == object) {
                     Some(old) => PlainWriteTarget::Own { slot, old },
                     None => PlainWriteTarget::Add,
                 });
@@ -45,7 +45,7 @@ impl Vm {
     }
 
     /// Whether `object` on a plain write's chain leaves the write to the general path.
-    fn plain_write_refused(&self, object: Value, data: &Object, key: PropertyKey) -> bool {
+    fn plain_write_refused(&self, object: Value, data: ObjectRef<'_>, key: PropertyKey) -> bool {
         !data.is_extensible()
             || data.is_module_namespace()
             || data.deferred_module().is_some()
@@ -97,7 +97,7 @@ impl Vm {
     /// primitives, namespaces, side-table descriptors, accessors (lazy members among them) and
     /// the keys `plain_named_key` refuses to the general path.
     pub(in crate::vm) fn plain_string_key_delete(&mut self, object: Value, key: Value) -> Option<Value> {
-        let data = self.heap.ordinary_object(object).filter(|data| self.shape_holds_every_property(object, data))?;
+        let data = self.heap.ordinary_view(object).filter(|data| self.shape_holds_every_property(object, *data))?;
         if !self.heap.is_string(key) {
             return None;
         }
@@ -109,7 +109,7 @@ impl Vm {
             return None;
         }
         let key = PropertyKey::string(atom);
-        let Some(slot) = self.property_shape_slot(data.shape(), key).filter(|&slot| self.heap.property_get(data, slot).is_some())
+        let Some(slot) = self.property_shape_slot(data.shape(), key).filter(|&slot| self.heap.property_get_ref(data, slot).is_some())
         else {
             return Some(Value::TRUE);
         };
@@ -127,7 +127,7 @@ impl Vm {
     /// Whether `object`'s shape alone holds and describes all its properties: no global
     /// declaration state, exotic access, boxed primitive, deferred namespace or side-table
     /// descriptor beside it.
-    fn shape_holds_every_property(&self, object: Value, data: &Object) -> bool {
+    fn shape_holds_every_property(&self, object: Value, data: ObjectRef<'_>) -> bool {
         !(data.has_exotic_access()
             || data.has_side_descriptors()
             || data.has_indexed_descriptors()

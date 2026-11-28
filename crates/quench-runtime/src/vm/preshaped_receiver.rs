@@ -521,10 +521,6 @@ impl Vm {
     /// anything else (no object, as `undefined` after a collection).
     fn receiver_storage_len(&self, receiver: Value) -> Option<usize> {
         let data = self.heap.object(receiver)?;
-        // The property table is record data.
-        if data.record_only().is_some_and(|record| record.properties().is_dictionary()) {
-            return None;
-        }
         let shape = data.shape();
         (!self.shape_is_dictionary(shape)).then(|| self.shapes[shape as usize].storage_len())
     }

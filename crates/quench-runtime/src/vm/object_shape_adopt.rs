@@ -21,8 +21,7 @@ impl Vm {
         if self.heap.array_elements(exclusions).is_some_and(|elements| !elements.is_empty()) {
             return false;
         }
-        // Record data: the arguments-object flag and the side descriptors.
-        let (Some(source_data), Some(target_data)) = (self.heap.object(source).and_then(|object| object.record_only()), self.heap.object(target).and_then(|object| object.record_only())) else {
+        let (Some(source_data), Some(target_data)) = (self.heap.object(source), self.heap.object(target)) else {
             return false;
         };
         if !self.shape_lists_enumerable_keys(source)

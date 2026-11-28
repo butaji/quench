@@ -177,7 +177,7 @@ impl Vm {
     fn array_leaves_index_unconstrained(&self, target: Value, key: Value) -> bool {
         self.heap.array(target).is_some()
             // `has_indexed_descriptors` is record data: the descriptors an index was recorded for.
-            && self.heap.object(target).is_some_and(|data| data.is_extensible() && data.record_only().is_none_or(|record| !record.has_indexed_descriptors()))
+            && self.heap.object(target).is_some_and(|data| data.is_extensible() && !data.has_indexed_descriptors())
             && self.heap.string(key).is_some_and(|text| super::super::object_static::array_index(text.host_string()).is_some())
     }
 
@@ -194,8 +194,8 @@ impl Vm {
         // an ordinary object does (`Heap::ordinary_builtin_object`).
         let facts = self
             .heap
-            .ordinary_object(target)
-            .or_else(|| self.heap.ordinary_builtin_object(target))
+            .ordinary_view(target)
+            .or_else(|| self.heap.ordinary_builtin_object(target).map(ObjectRef::Record))
             .filter(|data| !data.is_arguments_object() && !data.has_side_descriptors() && self.plain_named_key(atom))
             .and_then(|data| Some((data.layout_id(), super::super::PropertyKey::string(atom).key32()?, data)));
         if let Some((layout, key32, data)) = facts
@@ -212,7 +212,7 @@ impl Vm {
             }
         }
         // Record data: the arguments-object flag and the length and index descriptors.
-        if let Some(array) = self.heap.array(target).and_then(|_| self.heap.object(target)).and_then(|object| object.record_only()).filter(|array| !array.is_arguments_object()) {
+        if let Some(array) = self.heap.array(target).and_then(|_| self.heap.object(target)).filter(|array| !array.is_arguments_object()) {
             // An array's `length` is non-configurable and writable unless a descriptor says
             // otherwise; its elements are configurable unless a descriptor was recorded.
             if atom == self.length_atom {
@@ -243,7 +243,7 @@ impl Vm {
     /// Whether `target`'s shape holds each own name it has beyond the virtual ones
     /// `shape_property_lookup` excludes and the indices it leaves to the caller.
     fn shape_names_own_keys(&self, target: Value) -> bool {
-        match self.heap.ordinary_object(target) {
+        match self.heap.ordinary_view(target) {
             Some(data) => !data.is_arguments_object(),
             None => {
                 self.heap.array(target).is_some()

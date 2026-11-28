@@ -281,13 +281,12 @@ impl Vm {
     /// an intermediate's prototype flushes every cache (`set_prototype_of`). The holder's own
     /// layout is still compared here, so a changed holder misses as the walk did.
     #[inline(always)]
-    fn method_cache_holder(&self, receiver: Value, atom: Atom, guard: MethodGuard) -> Option<&Object> {
+    fn method_cache_holder(&self, receiver: Value, atom: Atom, guard: MethodGuard) -> Option<ObjectRef<'_>> {
         self.shape_property_lookup(receiver, atom)?;
         if guard.depth == 0 && receiver != guard.owner {
             return None;
         }
-        // record: the holder is returned as &Object
-        let holder = self.heap.object(guard.owner)?.record_only()?;
+        let holder = self.heap.object(guard.owner)?;
         (holder.shape() == guard.owner_shape).then_some(holder)
     }
 
@@ -305,7 +304,7 @@ impl Vm {
         let mut owner = receiver;
         let mut depth = 0_u16;
         loop {
-            self.heap.object_record(owner)?;
+            self.heap.direct_object_view(owner)?;
             let data = self.shape_property_lookup(owner, atom)?;
             if let Some(slot) = self.shape_slot(data.shape(), atom) {
                 // The slot the shape resolved serves the attributes too, so it is not looked up again.
@@ -316,7 +315,7 @@ impl Vm {
                 {
                     return None;
                 }
-                let value = self.heap.property_get(data, slot)?;
+                let value = self.heap.property_get_ref(data, slot)?;
                 if self.is_accessor_pair(data.shape(), value) {
                     return None;
                 }
@@ -386,7 +385,7 @@ fn method_cache_shadowed_by(
         if prototype == object {
             return true;
         }
-        let Some(data) = heap.object_record(prototype) else {
+        let Some(data) = heap.direct_object_view(prototype) else {
             return false;
         };
         prototype = data.proto();
@@ -529,7 +528,7 @@ impl Vm {
             .map(|entry| (entry, METHOD_CACHE_WAYS));
         let (entry, tier) = inline.or_else(megamorphic)?;
         let holder = self.method_cache_holder(this, atom, entry.guard)?;
-        let callee = self.heap.property_get(holder, entry.guard.slot as usize)?;
+        let callee = self.heap.property_get_ref(holder, entry.guard.slot as usize)?;
         (entry.callee == callee).then_some(())?;
         Some((callee, entry.target?, tier))
     }
