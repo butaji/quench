@@ -54,9 +54,9 @@ impl Heap {
         if !self.properties.inline_plan_values_admitted(header.shape(), inline, len) {
             return None;
         }
-        // A cell with the inline values, or `None` where its region is spent (nothing is claimed then).
+        // A cell with the inline values; `None`, before any claim, where the values have no narrow form.
         let object = Object::from_inline_header(header, inline)?;
-        self.insert_object_as_cell(object, 0).ok()
+        Some(self.insert_object_as_cell(object, 0))
     }
 
 

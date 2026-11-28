@@ -1,10 +1,10 @@
 use super::class_space::{
     ClassCell0, ClassCell1, ClassCell3, ClassCell5, ClassSpace, granule, header_class, header_record,
-    live_header, locate, region_capacity, region_cells,
+    live_header, locate, region_capacity, region_cells, stub_header,
 };
 use super::layouts::LAYOUT_CAPACITY;
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
-use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, DEPARTED_CLASS, REGION_SHIFT, departed_header};
+use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, NO_CLASS, REGION_SHIFT};
 use std::mem::size_of;
 
 #[test]
@@ -57,17 +57,16 @@ fn a_live_header_holds_only_its_class_id() {
 }
 
 #[test]
-fn a_departed_header_holds_the_sentinel_class_and_the_record_id() {
-    let header = departed_header(77);
-    assert_eq!(header as u32, DEPARTED_CLASS);
+fn a_stub_header_holds_no_class_and_the_record_id() {
+    let header = stub_header(77);
+    assert_eq!(header as u32, NO_CLASS);
     assert_eq!(header >> 32, 77);
-    assert_eq!(header_class(header), DEPARTED_CLASS);
     assert_eq!(header_record(header), 77);
 }
 
 #[test]
-fn the_departed_class_is_past_the_class_table() {
-    assert!(DEPARTED_CLASS as usize >= LAYOUT_CAPACITY);
+fn no_class_is_past_the_class_table() {
+    assert!(NO_CLASS as usize >= LAYOUT_CAPACITY);
 }
 
 #[test]

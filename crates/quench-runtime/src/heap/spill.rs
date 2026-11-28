@@ -17,7 +17,7 @@ use super::dictionary_cell::dictionary_id_of;
 use super::layouts;
 use super::records::RecordId;
 use crate::staged::field_cache_layout::{field_index_of, is_spilled_slot, spill_from_of};
-use crate::staged::object_encoding::{CLASS_HEADER_BYTES, DEPARTED_CLASS};
+use crate::staged::object_encoding::CLASS_HEADER_BYTES;
 use crate::value::Value;
 use crate::value_vec::ValueArena;
 
@@ -147,21 +147,19 @@ pub(super) fn dispose_dead_runs<'a, T, F: Fn(&ValueArena, u32) -> Option<u32>>(
         // SAFETY: a dead cell of the reserved space keeps its header and fields until its record is forgotten here.
         let header = unsafe { *cell };
         let class = header_class(header);
-        if class != DEPARTED_CLASS {
-            // A dead live cell's extras die with it (`ExtrasSpace::release`).
-            let extras_id = header_extras(header);
-            if extras_id != NO_EXTRAS {
-                extras.release(extras_id);
-            }
-            if layouts::class_is_dictionary(class) {
-                // SAFETY: a dictionary cell's slot 0 is the one word after its header, the dictionary word.
-                let word = unsafe { *cell.add(1) };
-                values.release_dictionary(dictionary_id_of(word));
-            } else if let Some(from) = spill_of(&*values, class) {
-                // SAFETY: the spill word is the cell's field `from`, one word past its header.
-                let word = unsafe { *cell.add(1 + from as usize) };
-                arena.free_run(spill_offset_of(word));
-            }
+        // A dead cell's extras die with it (`ExtrasSpace::release`).
+        let extras_id = header_extras(header);
+        if extras_id != NO_EXTRAS {
+            extras.release(extras_id);
+        }
+        if layouts::class_is_dictionary(class) {
+            // SAFETY: a dictionary cell's slot 0 is the one word after its header, the dictionary word.
+            let word = unsafe { *cell.add(1) };
+            values.release_dictionary(dictionary_id_of(word));
+        } else if let Some(from) = spill_of(&*values, class) {
+            // SAFETY: the spill word is the cell's field `from`, one word past its header.
+            let word = unsafe { *cell.add(1 + from as usize) };
+            arena.free_run(spill_offset_of(word));
         }
         false
     }
@@ -405,10 +403,10 @@ impl Heap {
     }
 
     /// The fields of marked holder cell `granule` moved (a run was allocated or grown, or dropped): a held entry
-    /// read the holder's slots by address, so the holder edge fires as a departure does (`note_holder_departure`).
+    /// read the holder's slots by address, so the holder edge fires (`note_holder_moved`).
     pub(crate) fn holder_fields_moved(&mut self, granule: u32) {
-        if self.class_space.take_holder_cell(granule) {
-            self.class_space.note_holder_departure();
+        if self.class_space.take_holder_moved(granule) {
+            self.class_space.note_holder_moved();
             self.request_collection();
         }
     }

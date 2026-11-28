@@ -227,7 +227,7 @@ mod rc_drop;
 mod records;
 pub use records::RecordBlockRecordsExt;
 mod class_space;
-mod departure;
+mod class_cell;
 mod spill;
 mod dictionary_cell;
 mod class_delete;
@@ -265,13 +265,11 @@ pub(crate) const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region
 /// The class cell region of `fields` fields: the smallest of regions `1..CAPACITY_CLASSES` whose capacity
 /// holds them (an empty object's is region 1). Past the largest region the cell takes the largest region and
 /// spills the rest (`heap::spill`), so every field count has a cell.
-pub(crate) fn cell_region_for(fields: usize) -> Option<u32> {
+pub(crate) fn cell_region_for(fields: usize) -> u32 {
     let largest = crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1;
-    Some(
-        (1..=largest)
-            .find(|&region| fields <= crate::staged::object_encoding::region_field_capacity(region))
-            .unwrap_or(largest),
-    )
+    (1..=largest)
+        .find(|&region| fields <= crate::staged::object_encoding::region_field_capacity(region))
+        .unwrap_or(largest)
 }
 
 pub(crate) use collection_entries::{CollectionEntries, CollectionEntry, Entries, WeakMapEntries, WeakSetEntries, number_key_hash};
@@ -1628,9 +1626,6 @@ impl Heap {
     /// `first` from the start, admitted; `None` where the header cannot hold it inline.
     #[inline(always)]
     pub(crate) fn alloc_object_under_flagged_prototype_with_first(&mut self, header: InlineObjectHeader, first: Value) -> Option<Value> {
-        if cfg!(feature = "profile-aggregate") {
-            return None;
-        }
         let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
         inline[0] = first;
         let object = Object::from_inline_header(header, inline)?;
@@ -1722,55 +1717,57 @@ impl Heap {
         self.object(prototype).is_none_or(|object| object.was_used_as_prototype())
     }
 
-    /// The allocation of ordinary object `object`: a class cell (`insert_object_as_cell`) where it has
-    /// the cell form, else its record. The caller admits the object's initial values
-    /// (`admit_object_contents`) and marks its prototype, or leaves them as they are where
-    /// placeholders must record nothing.
+    /// The allocation of ordinary object `object`: a class cell (`insert_object_as_cell`), which it keeps for
+    /// its whole life. The caller admits the object's initial values (`admit_object_contents`) and marks its
+    /// prototype, or leaves them as they are where placeholders must record nothing.
     #[inline(always)]
     fn insert_object_record(&mut self, object: Object) -> Value {
         self.insert_object_with_capacity(object, 0)
     }
 
     /// `insert_object_record` where the object's cell holds at least `capacity` fields: the learned
-    /// storage of its constructor, or the closed world's union layout of its class.
+    /// storage of its constructor, or the closed world's union layout of its class. An array is the one
+    /// object kind with no cell; it keeps its record (`insert_object_as_record`).
     #[inline(always)]
     pub(crate) fn insert_object_with_capacity(&mut self, object: Object, capacity: usize) -> Value {
-        match self.insert_object_as_cell(object, capacity) {
-            Ok(value) => value,
-            Err(object) => self.insert_object_as_record(object),
+        if object.is_array() {
+            return self.insert_object_as_record(object);
         }
+        self.insert_object_as_cell(object, capacity)
     }
 
-    /// `object` as a class cell (R4-C2): its class is its shape, prototype link and flags (class bits: a frozen,
-    /// sealed or constant object is a cell too, its flags in its class word, no departure), its fields its values,
-    /// in the smallest region holding the larger of its fields and `capacity` (a shape past the largest region
-    /// spills). Its arena storage moves into the cell, so that storage is released. `Err(object)`, unchanged, where
-    /// the object has a record's form (extras, an array) or its region is full.
-    fn insert_object_as_cell(&mut self, object: Object, capacity: usize) -> Result<Value, Object> {
-        if cfg!(feature = "profile-aggregate") || object.is_array() || object.has_extras() {
-            return Err(object);
-        }
+    /// `object` as a class cell (R4-C2, departure-free): its class is its shape, prototype link and flags (class bits:
+    /// a frozen, sealed or constant object is a cell too), its fields its values, in the smallest region holding the
+    /// larger of its fields and `capacity`. A shape past the largest region spills (`heap::spill`). Its extras move
+    /// into `ExtrasSpace` by id, and its arena storage is released. A region with no cell left panics, as record
+    /// exhaustion does: an ordinary object never falls back to a record.
+    fn insert_object_as_cell(&mut self, mut object: Object, capacity: usize) -> Value {
+        debug_assert!(!object.is_array(), "an array keeps its record");
         let shape = object.shape();
         let length = self.properties.shape_length(shape);
-        let Some(region) = cell_region_for(length.max(capacity)) else {
-            return Err(object);
-        };
+        let region = cell_region_for(length.max(capacity));
         let fields: Vec<Value> = (0..length)
             .map(|slot| self.property_get(&object, slot).unwrap_or(Value::UNDEFINED))
             .collect();
         let flags = layouts::word(object.layout_id()) & layouts::CLASS_FLAG_MASK;
         let class = layouts::intern_class(shape, object.proto_link(), flags, region);
-        let Some(granule) = self.class_space.claim_cell(region, class, &fields, &mut self.allocated) else {
-            return Err(object);
-        };
+        let granule = self
+            .class_space
+            .claim_cell(region, class, &fields, &mut self.allocated)
+            .unwrap_or_else(|| panic!("class cells exhausted: region {region} holds its address range"));
         object.release_storage(&mut self.properties);
-        Ok(Value::direct_object(granule))
+        // The extras move with the object: the cell's header names them from now on (`ExtrasSpace`).
+        if let Some(extras) = object.take_extras_for_cell() {
+            let id = self.extras.alloc(extras);
+            self.class_space.set_extras_id(granule, id);
+        }
+        Value::direct_object(granule)
     }
 
-    /// The record of `object`, an ordinary object's only allocation, charged as one allocation
+    /// The record of an array-kinded `object` (`insert_object_with_capacity`), charged as one allocation
     /// with no payload or external bytes (`allocated += 1` only). The object record space holds
     /// `OBJECT_RECORD_CAPACITY` (2^30) records, so a full space is a panic; no legacy slot takes
-    /// an object. The record form, kept for the objects a cell cannot hold.
+    /// an object. An ordinary object never reaches this form (`insert_object_as_cell`).
     #[inline(always)]
     fn insert_object_as_record(&mut self, object: Object) -> Value {
         // An object owns no payload or external bytes: its record is the whole charge, made
@@ -1789,7 +1786,7 @@ impl Heap {
     }
 
     /// Publishes object record `record_id`, whose record is written: claims its stub in region 0,
-    /// writes the stub's header (the record id, `departed_header`), stores the granule in the record,
+    /// writes the stub's header (the record id, `stub_header`), stores the granule in the record,
     /// and returns the direct object `Value` the granule names. A record claimed but not yet written
     /// may be published first: only its stub field is written here.
     #[inline(always)]
@@ -2113,18 +2110,7 @@ impl Heap {
     /// `alloc_object_with_properties` where the cell holds at least `capacity` fields.
     pub(crate) fn alloc_object_values(&mut self, proto: Value, shape: u32, values: &[Value], capacity: usize) -> Value {
         self.properties.assert_shape_length(shape, values.len());
-        if let Some(granule) = self.claim_values_cell(proto, shape, values, capacity) {
-            return Value::direct_object(granule);
-        }
-        let object = if values.len() <= INLINE_PROPERTY_COUNT
-            && let Some(object) = Object::with_inline_values(proto, shape, values)
-        {
-            object
-        } else {
-            let properties = self.properties.with_values(shape, values);
-            Object::with_property_storage(proto, properties, [Value::UNDEFINED; INLINE_PROPERTY_COUNT])
-        };
-        self.alloc_object_of_capacity(object, proto, capacity)
+        Value::direct_object(self.claim_values_cell(proto, shape, values, capacity))
     }
 
     /// `alloc_object_of` where the object's cell holds at least `capacity` fields.
@@ -2138,20 +2124,19 @@ impl Heap {
     /// The class cell of an ordinary object of prototype `proto`, shape `shape` and fields `values` (the
     /// literal and empty-object allocations): its class is `ProtoLink::of(proto)`'s class of `shape`, which
     /// the object would take with no flags. The prototype is marked as `alloc_object` marks it, and the
-    /// shape's values are noted as `initialize_object_properties` notes them. `None`, with nothing charged,
-    /// where the region is full: the caller takes the record.
-    fn claim_values_cell(&mut self, proto: Value, shape: u32, values: &[Value], capacity: usize) -> Option<u32> {
-        if cfg!(feature = "profile-aggregate") {
-            return None;
-        }
-        let region = cell_region_for(values.len().max(capacity))?;
+    /// shape's values are noted as `initialize_object_properties` notes them. Its region holds `values` and
+    /// `capacity`, and a shape past the largest region spills.
+    fn claim_values_cell(&mut self, proto: Value, shape: u32, values: &[Value], capacity: usize) -> u32 {
+        let region = cell_region_for(values.len().max(capacity));
         let class = ProtoLink::of(proto).class(shape, region);
         self.mark_prototype(proto);
         self.properties.note_shape_values(shape, values);
         self.rewrite_widened_numbers();
         // The cell's fields are the arena words of `shape` (`stored_words`): a Number slot holds its raw double.
         let words = self.properties.stored_words(shape, values);
-        self.class_space.claim_cell(region, class, &words, &mut self.allocated)
+        self.class_space
+            .claim_cell(region, class, &words, &mut self.allocated)
+            .unwrap_or_else(|| panic!("class cells exhausted: region {region} holds its address range"))
     }
 
     /// The class cell of a fixed class's instance (R4-F, decision 4.2): claimed from the region of `values.len()`,
@@ -2161,7 +2146,7 @@ impl Heap {
     pub(crate) fn claim_fixed_cell(&mut self, shape: u32, link: u32, values: &[Value]) -> Value {
         debug_assert_eq!(self.properties.shape_length(shape), values.len(), "a fixed cell's fields are its shape's");
         let link = ProtoLink::from_bits(link);
-        let region = cell_region_for(values.len()).expect("a class cell region holds any field count (spill)");
+        let region = cell_region_for(values.len());
         self.mark_prototype(link.prototype());
         self.properties.note_shape_values(shape, values);
         self.rewrite_widened_numbers();
@@ -2210,7 +2195,7 @@ impl Heap {
             self.class_cell_initialize(granule, shape, values);
             return;
         }
-        // Otherwise the owner is a record (or a departed cell, which is one): its storage is replaced in the record.
+        // Otherwise the owner is a record: its storage is replaced in the record.
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
             .object(owner)
@@ -2772,15 +2757,16 @@ impl Heap {
                 // A dead object record's id is withheld instead: no object takes its
                 // Value, so no proof can name another object by it, as a class
                 // declared in a hot function leaves one dead prototype per call.
+                // A prototype that is a class cell has no stub or record to withhold: its granule is reused by the
+                // class space's sweep, so its proofs retire with the epoch (`died_unrecorded`).
                 match prototype.direct_object_index() {
-                    Some(object_ref) => {
-                        // A prototype departed its cell on first use, so its stub names its record.
+                    Some(object_ref) if !class_space::is_cell_granule(object_ref.granule()) => {
+                        // Its stub names its record, which is withheld with the stub: the granule names no other object.
                         let record_id = self.stub_record(object_ref.granule());
-                        // Its stub is withheld with its record: the granule names no other object either.
                         self.class_space.withhold_stub(object_ref.granule());
                         withheld = self.object_records.withhold(record_id);
                     }
-                    None => died_unrecorded = true,
+                    _ => died_unrecorded = true,
                 }
             }
             live
@@ -3160,7 +3146,7 @@ impl Heap {
                     // Released in place: dropping it frees its extras.
                     RecordSweep::Dead(..) => {}
                 });
-                // After the records: a departed cell dies with its record (its stub released in `dispose`), so
+                // After the records: a stub dies with its record (released in `dispose`), so
                 // the cell regions sweep only the cells whose Value is dead and not released yet.
                 class_space.sweep_cells(&mut *properties, &mut *extras, full, age, |values, class| {
                     layouts::class_spill(class, values.shape_length(layouts::class_shape(class)))

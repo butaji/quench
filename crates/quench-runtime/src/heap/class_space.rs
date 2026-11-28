@@ -16,10 +16,11 @@ use super::layouts::class_region;
 use super::records::{AddressRange, RecordId, RecordSpace, RecordValue};
 use super::spill::SpillSpace;
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
-use crate::staged::object_encoding::{
-    CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT, departed_header,
-    region_field_capacity,
-};
+use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, NO_CLASS, REGION_MASK, REGION_SHIFT, region_field_capacity};
+
+/// The high half of a region 0 stub's header, which names its object record (`stub_header`). A stub is decided by
+/// its granule's region, never by its header's low half, which is `NO_CLASS`.
+const STUB_RECORD_SHIFT: u32 = u32::BITS;
 use crate::value::Value;
 use std::mem::{MaybeUninit, size_of};
 use std::ptr::NonNull;
@@ -126,10 +127,10 @@ pub(super) struct ClassSpace {
     pub(super) base: usize,
     pub(super) regions: (Region0, Region1, Region2, Region3, Region4, Region5),
     /// One bit per granule: set where a field entry names the cell as its holder (`Heap::note_holder_cell`),
-    /// cleared when the cell departs (`take_holder_cell`). Grown on demand, so an unmarked space costs nothing.
+    /// cleared when the cell's fields move (`take_holder_moved`). Grown on demand, so an unmarked space costs nothing.
     holder_cells: Vec<u64>,
-    /// Whether a holder cell departed since the VM last cleared its field caches (`take_holder_departure`).
-    holder_departed: bool,
+    /// Whether a marked holder's fields moved since the VM last cleared its field caches (`take_holder_moves`).
+    holder_moved: bool,
     /// The spill arena: the runs of the cells whose class spills (`heap::spill`).
     pub(super) spill: SpillSpace,
     /// The range the regions are cut from. It is the last field, so it unmaps after them.
@@ -147,7 +148,7 @@ impl ClassSpace {
     }
 
     /// Clears granule `g`'s holder-cell bit, returning whether it was set.
-    pub(super) fn take_holder_cell(&mut self, g: u32) -> bool {
+    pub(super) fn take_holder_moved(&mut self, g: u32) -> bool {
         let bit = 1u64 << (g % u64::BITS);
         match self.holder_cells.get_mut(g as usize / u64::BITS as usize) {
             Some(word) if *word & bit != 0 => {
@@ -158,14 +159,14 @@ impl ClassSpace {
         }
     }
 
-    /// Records that a holder cell departed (`depart_class_cell`), for the VM to drain.
-    pub(super) fn note_holder_departure(&mut self) {
-        self.holder_departed = true;
+    /// Records that a marked holder's fields moved (`Heap::holder_fields_moved`), for the VM to drain.
+    pub(super) fn note_holder_moved(&mut self) {
+        self.holder_moved = true;
     }
 
-    /// Returns and clears the departed-holder flag.
-    pub(super) fn take_holder_departure(&mut self) -> bool {
-        std::mem::take(&mut self.holder_departed)
+    /// Returns and clears the moved-holder flag.
+    pub(super) fn take_holder_moves(&mut self) -> bool {
+        std::mem::take(&mut self.holder_moved)
     }
 
     /// Maps the space's range and cuts its regions from it on the first call; `false` where that failed.
@@ -208,7 +209,7 @@ impl ClassSpace {
         stub_record_at(self.base, g)
     }
 
-    /// Claims a region 0 stub for object record `record`: the cell's header is `departed_header(record)`,
+    /// Claims a region 0 stub for object record `record`: the cell's header is `stub_header(record)`,
     /// so its granule names the record through `record_of`. The stub is claimed from region 0's cursor
     /// (`RecordSpace::bump_id`), charged as an allocation. `None` where the space is full.
     pub(super) fn claim_stub(&mut self, record: u32, allocated: &mut usize) -> Option<u32> {
@@ -217,7 +218,7 @@ impl ClassSpace {
         }
         let local = self.regions.0.bump_id(allocated)?;
         // SAFETY: `local` is a claimed, uninitialized region 0 cell, written whole here.
-        unsafe { self.regions.0.record_ptr(local).write(ClassCell0 { header: departed_header(record), fields: [] }) };
+        unsafe { self.regions.0.record_ptr(local).write(ClassCell0 { header: stub_header(record), fields: [] }) };
         Some(granule(0, local))
     }
 
@@ -247,35 +248,20 @@ impl ClassSpace {
         with_region!(self.regions, region, |space| std::ptr::addr_of!(space.cursor) as usize)
     }
 
-    /// Frees stub `g` with its dead record (the record sweep's dispose). A stub is a region 0 cell,
-    /// or a class cell that departed (`Heap::depart_class_object`) and is its own stub. Region 0's
-    /// stubs die only here, and a departed cell dies with its record.
+    /// Frees stub `g` with its dead record (the record sweep's dispose). A stub is a region 0 cell of an
+    /// array-kinded or other record object; a class cell is never a stub.
     pub(super) fn release_stub(&mut self, g: u32) {
         let (region, local) = locate(g);
-        match region {
-            0 => self.regions.0.release_live(local),
-            1 => self.regions.1.release_live(local),
-            2 => self.regions.2.release_live(local),
-            3 => self.regions.3.release_live(local),
-            4 => self.regions.4.release_live(local),
-            5 => self.regions.5.release_live(local),
-            _ => unreachable!("class cells lie in regions 0 to {}", CAPACITY_CLASSES - 1),
-        }
+        debug_assert_eq!(region, 0, "a stub is a region 0 cell");
+        self.regions.0.release_live(local);
     }
 
     /// Withholds stub `g`, a dead prototype's, from reuse until `release_withheld_stubs`,
     /// as its record id is withheld: a Value naming the stub names no other object meanwhile.
     pub(super) fn withhold_stub(&mut self, g: u32) {
         let (region, local) = locate(g);
-        match region {
-            0 => self.regions.0.withhold(local),
-            1 => self.regions.1.withhold(local),
-            2 => self.regions.2.withhold(local),
-            3 => self.regions.3.withhold(local),
-            4 => self.regions.4.withhold(local),
-            5 => self.regions.5.withhold(local),
-            _ => unreachable!("class cells lie in regions 0 to {}", CAPACITY_CLASSES - 1),
-        };
+        debug_assert_eq!(region, 0, "a stub is a region 0 cell");
+        self.regions.0.withhold(local);
     }
 
     /// Makes every withheld stub reusable again, in every region (`RecordSpace::release_withheld`).
@@ -288,16 +274,15 @@ impl ClassSpace {
         self.regions.5.release_withheld();
     }
 
-    /// The header word of granule `g`'s cell: a live class cell's class id (`live_header`), or a
-    /// departed one's `departed_header`. The space must be reserved.
+    /// The header word of granule `g`'s cell: a class cell's class and extras (`live_header`), or a
+    /// stub's record (`stub_header`). The space must be reserved.
     #[inline(always)]
     pub(super) fn header(&self, g: u32) -> u64 {
         // SAFETY: `g` names a cell of the reserved space (`cell_ptr`), whose header is a readable word.
         unsafe { *self.cell_ptr(g) }
     }
 
-    /// Writes granule `g`'s header word. Only the class edges write one (`CellViewMut::set_class`,
-    /// `Heap::depart_class_object`).
+    /// Writes granule `g`'s header word. Only the class edges write one (`CellViewMut::set_class`, `write_class`).
     #[inline(always)]
     pub(super) fn write_header(&mut self, g: u32, header: u64) {
         // SAFETY: as `header`, and `&mut self` is exclusive.
@@ -318,8 +303,8 @@ impl ClassSpace {
             + regions.5.retire_cursor()
     }
 
-    /// The class of granule `g`'s cell when the cell is live; `None` where it is departed (its header
-    /// names a record) or is a stub. The space must be reserved.
+    /// The class of granule `g`'s cell when the granule is a class cell; `None` for a stub (its header
+    /// names a record). The space must be reserved.
     #[inline(always)]
     pub(super) fn live_class(&self, g: u32) -> Option<u32> {
         debug_assert!(self.range.is_some());
@@ -388,25 +373,27 @@ impl ClassSpace {
 }
 
 /// The record id of the ordinary object whose stub is granule `g` in the class space at `base`: the
-/// high half of the stub's header, which `departed_header` writes. Reading it is the one hop from a
-/// direct object `Value` to its record, so it needs only the base, not the heap.
+/// high half of the stub's header (`stub_header`). Reading it is the one hop from a direct object `Value`
+/// to its record, so it needs only the base, not the heap. Only a region 0 granule is a stub.
 #[inline(always)]
 pub(crate) fn stub_record_at(base: usize, g: u32) -> u32 {
+    debug_assert_eq!(locate(g).0, 0, "a stub is a region 0 granule");
     // SAFETY: a direct object `Value` names a stub granule of the reserved class space, whose
     // header is a readable u64 at `base + g * CLASS_HEADER_BYTES`.
     let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
-    debug_assert_eq!(header_class(header), DEPARTED_CLASS, "a stub names its record only once its object departed");
     header_record(header)
 }
 
-/// The class of granule `g`'s cell in the class space at `base`, when the cell is live. `None` where it is
-/// departed: its header then names a record (`departed_header`), and the record hop is the answer.
+/// The class of granule `g`'s class cell in the class space at `base`; `None` for a region 0 stub, which has no
+/// class. A class cell is always live (no cell departs), so its header's class half is the answer.
 #[inline(always)]
 pub(super) fn live_class_at(base: usize, g: u32) -> Option<u32> {
+    if !is_cell_granule(g) {
+        return None;
+    }
     // SAFETY: a direct object `Value` names a granule of the reserved class space, whose header is a readable u64.
     let header = unsafe { *((base + g as usize * CLASS_HEADER_BYTES) as *const u64) };
-    let class = header_class(header);
-    (class != DEPARTED_CLASS).then_some(class)
+    Some(header_class(header))
 }
 
 /// The fields of granule `g`'s cell in the class space at `base`: `region_capacity(g)` values after its header.
@@ -475,12 +462,18 @@ pub(super) const fn header_class(header: u64) -> u32 {
     header as u32
 }
 
-pub(super) const fn header_record(header: u64) -> u32 {
-    (header >> CLASS_RECORD_SHIFT) as u32
+/// The header word of a region 0 stub naming object record `record`: the record id in the high half, `NO_CLASS`
+/// in the low half (a stub has no class).
+pub(super) const fn stub_header(record: u32) -> u64 {
+    NO_CLASS as u64 | ((record as u64) << STUB_RECORD_SHIFT)
 }
 
-/// Where a live cell's header holds its extras id (`ExtrasSpace`), above the class half. A departed header
-/// holds its record id there instead (`departed_header`), so a cell's high half is read by its state.
+/// The record id a stub's header names (`stub_header`).
+pub(super) const fn header_record(header: u64) -> u32 {
+    (header >> STUB_RECORD_SHIFT) as u32
+}
+
+/// Where a class cell's header holds its extras id (`ExtrasSpace`), above the class half.
 pub(super) const EXTRAS_SHIFT: u32 = u32::BITS;
 
 /// The extras id of a live cell's header: `NO_EXTRAS` where the cell has none.

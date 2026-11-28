@@ -94,7 +94,7 @@ impl Vm {
                 break;
             }
             if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {
-                let receiver = if self.heap.object_record(object).is_some() { self.diagnostic_object_receiver(object) } else { self.detail_string(object) };
+                let receiver = if self.heap.ordinary_view(object).is_some() { self.diagnostic_object_receiver(object) } else { self.detail_string(object) };
                 if attributes.accessor && attributes.setter.is_none() {
                     return self.type_error(
                         p,
