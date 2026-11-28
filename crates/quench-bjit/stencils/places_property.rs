@@ -12,7 +12,7 @@
 use crate::bytecode::{FieldBase, FieldLookup, Operand, Register};
 use crate::codes::CHAIN_SECOND_AT;
 use crate::heap_rows::{context_word, payload, stage_site, word_at};
-use crate::layout::{CONTEXT_THIS, JS_STEP_LOOP_ENTRY};
+use crate::layout::{CONTEXT_THIS, JS_STEP_FIELD_ENTRIES, JS_STEP_LOOP_ENTRY};
 use crate::typed_ir::Representation;
 use crate::places::{DEST, LEFT, Places};
 use crate::staged::ic::IcOp;
@@ -250,11 +250,11 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
     #[inline(always)]
     fn field_get_host(&mut self, stage: &mut Concrete, object: u64, _atom: u32, _site: u16, miss: ()) -> Option<u64> {
         let Callout::SiteRead { chained } = self.callout else { return None };
-        let (entries, records) = field_tables(&self.places.s)?;
+        let entries = field_tables(&self.places.s)?;
         // No function record table (`entry::readable_record`): a read of a function's own field misses, so
         // the call that follows runs the interpreter's builtin row (265 Ir) and not a body's native call
         // (`region_call_in_lane`, 1,250 Ir); it takes the table once a body's native call costs no more.
-        let tables = (entries, records, 0);
+        let tables = (entries, 0);
         if chained {
             let offsets = hole64::<HOLE_B>();
             entry::site_chain(stage, tables, object, (offsets & u64::from(u32::MAX), offsets >> CHAIN_SECOND_AT), miss)
@@ -270,9 +270,9 @@ impl<'a, const N: usize> PropertyFrame<Concrete> for PlannedPlaces<'a, N> {
     fn field_store_host(&mut self, stage: &mut Concrete, object: u64, _atom: u32, _site: u16, value: u64, miss: ()) -> Option<()> {
         match self.callout {
             Callout::SiteStore { gated } => {
-                let tables = field_tables(&self.places.s)?;
+                let entries = field_tables(&self.places.s)?;
                 let offset = stage_site(stage);
-                entry::site_store(stage, tables, object, offset, (value, gated, None), miss)
+                entry::site_store(stage, entries, object, offset, (value, gated, None), miss)
             }
             Callout::FlatStore { .. } => None,
             Callout::Plan | Callout::LoopEntry | Callout::SiteRead { .. } => None,
@@ -309,9 +309,9 @@ pub(crate) fn receiver_set() -> Operation<u64, ()> {
     Operation::SetField { value: LEFT, base: Some(DEST), atom: 0, site: 0, strict: false }
 }
 
-/// The cache entry tables of the activation: the field entries and the object record table.
-/// S7f DESIGN: the object record table left the payload with the object records, so the tables are absent and
-/// the site read and store decline (`None`, the call-out) until `entry`'s tables drop the record table
-/// (`staged/entry`). The flat own-slot store (`FlatStore`) was a direct-object record store and declines likewise.
+/// The field cache entry table of the activation. The entry reads address class cells directly (the object record
+/// table is gone), so the table alone is what a site read or store needs.
 #[inline(always)]
-fn field_tables(_s: &S) -> Option<(u64, u64)> { None }
+fn field_tables(s: &S) -> Option<u64> {
+    Some(word_at(payload(s), JS_STEP_FIELD_ENTRIES))
+}

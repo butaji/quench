@@ -55,7 +55,7 @@ pub(crate) mod engine_prelude {
     pub use quench_runtime::vm::wasm_exception::{js_tag_cell, js_tag_type};
     pub use quench_runtime::Value;
     pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING, NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
-    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
+    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_set_function_name};
     #[cfg(feature = "profile-memory")]
     pub use quench_runtime::tier_surface::CellKind;
     pub use quench_runtime::tier_surface::{ CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object, ProtoLink, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle, };

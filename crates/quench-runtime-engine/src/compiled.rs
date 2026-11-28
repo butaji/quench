@@ -688,7 +688,7 @@ fn emit_js_cached_field_slot(
 ) -> (ir::Value, ir::Value) {
     use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
     use quench_runtime::staged::machine::{Binary, Lane, Relation};
-    use quench_runtime::staged::object::{extras_pointer, has_extras, inline_storage, object_record_at, plain_payload, proto_link, proto_object_record_id};
+    use quench_runtime::staged::object::plain_payload;
     use quench_runtime::staged::region::Region;
     use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
 

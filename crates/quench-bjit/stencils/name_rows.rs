@@ -25,10 +25,10 @@ fn add_row<const A: u8, const CHAINED: bool>(s: S, payload: usize, form: Form, o
     let (shapes, site) = (hole64::<0>(), hole64::<HOLE_B>());
     let edge = add::Edge { before: shapes & u64::from(u32::MAX), after: shapes >> ADD_AFTER_AT, slot: site & ((1 << ADD_SLOT_BITS) - 1) };
     let link = CHAINED.then(|| (site >> ADD_LINK_AT) & ((1 << ADD_LINK_BITS) - 1));
-    let Some(records) = frame.object_records() else { return finish_fast(frame, false) };
     let object = object(site >> ADD_OBJECT_AT);
     let value = frame.tagged(&mut stage, LEFT);
-    let done = matches!(step_of::<{ op_kind::ADD_SITE }, _, _>(&mut stage, &mut frame, Operation::AddSite { records, object, edge, link, form, value }), Step::Value(_));
+    // The add reads no record table: `site_add` takes the object word, and its `records` field is inert.
+    let done = matches!(step_of::<{ op_kind::ADD_SITE }, _, _>(&mut stage, &mut frame, Operation::AddSite { records: 0, object, edge, link, form, value }), Step::Value(_));
     finish_fast(frame, done)
 }
 

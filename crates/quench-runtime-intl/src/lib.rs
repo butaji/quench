@@ -39,7 +39,7 @@ pub(crate) mod intl_prelude {
     pub use quench_runtime::Value;
     pub use quench_runtime::bytecode::{Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction};
-    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_add_property, concrete_set_function_name};
+    pub use quench_runtime::staged::add_plan::{AddSite, Transition, concrete_set_function_name};
     pub use quench_runtime::library_surface::CellKind;
     pub use quench_runtime::library_surface::{
     CallSiteLocation, CallSiteName, CallSiteRecord, Cell, CollectionStorage, FunctionKind, FunctionRecord, GcTraceKind, IteratorRecord, Heap, IteratorConsumer,

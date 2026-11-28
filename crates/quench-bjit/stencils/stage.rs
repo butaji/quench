@@ -337,10 +337,6 @@ impl Stage for StencilStage {
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a stencil row stores through the VM"),
         }
     }
-    #[inline(always)]
-    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
-        crate::staged::object::walk_prototypes_loop(self, records, object, target, max_depth)
-    }
     /// `fill_by_rows` with volatile stores: the window's prefix, the arguments it holds room for,
     /// then `undefined`. The stores are volatile so LLVM cannot make the loop a `memcpy` or `memset`
     /// call, which a stencil may not make. The window's `registers` words lie at the lane stack's

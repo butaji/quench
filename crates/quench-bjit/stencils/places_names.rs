@@ -15,14 +15,6 @@ use crate::staged::{CallOut, Concrete, Frame, Stage, iteration};
 use crate::words::hole64;
 
 impl Places {
-    /// The object record table the object-walking rows read. The table left the payload with the object
-    /// records (S7f), so the rows that need it decline.
-    // S7f DESIGN: absent (`None`) until the staged walks (`instanceof_by_words`, `AddSite`) drop their records argument.
-    #[inline(always)]
-    pub(crate) fn object_records(&self) -> Option<u64> {
-        None
-    }
-
     /// The function record table the naming site reads (`JS_STEP_FUNCTION_RECORD_BASE`).
     #[inline(always)]
     pub(crate) fn function_records(&self) -> u64 {

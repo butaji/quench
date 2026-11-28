@@ -460,13 +460,6 @@ impl Stage for Emit<'_, '_> {
             Table::SlotChains | Table::ChainOwners | Table::OwnerTypes => unreachable!("a Cranelift row stores through the VM"),
         }
     }
-    /// The walk unrolled up to the tier's bound; a longer chain is undecided, for the caller's
-    /// residual.
-    fn walk_prototypes(&mut self, records: ir::Value, object: ir::Value, target: ir::Value, max_depth: u32)
-        -> (ir::Value, ir::Value) {
-        let links = max_depth.min(crate::compiled::tier_policy::PROTOTYPE_UNROLL_LINKS);
-        quench_runtime::staged::object::walk_prototypes(self, records, object, target, links)
-    }
 }
 
 impl FlowStage for Emit<'_, '_> {
