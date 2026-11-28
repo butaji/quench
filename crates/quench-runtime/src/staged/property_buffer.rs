@@ -7,9 +7,9 @@
 /// The base and the initialized length, in declaration order (`#[repr(C)]`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PropertyBufferHead<Base> {
+pub struct PropertyBufferHead<Base> {
     /// The first slot of the buffer's allocation.
-    pub(crate) base: Base,
+    pub base: Base,
     /// The number of initialized slots from `base`.
-    pub(crate) length: usize,
+    pub length: usize,
 }

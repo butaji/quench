@@ -8,7 +8,7 @@ use super::*;
 
 /// `delete base[key]` into `destination`: the frame's deletion, else the VM's.
 #[inline(always)]
-pub(super) fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
+pub fn step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
     [base, key]: [Register; 2], strict: bool) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let (base_word, key_word) = (frame.tagged(stage, base), frame.tagged(stage, key));

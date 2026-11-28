@@ -5,7 +5,7 @@ use super::*;
 /// The address of the table entry of the record's layout (`heap::layouts`), which holds its
 /// header words: the layout id is the one word of them the record keeps.
 #[inline(always)]
-pub(crate) fn layout_entry<S: Stage>(stage: &mut S, at: super::super::region::Access, record: S::Word) -> S::Word {
+pub fn layout_entry<S: Stage>(stage: &mut S, at: super::super::region::Access, record: S::Word) -> S::Word {
     let id = stage.load_u32(at, record, OBJECT.layout_offset as i32);
     let base = stage.table(super::super::Table::Layouts);
     let offset = stage.mul_imm(id, 8u64);
@@ -15,7 +15,7 @@ pub(crate) fn layout_entry<S: Stage>(stage: &mut S, at: super::super::region::Ac
 /// The record's header word at `offset` in its layout's entry (`OBJECT.meta_offset`,
 /// `OBJECT.auxiliary_offset`), its layout id read as `at`.
 #[inline(always)]
-pub(crate) fn header_u32<S: Stage>(stage: &mut S, at: super::super::region::Access, record: S::Word, offset: usize) -> S::Word {
+pub fn header_u32<S: Stage>(stage: &mut S, at: super::super::region::Access, record: S::Word, offset: usize) -> S::Word {
     let entry = layout_entry(stage, at, record);
     stage.load_u32(Region::HeapMeta.readonly(), entry, offset as i32)
 }
@@ -51,20 +51,20 @@ pub fn extras_pointer<S: Stage>(stage: &mut S, payload: S::Word) -> S::Word {
 /// The record's exact shape as every cache records it (`Object::exact_shape`): its auxiliary
 /// word without the storage-form bits (`storage_form`).
 #[inline(always)]
-pub(crate) fn exact_shape<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+pub fn exact_shape<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
     let word = aux_word(stage, record);
     recorded_shape(stage, word)
 }
 
 /// The record's whole auxiliary word: its shape and storage-form bits (`recorded_shape`, `storage_form`).
 #[inline(always)]
-pub(crate) fn aux_word<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+pub fn aux_word<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
     header_u32(stage, Region::ShapeWord.mutable(), record, OBJECT.auxiliary_offset)
 }
 
 /// `exact_shape` of an auxiliary word already loaded.
 #[inline(always)]
-pub(crate) fn recorded_shape<S: Stage>(stage: &mut S, word: S::Word) -> S::Word {
+pub fn recorded_shape<S: Stage>(stage: &mut S, word: S::Word) -> S::Word {
     stage.and_imm(word, u64::from(!(OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form)))
 }
 
@@ -73,7 +73,7 @@ pub(crate) fn recorded_shape<S: Stage>(stage: &mut S, word: S::Word) -> S::Word 
 /// the payload's extras tag keeps these bits current (`Object::storage_form`), so a record's
 /// word answers `inline_storage` and `has_extras` without loading the header or the payload.
 #[inline(always)]
-pub(crate) fn storage_form<S: Stage>(stage: &mut S, word: S::Word, bit: u32) -> S::Cond {
+pub fn storage_form<S: Stage>(stage: &mut S, word: S::Word, bit: u32) -> S::Cond {
     let set = stage.and_imm(word, u64::from(bit));
     stage.ne_imm(set, 0u32)
 }

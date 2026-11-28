@@ -11,7 +11,7 @@ use crate::typed_ir::Representation;
 use crate::value::{NarrowLayout, ValueLayout};
 
 /// Bytes in one half of a packed payload word, the stride of a packed slot.
-pub(crate) const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+pub const HALF_BYTES: u64 = std::mem::size_of::<u32>() as u64;
 
 /// What a site proved about where an object of an exact shape keeps its values. It is a
 /// static input: a specializer reads no word to learn it.
@@ -39,10 +39,9 @@ impl Form {
     }
 }
 
-#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// How packed values are read: from the record at each read, since a store may reach them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum PackedAccess {
+pub enum PackedAccess {
     Reload,
 }
 

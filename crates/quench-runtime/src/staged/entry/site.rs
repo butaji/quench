@@ -4,7 +4,7 @@ use super::*;
 
 /// A field read through two cache entries: the first names a value the second entry's site reads from.
 #[inline(always)]
-pub(crate) fn site_chain<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
+pub fn site_chain<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, (entries, records), miss)?;
     let middle = site_read_in(stage, (entries, records, functions), object, first, miss)?;
     site_read_in(stage, (entries, records, functions), middle, second, miss)
@@ -22,7 +22,7 @@ pub(crate) fn site_chain<S: Stage>(stage: &mut S, (entries, records, functions):
 /// class space's gate (`slot_store::int_over_int_gate`), which refuses every store that may widen a tracked
 /// slot type; an ungated store is one whose value the slot's type holds.
 #[inline(always)]
-pub(crate) fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm,
+pub fn site_store<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm,
     (value, gated, proven): (S::Word, bool, Option<S::Imm>), miss: S::Miss) -> Option<()> {
     site_tables(stage, tables, miss)?;
     let direct = super::super::value::is_direct_object(stage, object);
@@ -102,14 +102,14 @@ fn site_own_in<S: Stage>(stage: &mut S, (entries, _): (S::Word, S::Word), object
 
 /// `site_read` of an own entry alone (`site_own_in`).
 #[inline(always)]
-pub(crate) fn site_own_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+pub fn site_own_read<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     site_own_in(stage, tables, object, offset, miss)
 }
 
 /// `site_chain` of own entries alone (`site_own_in`).
 #[inline(always)]
-pub(crate) fn site_own_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
+pub fn site_own_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word), object: S::Word, (first, second): (S::Imm, S::Imm), miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, tables, miss)?;
     let middle = site_own_in(stage, tables, object, first, miss)?;
     site_own_in(stage, tables, middle, second, miss)
@@ -121,7 +121,7 @@ pub(crate) fn site_own_chain<S: Stage>(stage: &mut S, tables: (S::Word, S::Word)
 /// offset is the row's only per-site operand, so a site is read as the interpreter's cached
 /// read reads it.
 #[inline(always)]
-pub(crate) fn site_read<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
+pub fn site_read<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     site_tables(stage, (entries, records), miss)?;
     site_read_in(stage, (entries, records, functions), object, offset, miss)
 }

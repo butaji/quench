@@ -3,6 +3,9 @@
 //! These were inherent methods of `Operation` in the moved file; each is a trait method now (rule
 //! 4.3), so a caller imports the trait that owns it.
 #![allow(unused_imports)]
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::allocation::AllocationAllocationExt;
 use super::*;
 use crate::staged::{InvocationFormsExt, OperationElementRowsExt, OperationGenericExt, OperationOperationRecordsExt};
 

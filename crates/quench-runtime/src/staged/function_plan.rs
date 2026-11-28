@@ -9,6 +9,9 @@
 //! (`Operation::effects`) are functions of it, read where a tier asks.
 
 #[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::allocation::AllocationAllocationExt;
+#[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use super::decode::DecodeContext;
 use super::{Allocation, Operation};

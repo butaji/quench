@@ -16,7 +16,7 @@ use crate::typed_ir::Representation;
 /// flags) differs, or the watch no longer holds. One compare of the layout id proves the shape
 /// and the prototype together.
 #[inline(always)]
-pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, value: u64,
+pub fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, value: u64,
     miss: S::Miss) -> Option<S::Word> {
     let words = stage.load_u32(Region::ShapeWord.mutable(), record,
         crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
@@ -36,7 +36,7 @@ pub(crate) fn holder_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, 
 /// compare), or the watch on its prototype's values no longer holds. The field is then the tagged
 /// slot `LoadSlot` reads, as a getter's own-field return is.
 #[inline(always)]
-pub(crate) fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, slot: u16,
+pub fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u64, watch: u64, slot: u16,
     miss: S::Miss) -> Option<S::Word> {
     let words = stage.load_u32(Region::ShapeWord.mutable(), record,
         crate::heap::NATIVE_OBJECT_LAYOUT.layout_offset as i32);
@@ -57,7 +57,7 @@ pub(crate) fn getter_own_read<S: Stage>(stage: &mut S, record: S::Word, guard: u
 /// as its value: one compare of the record's address and the watch's flag. Two objects of one
 /// layout (two enums with the same members) share a layout but never a record.
 #[inline(always)]
-pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u64, watch: u64, value: u64,
+pub fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u64, watch: u64, value: u64,
     miss: S::Miss) -> Option<S::Word> {
     let record = stage.site(record);
     let same = stage.eq_imm(at, record);
@@ -72,7 +72,7 @@ pub(crate) fn own_constant_read<S: Stage>(stage: &mut S, at: S::Word, record: u6
 
 /// The per-site operand `bits` as a word (a record table's base the row names).
 #[inline(always)]
-pub(super) fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
+pub fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
     let zero = stage.constant(0);
     let bits = stage.site(bits);
     stage.add_imm(zero, bits)
@@ -82,7 +82,7 @@ pub(super) fn site_word<S: Stage>(stage: &mut S, bits: u64) -> S::Word {
 /// (leaving at `miss`) for any receiver but a direct string, or once the watch on
 /// `String.prototype`'s values no longer holds.
 #[inline(always)]
-pub(crate) fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
+pub fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
     let string = super::value::is_direct_string(stage, word);
     stage.guard(string, miss)?;
     let watch = stage.site(watch);
@@ -97,7 +97,7 @@ pub(crate) fn string_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, va
 /// (leaving at `miss`) for any receiver but a Number, an int32 or a binary64, or once the watch
 /// on `Number.prototype`'s values no longer holds.
 #[inline(always)]
-pub(crate) fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
+pub fn number_read<S: Stage>(stage: &mut S, word: S::Word, watch: u64, value: u64, miss: S::Miss) -> Option<S::Word> {
     let (double, integer) = super::value::number_classes(stage, word);
     let number = stage.any(integer, double);
     stage.guard(number, miss)?;
@@ -121,7 +121,7 @@ pub fn guard_shape<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shap
 /// `IcOp::GuardShapeFormed`: continues where the reached record's whole auxiliary word is `shape` with no
 /// storage-form bit, the plain arena run (`object::proved_own_layout` of form bits 0).
 #[inline(always)]
-pub(super) fn guard_shape_formed<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+pub fn guard_shape_formed<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let word = at.auxiliary.unwrap_or_else(#[inline(always)] || super::object::aux_word(stage, at.record));
     let same = { let shape = stage.shape_site(shape); stage.eq_imm(word, shape) };
     stage.guard(same, miss)?;
@@ -130,7 +130,7 @@ pub(super) fn guard_shape_formed<S: Stage>(stage: &mut S, at: &Reached<S::Word, 
 
 /// `IcOp::GuardLayout`: continues where the reached record's layout id is `id`.
 #[inline(always)]
-pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+pub fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let loaded = at.word.unwrap_or_else(#[inline(always)] || layout_id(stage, at.record));
     let same = { let id = stage.site(u64::from(id)); stage.eq_imm(loaded, id) };
     stage.guard(same, miss)?;
@@ -140,7 +140,7 @@ pub(super) fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Con
 /// `IcOp::GuardClass`: continues where the reached class cell's class is `class`. The cell's header is the
 /// one word read; a departed cell holds `DEPARTED_CLASS`, which `class` never is, so it leaves at `miss`.
 #[inline(always)]
-pub(super) fn guard_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, class: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+pub fn guard_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, class: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let loaded = super::object::cell_class(stage, at.record);
     let same = { let class = stage.site(u64::from(class)); stage.eq_imm(loaded, class) };
     stage.guard(same, miss)?;
@@ -150,7 +150,7 @@ pub(super) fn guard_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
 /// `IcOp::GuardImageClass`: continues where the reached cell's class is the one an ahead image's loader
 /// resolves for field guard key `key` (`ImageWord::Layout`, the class id).
 #[inline(always)]
-pub(super) fn guard_image_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, key: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+pub fn guard_image_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, key: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let loaded = super::object::cell_class(stage, at.record);
     let same = { let class = stage.image_word(super::stage::ImageWord::Layout, key); stage.eq_imm(loaded, class) };
     stage.guard(same, miss)?;
@@ -160,7 +160,7 @@ pub(super) fn guard_image_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S
 /// `IcOp::LoadField`: the tagged value at `slot` of the class cell the reached word names, which the class
 /// guard before it proved holds the slot (`object::cell_fields`).
 #[inline(always)]
-pub(super) fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation)) -> S::Word {
+pub fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation)) -> S::Word {
     debug_assert!(at.shaped.is_some(), "a field load follows the guard of its class");
     let layout = super::object::cell_fields(stage, at.record, usize::from(slot) + 1);
     read_slot_value(stage, layout, slot, rep)
@@ -170,7 +170,7 @@ pub(super) fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>
 /// `entry::class_held_value` reads. No guard of its own: the class guard before it proved the receiver, and the
 /// holder's departure resets the caches before any read.
 #[inline(always)]
-pub(super) fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u16) -> S::Word {
+pub fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u16) -> S::Word {
     let granule = stage.constant(u64::from(holder));
     let cell = super::object::cell_at_granule(stage, granule);
     let slot = stage.constant(u64::from(slot));
@@ -180,7 +180,7 @@ pub(super) fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u16) -
 /// `IcOp::GuardImageLayout`: continues where the reached record's layout id is the one an ahead
 /// image's loader resolves for field guard key `key` (`ImageWord::Layout`).
 #[inline(always)]
-pub(super) fn guard_image_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, key: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
+pub fn guard_image_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, key: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let loaded = at.word.unwrap_or_else(#[inline(always)] || layout_id(stage, at.record));
     let same = { let id = stage.image_word(super::stage::ImageWord::Layout, key); stage.eq_imm(loaded, id) };
     stage.guard(same, miss)?;
@@ -189,7 +189,7 @@ pub(super) fn guard_image_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, 
 
 /// The record's layout id (`Object::layout_id`), the one header word it keeps.
 #[inline(always)]
-pub(crate) fn layout_id<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
+pub fn layout_id<S: Stage>(stage: &mut S, record: S::Word) -> S::Word {
     stage.load_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32)
 }
 
@@ -208,7 +208,7 @@ pub fn layout_shape(id: u32) -> u32 {
 }
 
 /// Every storage-form bit of an auxiliary word.
-pub(crate) const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
+pub const FORM_BITS: u32 = OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form;
 
 /// The `Form` layout `id` names: a fact of the id (its auxiliary word's form bits), so a caller
 /// holding the id at compile time passes it and the stage emits no run-time form test. Plain
@@ -227,7 +227,7 @@ pub fn form_of_layout(id: u32) -> Form {
 
 /// `IcOp::LoadSlot`: the value at `slot` of the reached record.
 #[inline(always)]
-pub(super) fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation), form: Form, storage_len: usize,
+pub fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation), form: Form, storage_len: usize,
     miss: S::Miss) -> Option<S::Word> {
     let layout = slot_layout(stage, at, form, storage_len, miss)?;
     Some(read_slot_value(stage, layout, slot, rep))
@@ -237,7 +237,7 @@ pub(super) fn load_slot<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>,
 /// and keeps `storage_len` values in `form`. A caller that proved it before reads through it
 /// again instead of proving it twice (`property::kept_slot`).
 #[inline(always)]
-pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, form: Form, storage_len: usize,
+pub fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, form: Form, storage_len: usize,
     miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let shaped = at.shaped.expect("a slot read follows the guard of its shape");
     if let Some(cell) = shaped.cell() {
@@ -253,13 +253,13 @@ pub(super) fn slot_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond
 
 /// The reached record's exact shape word: the caller's where it holds one, else loaded.
 #[inline(always)]
-pub(super) fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
+pub fn shape_word<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>) -> S::Word {
     at.shape.unwrap_or_else(#[inline(always)] || super::object::exact_shape(stage, at.record))
 }
 
 /// `IcOp::PrototypeConstants`: the value `values` pair with the link of `record`'s prototype.
 #[inline(always)]
-pub(super) fn prototype_constants<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
+pub fn prototype_constants<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>, values: &[(u32, u64)], miss: S::Miss) -> Option<S::Word> {
     let link = proto_link(stage, receiver.record());
     let ((first, bits), rest) = values.split_first()?;
     let mut matched = stage.eq_imm(link, u64::from(*first));
@@ -277,7 +277,7 @@ pub(super) fn prototype_constants<S: Stage>(stage: &mut S, receiver: Shaped<S::W
 /// `IcOp::HolderConstant`: the value the image linked for holder `key`, where `receiver`'s
 /// prototype link is the holder's.
 #[inline(always)]
-pub(super) fn holder_constant<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>, key: u32, miss: S::Miss) -> Option<S::Word> {
+pub fn holder_constant<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>, key: u32, miss: S::Miss) -> Option<S::Word> {
     let link = proto_link(stage, receiver.record());
     let holder = stage.image_word(super::stage::ImageWord::HolderLink, key);
     let same = stage.eq_imm(link, holder);
@@ -288,7 +288,7 @@ pub(super) fn holder_constant<S: Stage>(stage: &mut S, receiver: Shaped<S::Word>
 
 /// `IcOp::LoadPrototypeSlot` of the record at `record`.
 #[inline(always)]
-pub(super) fn prototype_slot<S: Stage>(stage: &mut S, holder: Shaped<S::Word>, slot: u16, miss: S::Miss) -> Option<S::Word> {
+pub fn prototype_slot<S: Stage>(stage: &mut S, holder: Shaped<S::Word>, slot: u16, miss: S::Miss) -> Option<S::Word> {
     let record = holder.record();
     let inline = inline_storage(stage, record);
     let in_arena = stage.not(inline);

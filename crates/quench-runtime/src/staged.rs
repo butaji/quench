@@ -220,6 +220,9 @@ pub use delegation::DelegationStep;
 mod allocation;
 #[allow(unused_imports)]
 pub use allocation::{Allocation, InlineEmpty};
+#[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+pub use allocation::AllocationAllocationExt;
 pub mod plan_fields;
 pub mod property;
 mod property_write;

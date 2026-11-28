@@ -2,6 +2,8 @@
 //! `k`, grown by `push`. Admission, element reads and writes, `.length`, and materialization. Split from
 //! `virtual_objects` along the array seam.
 
+#[allow(unused_imports)]
+use quench_runtime::staged::AllocationAllocationExt;
 use super::*;
 use super::super::builtin_calls::Builtin;
 use super::super::native_calls::{Inline, definition_before};

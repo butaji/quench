@@ -14,7 +14,7 @@ mod slots;
 
 use slots::{formed_slot, kept_slot, word_formed_slot};
 
-pub(super) use slots::guard_receiver_layout;
+pub use slots::guard_receiver_layout;
 
 use super::ic::{self, IcOp, Reached};
 use super::object::{object_record_of, Form, Layout};

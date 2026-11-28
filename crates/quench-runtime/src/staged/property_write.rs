@@ -14,7 +14,7 @@ use crate::typed_ir::{Representation, Type};
 /// `base` is a register, or the bound `this` for `None`; the `value` register is read tagged,
 /// with the fact the frame proved of its type.
 #[inline(always)]
-pub(super) fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F,
     (value, base): (Register, Option<Register>), (atom, site): (u32, u16), miss: S::Miss) -> Option<S::Word> {
     let fact = frame.value_fact(value);
     let tagged = frame.tagged(stage, value);
@@ -23,7 +23,7 @@ pub(super) fn set_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 
 /// `base.atom = value` of a word no register names, of type `fact`: the word, or a leave at `miss`.
 #[inline(always)]
-pub(super) fn store_word<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: Option<Register>,
+pub fn store_word<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: Option<Register>,
     (value, fact): (S::Word, Type), (atom, site): (u32, u16), miss: S::Miss) -> Option<S::Word> {
     store_value(stage, frame, base, (value, fact), (atom, site), miss)
 }

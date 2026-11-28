@@ -41,7 +41,7 @@ fn holder_value<S: Stage>(stage: &mut S, holder: S::Word, slot: S::Word, miss: S
 /// (`holder_value`). The entry stores each of its words complemented against the empty entry, so
 /// a shape equal to the record's shape complemented is the guard.
 #[inline(always)]
-pub(super) fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     let slot = entry_slot(stage, entry);
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
@@ -56,7 +56,7 @@ pub(super) fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S
 /// entry's slot. `None` (leaving at `miss`) for any other receiver, link or holder, so a changed
 /// prototype is a miss.
 #[inline(always)]
-pub(super) fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
     let link = super::super::object::proto_link(stage, record);
     let id = super::super::object::proto_object_record_id(stage, link, miss)?;
