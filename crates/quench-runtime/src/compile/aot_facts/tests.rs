@@ -1060,14 +1060,14 @@ fn a_method_only_called_on_its_class_instances_takes_that_class_as_this() {
 }
 
 #[test]
-fn an_instance_of_a_class_only_stored_by_name_never_departs_its_shape() {
+fn an_instance_of_a_class_only_stored_by_name_keeps_a_writable_cell() {
     let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); s.count = 1;");
     let facts = analyze(&program);
     assert!(facts.class_writable_cell(function_named(&program, "Scheduler") as u32));
 }
 
 #[test]
-fn a_delete_on_an_instance_departs_its_class_shape() {
+fn a_delete_on_an_instance_changes_its_class() {
     let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); delete s.count;");
     let facts = analyze(&program);
     assert!(!facts.class_writable_cell(function_named(&program, "Scheduler") as u32));
