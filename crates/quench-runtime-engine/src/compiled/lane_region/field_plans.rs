@@ -8,7 +8,7 @@ use crate::ext_traits::*;
 use super::*;
 use super::super::object_slots::{field_load_groups, NativeFieldLoad};
 use quench_runtime::staged::ic::IcOp;
-use quench_runtime::staged::property::{Arm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
+use quench_runtime::staged::property::{Arm, ClassArm, FieldPlan, PlanSource, PrototypeProof, StorePlan};
 use quench_runtime::staged::Form;
 use quench_runtime::typed_ir::Representation;
 
@@ -55,8 +55,8 @@ impl Fast {
             [] => Self::Host,
             [load] if load.holder.is_none() && !load.valid() => Self::Host,
             [load] => Self::Single(*load),
-            // A class-keyed load beside shape loads: the shape loads read natively, and a receiver that is a live cell
-            // misses them to the VM's probe (`with_read_plan`, `mixes_keys`). Only class-keyed loads: the VM's read.
+            // A class-keyed load beside shape loads: the shape loads are the plan's rest, and the class-keyed loads its
+            // class arms (`with_read_plan`, `FieldPlan::Classed`). Only class-keyed loads: Classed over the VM's read as the rest.
             loads if loads.iter().any(|load| load.class.is_some()) => {
                 let shapes: Vec<NativeFieldLoad> = loads.iter().filter(|load| load.class.is_none()).copied().collect();
                 if shapes.is_empty() { Self::Host } else { Self::of(&shapes) }
@@ -87,15 +87,16 @@ impl Fast {
     }
 }
 
-/// Whether a link's loads mix class-keyed and shape-keyed reads: the shape reads are native arms, and the class
-/// receivers they miss take the VM's read through a probe (`FieldPlan::Probed`), which reads a live cell's field.
-fn mixes_keys(loads: &[NativeFieldLoad]) -> bool {
-    loads.iter().any(|load| load.class.is_some()) && loads.iter().any(|load| load.class.is_none())
+/// Whether a link's read dispatches over classes (`FieldPlan::Classed`): its class-keyed loads are the class arms and
+/// its shape loads the rest (the VM's read where there are none). A lone class-keyed load is `Fast::Single`'s.
+fn dispatches_classes(loads: &[NativeFieldLoad]) -> bool {
+    let classes = loads.iter().filter(|load| load.class.is_some()).count();
+    classes > 1 || (classes == 1 && loads.len() > 1)
 }
 
 /// Whether a link's value comes from its loads' native reads, as the VM's own read does not.
 pub(crate) fn reads_natively(loads: &[NativeFieldLoad]) -> bool {
-    !matches!(Fast::of(loads), Fast::Host)
+    dispatches_classes(loads) || !matches!(Fast::of(loads), Fast::Host)
 }
 
 /// The values a holder load folds as constants (its prototypes' links and bits), where the
@@ -236,9 +237,17 @@ pub(crate) fn with_read_plan<R>(links: &[LinkInput], (folds_stable, known): (boo
     }).collect();
     let readable: Vec<FieldPlan<'_>> = fasts.iter().zip(&fast_plans).map(|(fast, plan)|
         if fast.readable() { FieldPlan::Readable(plan) } else { *plan }).collect();
-    let mut plans: Vec<FieldPlan<'_>> = links.iter().zip(&fasts).zip(&readable).map(|((link, fast), plan)| match fast {
+    // A mixed site's class-keyed loads, each an arm of its class: the class is dispatched once (`FieldPlan::Classed`),
+    // so an arm's ops read the live cell it matched (`class_loads` of a class-keyed load, no class guard of its own).
+    let class_loads: Vec<Vec<(u32, Vec<IcOp<'_>>)>> = links.iter().map(|link| link.loads.iter()
+        .filter_map(|load| Some((load.class?, load_ops(load, &[], None)))).collect()).collect();
+    let class_arms: Vec<Vec<ClassArm<'_>>> = class_loads.iter().map(|arms| arms.iter()
+        .map(|(class, ops)| ClassArm { class: *class, ops: ops.as_slice() }).collect()).collect();
+    let sited: Vec<FieldPlan<'_>> = links.iter().zip(&readable).zip(&class_arms).map(|((link, plan), classes)|
+        if dispatches_classes(&link.loads) { FieldPlan::Classed { classes, rest: plan } } else { *plan }).collect();
+    let mut plans: Vec<FieldPlan<'_>> = links.iter().zip(&fasts).zip(&sited).map(|((link, fast), plan)| match fast {
         Fast::Host => *plan,
-        _ if link.probed || mixes_keys(&link.loads) => FieldPlan::Probed { fast: plan, atom: link.atom, site: link.site },
+        _ if link.probed => FieldPlan::Probed { fast: plan, atom: link.atom, site: link.site },
         _ => *plan,
     }).collect();
     if let Some(first) = plans.first_mut().filter(|_| known) { *first = FieldPlan::Known; }

@@ -150,6 +150,9 @@ pub(crate) struct ClassProto {
     pub(crate) link: u32,
     pub(crate) holder: u32,
     pub(crate) members: Vec<(quench_runtime::bytecode::Atom, u64)>,
+    /// The class id of the receiver's live class cell, where it has one (`HeapReads::live_class_key`, `CLASS_KEY` stripped).
+    /// The entry then tests the class (`Heap::Class`), which names the shape and prototype link too; else the exact shape and link.
+    pub(crate) class: Option<u32>,
 }
 
 /// A loop-invariant receiver and the exact shape its field accesses saw at the region's entry: the entry checks the shape

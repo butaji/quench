@@ -226,6 +226,8 @@ heap_reads! {
     fn native_cell_cursor(region: u32) -> usize;
     /// The class header word of `value` when it names a live class cell (`Heap::live_class_header`).
     fn live_class_header(value: Value) -> Option<u64>;
+    /// The receiver key of a live class cell's class (`Heap::live_class_key`): its class id OR'd with `CLASS_KEY`.
+    fn live_class_key(value: Value) -> Option<u32>;
     /// The native array allocation cursor (`Heap::native_array_cursor`).
     fn native_array_cursor() -> usize;
     /// The native objects' mark blocks (`Heap::native_object_mark_blocks`).

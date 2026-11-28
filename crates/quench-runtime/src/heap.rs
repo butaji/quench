@@ -1407,19 +1407,6 @@ impl Heap {
         self.alloc_slotless_array_of(object, prototype)
     }
 
-    /// `alloc_literal_array` of `len` copies of `value`, whose fallback is one slice-filled
-    /// allocation (`ArrayElements::filled`) rather than a per-element closure.
-    #[inline(always)]
-    pub(crate) fn alloc_filled_array(&mut self, prototype: Value, len: usize, value: Value) -> Value {
-        let elements = match self.properties.young_elements(len) {
-            // SAFETY: the run is the nursery's and nothing else's; the record follows at once.
-            Some(run) => unsafe { ArrayElements::young(run, len, |_| value) },
-            None => ArrayElements::filled(len, value),
-        };
-        let object = ArrayObject::fresh(prototype, elements);
-        self.alloc_slotless_array_of(object, prototype)
-    }
-
     /// A new array of `prototype`, with no properties, whose elements are the values of `parts`
     /// in order, copied once into a young run where one is free (`alloc_literal_array`), else
     /// into one allocation of the total length.

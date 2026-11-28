@@ -133,21 +133,59 @@ fn vm_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, join: S
     }
 }
 
-/// The in-place store of `value`, of type `fact`, to `owner`'s `object`: the run's admission, the
-/// receiver's record, then the arm that holds its shape. A single arm's shape guard is the
-/// owner's proof; several are a switch on the shape word. Where a method cache may name the atom,
-/// the arm admits the store once its shape is proved, if the store is quiet (`admit_named`).
+/// The in-place store of `value`, of type `fact`, to `owner`'s `object`: the run's admission, then the class-keyed
+/// arms and the shape arms (`classed_store`, `shape_store`). A single shape arm's guard is the owner's proof; several
+/// are a switch on the shape word. Where a method cache may name the atom, the arm admits the store once its shape is
+/// proved, if the store is quiet (`admit_named`).
 #[inline(always)]
 fn in_place<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
     arms: &[StoreArm], value: (S::Word, Type), miss: S::Miss) -> Option<()> {
     let named = frame.store_admission(stage, miss)?;
-    match arms {
-        // A class-keyed arm: the receiver is a live class cell, which holds no record (`class_arm_store`).
-        [arm] if arm.keys_class() => return class_arm_store(stage, object, *arm, value, named, miss),
-        // A site's class arms are one class (`StorePlan`'s arms); several keys leave to the VM's store.
-        _ if arms.iter().any(|arm| arm.keys_class()) => return None,
-        _ => {}
+    // The class-keyed arms lead the shape arms (`StorePlan`'s arms, `StoreArm::of_class`).
+    let (classes, shapes) = arms.split_at(arms.partition_point(|arm| arm.keys_class()));
+    debug_assert!(shapes.iter().all(|arm| !arm.keys_class()), "class-keyed store arms lead the shape arms");
+    match classes {
+        // A class-keyed arm alone: the receiver is a live class cell, which holds no record (`class_arm_store`).
+        [arm] if shapes.is_empty() => class_arm_store(stage, object, *arm, value, named, miss),
+        [] => shape_store(stage, frame, (owner, object), shapes, value, named, miss),
+        classes => classed_store(stage, frame, (owner, object), (classes, shapes), (value, named), miss),
     }
+}
+
+/// The in-place store to a site whose class-keyed arms `classes` lead its shape arms `shapes` (`in_place`): the class of a
+/// direct object's cell is chosen once, `DEPARTED_CLASS` for any other word, which no arm names, and dispatched over the
+/// class arms; where none takes it, `shape_store` stores (a live cell leaves there).
+#[inline(always)]
+fn classed_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
+    (classes, shapes): (&[StoreArm], &[StoreArm]), (value, named): ((S::Word, Type), Option<S::Cond>), miss: S::Miss) -> Option<()> {
+    let direct = super::value::is_direct_object(stage, object);
+    let class = stage.choose(direct,
+        #[inline(always)] |stage| { let cell = super::object::cell_of(stage, object); super::object::cell_class(stage, cell) },
+        #[inline(always)] |stage| stage.constant(u64::from(super::object_encoding::DEPARTED_CLASS)));
+    class_dispatch(stage, frame, (owner, object), (class, classes, shapes), (value, named), miss).map(drop)
+}
+
+/// `classed_store`'s dispatch over `classes`: the first arm whose class is `class` stores into its live cell
+/// (`class_arm_store`, which leaves where its gate refuses); none does, the shape arms store.
+#[inline(always)]
+fn class_dispatch<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
+    (class, classes, shapes): (S::Word, &[StoreArm], &[StoreArm]), (value, named): ((S::Word, Type), Option<S::Cond>),
+    miss: S::Miss) -> Option<S::Word> {
+    let Some((arm, others)) = classes.split_first() else {
+        return shape_store(stage, frame, (owner, object), shapes, value, named, miss).map(|()| stage.constant(0));
+    };
+    let same = stage.eq_imm(class, u64::from(arm.class_id()));
+    stage.choose_leaving(same,
+        #[inline(always)] |stage| class_arm_store(stage, object, *arm, value, named, miss).map(|()| stage.constant(0)),
+        #[inline(always)] |stage| class_dispatch(stage, frame, (owner, object), (class, others, shapes), (value, named), miss))
+}
+
+/// The in-place store through the shape arms `arms` (none class-keyed) of `value` to `owner`'s `object`: the receiver's
+/// record, then the arm that holds its shape. No arm leaves.
+#[inline(always)]
+fn shape_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
+    arms: &[StoreArm], value: (S::Word, Type), named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
+    if arms.is_empty() { return None; }
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     match arms {
         // An ahead image's layout arm: the record's own word proves the shape and the plain arena

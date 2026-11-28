@@ -273,20 +273,6 @@ impl ArrayElements {
         elements
     }
 
-    /// `from_fn` of a constant: `len` copies of `value` in one allocation, filled as a slice,
-    /// whose count of others is `len` when `value` is no int32 and none otherwise.
-    pub(crate) fn filled(len: usize, value: Value) -> Self {
-        if len == 0 {
-            return Self::new();
-        }
-        let mut elements = Self::allocate(len, len);
-        // SAFETY: the new allocation holds `len` slots after the header.
-        unsafe { std::slice::from_raw_parts_mut(elements.values(), len) }.fill(value);
-        let counted = if other(value) == 0 { 0 } else { len as u32 };
-        elements.make_mut().set_others(counted);
-        elements
-    }
-
     /// The young run (`HEADER_VALUES` and then `len` values) at `run` for the `len` values
     /// `value` gives for each index in order, admitting reads until a write or a survived
     /// collection copies it to an allocation (`make_mut`, `leave_nursery`).

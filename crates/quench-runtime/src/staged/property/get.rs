@@ -94,10 +94,3 @@ pub(in super::super) fn property_step_of<const KIND: u16, S: NumericStage, F: Nu
     };
     word.map_or(Step::Unresolved, Step::Value)
 }
-
-/// `property_step_of` for any operation.
-#[inline(always)]
-pub(in super::super) fn property_step<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
-    operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
-    property_step_of::<{ super::super::op_kind::ANY }, S, F>(stage, frame, operation)
-}
