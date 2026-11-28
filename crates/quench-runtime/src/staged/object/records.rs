@@ -10,35 +10,32 @@ pub fn object_record_at<S: Stage>(stage: &mut S, records: S::Word, id: S::Word) 
     stage.add(records, offset)
 }
 
-/// The address of the object record the direct object reference `bits` names, in the record table at
-/// `records`; `miss` where the object is live (it has no record). The only staged resolver
-/// (`object_record_id_of` is its hop's first half).
+/// The address of the record the direct object reference `bits` names, in the record table at `records`;
+/// `miss` where the object is a live cell (it has no record). Its one hop is `object_record_id_of`.
 #[inline(always)]
 pub fn object_record_of<S: Stage>(stage: &mut S, records: S::Word, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
     let id = object_record_id_of(stage, bits, miss)?;
     Some(object_record_at(stage, records, id))
 }
 
-/// The record id the direct object reference `bits` names: its granule's departed hop
-/// (`departed_record_id`), `miss` where the object is live.
+/// The record id the direct object reference `bits` names: its granule's stub hop (`stub_record_id`), `miss`
+/// where the granule is a live cell's.
 #[inline(always)]
 pub fn object_record_id_of<S: Stage>(stage: &mut S, bits: S::Word, miss: S::Miss) -> Option<S::Word> {
     let granule = super::super::value::direct_object_id(stage, bits);
-    departed_record_id(stage, granule, miss)
+    stub_record_id(stage, granule, miss)
 }
 
-/// The record id of the object whose stub granule is `granule` (a word, as a prototype link or a
-/// direct object reference holds it), where that object departed: the high half of its class cell's
-/// header (`object_encoding::departed_header`). The class guard is that the cell's class is
-/// `DEPARTED_CLASS`; a live cell (a class id, no record) leaves at `miss`, and the slow path decides it
-/// (`ObjectRef::Cell`). R4-D1b(d) makes the guard's immediate the expected class and deletes the record
-/// shape guard, so each read keeps one guard.
+/// The record id of the stub at granule `granule` (a word, as a prototype link or a direct object reference
+/// holds it): the high half of the stub's header. A granule in a cell region (`object_encoding::REGION_SHIFT`)
+/// names a live class cell, which has no record, so it leaves at `miss`; only region 0 holds stubs. The
+/// guard is the granule's region, one shift and a compare, not the header's class.
 #[inline(always)]
-pub fn departed_record_id<S: Stage>(stage: &mut S, granule: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn stub_record_id<S: Stage>(stage: &mut S, granule: S::Word, miss: S::Miss) -> Option<S::Word> {
+    let region = stage.shr_imm(granule, u64::from(super::super::object_encoding::REGION_SHIFT));
+    let stub = stage.eq_imm(region, 0u32);
+    stage.guard(stub, miss)?;
     let cell = cell_at_granule(stage, granule);
-    let class = cell_class(stage, cell);
-    let departed = stage.eq_imm(class, u64::from(DEPARTED_CLASS));
-    stage.guard(departed, miss)?;
     let header = stage.load_u64(Region::ShapeWord.mutable(), cell, 0);
     Some(stage.shr_imm(header, u64::from(u32::BITS)))
 }
@@ -53,16 +50,16 @@ pub fn cell_at_granule<S: Stage>(stage: &mut S, granule: S::Word) -> S::Word {
 }
 
 /// The address of the class cell the direct object reference `bits` names (`cell_at_granule` of its
-/// granule). Its header is the object's class word (`cell_class`) while the object is live, and
-/// `departed_header` once it departed: a reader tests the class before it takes either path.
+/// granule). Its header holds the object's class (`cell_class`): a direct object's granule in a cell region
+/// is always a live cell, so a class-keyed reader needs no test of the object's form.
 #[inline(always)]
 pub fn cell_of<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {
     let granule = super::super::value::direct_object_id(stage, bits);
     cell_at_granule(stage, granule)
 }
 
-/// The class id in the low half of the header of the cell at `cell`. It is `DEPARTED_CLASS` where the
-/// object departed, which no class guard names (`IcOp::GuardClass`), so a departed object misses there.
+/// The class id in the low half of the header of the cell at `cell`. A class guard (`IcOp::GuardClass`) compares
+/// it, so a word that names no live cell's class misses there.
 #[inline(always)]
 pub fn cell_class<S: Stage>(stage: &mut S, cell: S::Word) -> S::Word {
     stage.load_u32(Region::ShapeWord.mutable(), cell, NATIVE_CLASS_CELL_LAYOUT.class_offset as i32)

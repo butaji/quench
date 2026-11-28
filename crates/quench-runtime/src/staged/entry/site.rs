@@ -16,8 +16,8 @@ pub fn site_chain<S: Stage>(stage: &mut S, (entries, records, functions): (S::Wo
 /// needs no barrier log and widens no observation (`slot_store::gate_open`).
 ///
 /// A live cell's class key fixes its shape, so a store through an own entry names no record and needs no
-/// record hop: the class key is the one guard (`class_matches`), a departed object's key matches nothing and
-/// leaves to the VM, which holds its record. `proven` names a record's exact shape, which no live cell
+/// record hop: the class key is the one guard (`class_matches`), and a shape-keyed entry matches no cell and
+/// leaves to the VM. `proven` names a record's exact shape, which no live cell
 /// carries as a word, and no caller proves one, so a store that carries one leaves. A gated store asks the
 /// class space's gate (`slot_store::int_over_int_gate`), which refuses every store that may widen a tracked
 /// slot type; an ungated store is one whose value the slot's type holds.
@@ -67,7 +67,7 @@ fn site_tables<S: Stage>(stage: &mut S, (entries, records): (S::Word, S::Word), 
 fn site_read_in<S: Stage>(stage: &mut S, (entries, records, functions): (S::Word, S::Word, S::Word), object: S::Word, offset: S::Imm, miss: S::Miss) -> Option<S::Word> {
     let entry = stage.add_imm(entries, offset);
     let direct = super::super::value::is_direct_object(stage, object);
-    stage.choose_leaving(direct, #[inline(always)] |stage| direct_read_in(stage, records, object, entry, miss), #[inline(always)] |stage| {
+    stage.choose_leaving(direct, #[inline(always)] |stage| direct_read_in(stage, object, entry, miss), #[inline(always)] |stage| {
         let record = function_object(stage, functions, object, miss)?;
         record_read_in(stage, records, record, entry, miss)
     })

@@ -37,7 +37,7 @@ pub fn proto_record_id<S: Stage>(stage: &mut S, link: S::Word) -> S::Word {
 pub fn proto_object_record_id<S: Stage>(stage: &mut S, link: S::Word, miss: S::Miss) -> Option<S::Word> {
     let inside = proto_names_record(stage, link);
     stage.guard(inside, miss)?;
-    // The link's low bits are the granule; the record id is its header's hop.
+    // The link's low bits are the granule; the record id is its stub's header hop.
     let granule = proto_record_id(stage, link);
-    departed_record_id(stage, granule, miss)
+    stub_record_id(stage, granule, miss)
 }

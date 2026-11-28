@@ -94,19 +94,12 @@ pub struct RecordBlock {
 }
 
 /// A class cell (`heap::class_space`) is a run of granules, one `CLASS_HEADER_BYTES` each. Its
-/// first granule is the header: the class id in the low half, and in the high half zero for a live
-/// cell or the departed object's record id (`CLASS_RECORD_SHIFT`).
+/// first granule is the header: the class id in the low half (`heap::class_space` writes it there),
+/// and the cell's extras id in the high half. Staged code reads the class as the low u32 only.
 pub const CLASS_HEADER_BYTES: usize = size_of::<u64>();
-pub const CLASS_RECORD_SHIFT: u32 = u32::BITS;
-/// The reserved class id of a departed object's cell. It lies past the class table's capacity, so no
-/// class guard matches it.
-pub const DEPARTED_CLASS: u32 = u32::MAX;
-
-/// The header word of a departed object's class cell: `DEPARTED_CLASS` in the low half, its record id above.
-/// The runtime writes it (`heap::class_space`).
-pub const fn departed_header(record: u32) -> u64 {
-    DEPARTED_CLASS as u64 | ((record as u64) << CLASS_RECORD_SHIFT)
-}
+/// The class-id word that no class names: what a word that is not a live cell reads as in a class-keyed
+/// row, so every class arm and guard misses. It lies past the class table's capacity, so no class id is it.
+pub const NO_CLASS: u32 = u32::MAX;
 
 /// The class space's regions: region `k` starts at granule `k << REGION_SHIFT` and holds cells of
 /// `2^k` granules, so a granule's local cell index is `(g & REGION_MASK) >> k`.

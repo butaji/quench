@@ -31,8 +31,7 @@ pub enum IcOp<'a> {
     /// the run's form tests anyway (`object::plain_slots`), so only the tests go.
     GuardShapeFormed(u32),
     /// The reached cell's class (`object::cell_class`) is this one, else the read misses. The reached word is a
-    /// class cell (`object::cell_of`), so the guard is one compare of its header's low half: a departed object's
-    /// header holds `DEPARTED_CLASS`, which no class guard names, so it misses here and takes the record path.
+    /// class cell (`object::cell_of`), so the guard is one compare of its header's low half, the class.
     GuardClass(u32),
     /// `GuardClass` of the class an ahead image's loader resolves for field guard key `key` (`ImageWord::Layout`,
     /// the class id it names on this heap), for the image's construction and its fields.
@@ -41,8 +40,8 @@ pub enum IcOp<'a> {
     /// `cell + 8 + 8 * slot`. It ends the read.
     LoadField { slot: u16, rep: Representation },
     /// The tagged value at `slot` of the live class cell at granule `holder`, the holder of a class-keyed held
-    /// entry (`entry::class_held_value`). The class guard before it fixes the holder's identity; a departed holder
-    /// resets the field caches before any read (`Vm::drop_departed_holder_entries`), so it tests none. It ends the read.
+    /// entry (`entry::class_held_value`). The class guard before it fixes the holder's identity; a holder whose fields
+    /// move resets the field caches before any read (`Vm::drop_departed_holder_entries`), so it tests none. It ends the read.
     LoadHeldField { holder: u32, slot: u16 },
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan

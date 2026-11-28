@@ -94,8 +94,8 @@ pub fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S:
 /// the object's prototype link. The chain's own shapes are not read: a change to the layout of a
 /// prototype on it retires the code (`Heap::subscribe_prototype_chain`), so only what varies per
 /// receiver, its link, is tested. The path is the edge's key, a fact of the site, not a test of the
-/// object: a departed cell's class matches no key, so a keyed edge leaves to the VM, and a record
-/// edge leaves at `direct_record` where the object is live.
+/// object: a cell whose class is not the edge's key matches no key, so a keyed edge leaves to the VM, and a shape
+/// edge leaves at `direct_record`, as a live cell has no record.
 #[inline(always)]
 pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
     form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
@@ -142,11 +142,11 @@ fn edge_keys_class<S: Stage>(stage: &mut S, before: S::Word) -> S::Cond {
 
 /// The add of `value` at the slot of `edge` to the live class cell `cell` at `granule`, in place: it holds the
 /// before-class, keyed as `Heap::live_class_key` keys it (`class | CLASS_KEY`, the same one compare as
-/// `entry::class_matches`: a departed cell's `DEPARTED_CLASS` gives a word past u32 that equals no key), the
+/// `entry::class_matches`: a key of another class equals no cell's key), the
 /// field fits its region's capacity, and the store gate admits the write (the class space's barrier, as
 /// `Heap::class_cell_add`). The field is stored before the header takes the after-class, so no reader sees the
-/// new class without its slot. `None` (leaving at `miss`, before any write) otherwise, where the VM departs the
-/// cell or grows nothing. The after-class is the transition's, which keeps the before-class's link and flags.
+/// new class without its slot. `None` (leaving at `miss`, before any write) otherwise, where the VM takes the add
+/// or grows nothing. The after-class is the transition's, which keeps the before-class's link and flags.
 #[inline(always)]
 fn add_cell_property<S: Stage>(stage: &mut S, (granule, cell, class): (S::Word, S::Word, S::Word), edge: Edge<S::Word>,
     value: S::Word, miss: S::Miss) -> Option<()> {

@@ -138,7 +138,7 @@ pub fn guard_layout<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, id:
 }
 
 /// `IcOp::GuardClass`: continues where the reached class cell's class is `class`. The cell's header is the
-/// one word read; a departed cell holds `DEPARTED_CLASS`, which `class` never is, so it leaves at `miss`.
+/// one word read, and a cell whose class is not `class` leaves at `miss`.
 #[inline(always)]
 pub fn guard_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, class: u32, miss: S::Miss) -> Option<Shaped<S::Word>> {
     let loaded = super::object::cell_class(stage, at.record);
@@ -168,7 +168,7 @@ pub fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot
 
 /// `IcOp::LoadHeldField`: the tagged value at `slot` of the live class cell at granule `holder`, the holder
 /// `entry::class_held_value` reads. No guard of its own: the class guard before it proved the receiver, and the
-/// holder's departure resets the caches before any read.
+/// holder's fields moving resets the caches before any read.
 #[inline(always)]
 pub fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u16) -> S::Word {
     let granule = stage.constant(u64::from(holder));
