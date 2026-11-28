@@ -51,7 +51,9 @@ pub fn is_boolean<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 pub fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     use crate::typed_ir::Type;
     let undefined = Type::language(crate::ValueType::Undefined);
-    if let Some(known) = decided(stage, bits, |fact| fact.only_languages(undefined), |fact| fact.may_be_languages(undefined)) { return known; }
+    let fact = stage.fact(bits);
+    if fact.only_languages(undefined) { return stage.cond_of(true); }
+    if !fact.may_be_languages(undefined) { return stage.cond_of(false); }
     stage.eq_imm(bits, crate::Value::UNDEFINED.to_bits())
 }
 
@@ -60,7 +62,9 @@ pub fn is_undefined<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
 pub fn is_null<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     use crate::typed_ir::Type;
     let null = Type::language(crate::ValueType::Null);
-    if let Some(known) = decided(stage, bits, |fact| fact.only_languages(null), |fact| fact.may_be_languages(null)) { return known; }
+    let fact = stage.fact(bits);
+    if fact.only_languages(null) { return stage.cond_of(true); }
+    if !fact.may_be_languages(null) { return stage.cond_of(false); }
     stage.eq_imm(bits, crate::Value::NULL.to_bits())
 }
 

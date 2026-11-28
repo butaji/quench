@@ -8,6 +8,7 @@ use crate::words::hole64;
 use crate::places::{LEFT, Places, finish_fast};
 use crate::codes::{MEM, ADD_AFTER_AT, ADD_OBJECT_AT, ADD_SLOT_BITS};
 use crate::stage::StencilStage;
+use crate::staged::Frame;
 use crate::staged::add;
 use crate::heap_rows::word_at;
 

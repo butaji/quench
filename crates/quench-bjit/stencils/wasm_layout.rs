@@ -55,7 +55,7 @@ pub const FRAME_HEADER_WORDS: u64 = WASM_HEADER_WORDS as u64;
 pub const CONTEXT_TABLE_WORDS_AT: usize = 0x48;
 pub const CONTEXT_CALL_REFERENCE_AT: usize = 0x58;
 pub const CONTEXT_MEMORY_LENGTH_AT: usize = 0x90;
-pub const CONTEXT_INSTANCE_AT: usize = 0x100;
+pub const CONTEXT_INSTANCE_AT: usize = 0x108;
 
 /// The frame offset a callout's absent operand names: the row passes the zero word.
 pub const CALLOUT_ABSENT: u32 = u32::MAX;
