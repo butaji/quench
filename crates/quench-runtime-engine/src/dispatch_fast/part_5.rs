@@ -484,7 +484,7 @@ pub(crate) fn derive_lane_view<'live>(
     }
     let fused = crate::jit_routes::jit().map_or_else(Vec::new, |routes| (routes.fuse)(&mut records, &decoded, live().map(|masks| &**masks), loop_tier, function.handlers.is_empty()));
     let proven_counters = int_steps::prove_loop_steps(&decoded, &mut records, facts, function_id);
-    if let Some(facts) = facts { prove_compare_jumps(constants, &mut records, facts, function_id); }
+    specialize_compare_jumps(constants, &mut records, facts, function_id);
     // A record reads the accumulator its predecessor produced only when control reaches it
     // from that predecessor running its own handler. A fusion replaces a record's handler, or
     // runs records ahead of it and lands past them, without carrying what the replaced or
@@ -943,6 +943,29 @@ pub(super) fn specialize_plain_operators(decoded: &[WideInstruction], constants:
     }
 }
 
+/// The comparison jump instance each plain comparison jump record takes at load, chosen once here at derivation, in the order
+/// the constant and the solve decide it: a register tested against a constant `null` or `undefined`, or a constant Boolean, takes
+/// that test's instance (`lane_frame::constant_compare_jump`); a pair of int32 cells takes its proven instance
+/// (`lane_frame::proven_compare_jump`), which reads its register operands untagged; a register the cells type `null`,
+/// `undefined` or Boolean takes that test (`lane_frame::typed_compare_jump`); a register pair no cell decides takes its guarded
+/// instance (`lane_frame::guarded_compare_jump`) where the solve has facts, which tests the tags once per execution; any other register pair or register
+/// and constant takes the formed comparison (`lane_frame::formed_compare_jump`). Runs after fusion, so the fused runs and back
+/// edges keep the plain rows they were built on.
+pub(super) fn specialize_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
+    function: u32) {
+    use quench_runtime::bytecode::Operand;
+    for (pc, record) in records.iter_mut().enumerate() {
+        let pc = pc as u32;
+        let typed = |operand: Operand| operand.register_index().map_or(quench_runtime::typed_ir::Type::ANY, |register| operand_type(facts, function, pc, register));
+        let chosen = lane_frame::constant_compare_jump(record, constants)
+            .or_else(|| lane_frame::proven_compare_jump(record, constants, |operand| int32_cell(typed(operand))))
+            .or_else(|| lane_frame::typed_compare_jump(record, constants, &typed))
+            .or_else(|| facts.and_then(|_| lane_frame::guarded_compare_jump(record)))
+            .or_else(|| lane_frame::formed_compare_jump(record, constants));
+        if let Some(handler) = chosen { record.handler = handler as *const (); }
+    }
+}
+
 /// Runs each `LoadConst` whose register the next record, a `Return`, returns as one record
 /// (`return_constant_miss`). The `Return` record stays for jumps that reach it, and the
 /// fused record's general return continues there.
@@ -1089,30 +1112,6 @@ pub(super) fn proven_step_forms() -> [(Handler, Handler); 6] {
 /// The (checked, proven) pair whose checked form is `handler`.
 pub(super) fn checked_step(handler: *const ()) -> Option<(Handler, Handler)> {
     proven_step_forms().into_iter().find(|(checked, _)| *checked as *const () == handler)
-}
-
-/// The comparison jumps the solve's cells decide, each chosen once here at derivation: a pair of int32 cells takes its
-/// proven instance (`lane_frame::proven_compare_jump`), which reads its register operands untagged; a register the cells
-/// type `null` or `undefined` against a constant one, or a Boolean against a constant Boolean, takes that test's instance,
-/// and a register the cells fix to `null` or `undefined` on the right takes the nullish test of that constant
-/// (`lane_frame::typed_compare_jump`). A register pair no cell decides takes its guarded instance (`guarded_compare_jump`),
-/// which tests the tags once per execution. Runs after fusion, so the fused runs and back edges keep the plain rows they were built on.
-pub(super) fn prove_compare_jumps(constants: &[Value], records: &mut [LaneInstruction], facts: &quench_runtime::compile::aot_facts::AotFacts,
-    function: u32) {
-    use quench_runtime::bytecode::Operand;
-    for (pc, record) in records.iter_mut().enumerate() {
-        let pc = pc as u32;
-        let typed = |operand: Operand| operand.register_index().map_or(quench_runtime::typed_ir::Type::ANY, |register| operand_type(Some(facts), function, pc, register));
-        if let Some(proven) = lane_frame::proven_compare_jump(record, constants, |operand| int32_cell(typed(operand))) {
-            record.handler = proven as *const ();
-            continue;
-        }
-        if let Some(decided) = lane_frame::typed_compare_jump(record, constants, typed) {
-            record.handler = decided as *const ();
-            continue;
-        }
-        if let Some(guarded) = lane_frame::guarded_compare_jump(record) { record.handler = guarded as *const (); }
-    }
 }
 
 /// `handler`, a back edge's `FUSED_TARGET` record, with its test's comparison fixed where it is the
