@@ -130,27 +130,28 @@ fn rejection_reason(function: u32, rejection: NativeCompileRejection) -> &'stati
 }
 
 /// The lane body of `function` for an AOT image under the closed-world `facts`, whose leaves
-/// return their exit words as a JIT lane's do (`AheadLeaves`). The whole-program values of `frozen` fold at their reads, each read checked where it is made
-/// (`GlobalRead::Frozen`, `VmFacts::frozen_fields`), as the JIT's frozen division folds them. A
-/// construction the closed world proves keeps its receiver as its fields (`constructions`). A call
-/// the closed world proves reads its callee's words from the base body's record (`proven_calls`).
+/// return their exit words as a JIT lane's do (`AheadLeaves`). The whole-program values the closed
+/// world fixes (`AotFacts::dominated_root_store`) fold at their reads with no check
+/// (`GlobalRead::Frozen`). A construction the closed world proves keeps its receiver as its fields
+/// (`constructions`). A call the closed world proves reads its callee's words from the base body's
+/// record (`proven_calls`).
 /// `None` where it gives no native record.
 #[cfg(feature = "jit")]
-pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen),
+pub(crate) fn closed_lane_image(program: &ResidualProgram, function: u32, (facts, graph): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph),
     (_base, calls): (&BaseImage, &[aot_image::CallSite]), symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> (Result<LaneImage, &'static str>, Vec<aot_image::CallSite>) {
     let unit = match unit_or_refusal(program, function, facts, graph) { Ok(unit) => unit, Err(why) => return (Err(why), Vec::new()) };
     // The calls the closed world proves that the unit keeps as calls take records of the lane's own (`lane_call_sites`).
     // The symbols name them as the lowering goes, so the image keeps them whether or not the lane lowers.
     let own = lane_call_sites(&unit, function, facts, calls);
-    let lane = lower_closed_lane(program, function, (facts, graph, frozen), calls, &unit, &own, symbols, target);
+    let lane = lower_closed_lane(program, function, (facts, graph), calls, &unit, &own, symbols, target);
     (lane, own)
 }
 
 /// `closed_lane_image`'s lowering of `unit` with its own records `own`.
 #[cfg(feature = "jit")]
 #[allow(clippy::too_many_arguments)]
-fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph, frozen): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen), calls: &[aot_image::CallSite],
+fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph): (&AotFacts, &quench_runtime::compile::call_graph::CallGraph), calls: &[aot_image::CallSite],
     unit: &lane_unit::Unit, own: &[aot_image::CallSite], symbols: &mut SymbolTable, target: &aot_image::ImageTarget,
 ) -> Result<LaneImage, &'static str> {
     let sites: Vec<aot_image::CallSite> = calls.iter().cloned().chain(own.iter().cloned()).collect();
@@ -159,9 +160,9 @@ fn lower_closed_lane(program: &ResidualProgram, function: u32, (facts, graph, fr
     let strings = string_constants(program, unit, symbols);
     let fields = fields::class_fields(program, (unit, function), facts, symbols);
     let plan_of = |caller: u32, pc: u32| plans.get(&(caller, pc)).cloned();
-    let global_reads = super::frozen::frozen_unit_reads(program, unit, function, &frozen.globals);
+    let global_reads = super::frozen::frozen_unit_reads(program, unit, function, facts);
     let facts = VmFacts { ahead: Some(lane_region::AheadLeaves { calls: &proven, strings: &strings }), facts: Some(facts),
-        frozen_fields: Some(&frozen.fields), construct_plans: Some(&plan_of),
+        construct_plans: Some(&plan_of),
         // An image runs only in a VM whose host makes no IsHTMLDDA object (`install_ahead_body`), so `== null`
         // decides by the word: an object of any record family is not nullish.
         html_dda: false, ..VmFacts::STATIC };
@@ -206,7 +207,7 @@ fn lane_call_sites(unit: &lane_unit::Unit, function: u32, facts: &AotFacts, call
 }
 
 #[cfg(not(feature = "jit"))]
-pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &quench_runtime::compile::call_graph::CallGraph, &ClosedFrozen),
+pub(crate) fn closed_lane_image(_: &ResidualProgram, _: u32, _: (&AotFacts, &quench_runtime::compile::call_graph::CallGraph),
     _: (&BaseImage, &[aot_image::CallSite]), _: &mut SymbolTable, _: &aot_image::ImageTarget,
 ) -> (Result<LaneImage, &'static str>, Vec<aot_image::CallSite>) {
     (Err("ahead image lowering requires the jit feature"), Vec::new())

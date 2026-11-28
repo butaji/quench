@@ -3192,10 +3192,6 @@ pub struct NativeJsPublicationCounts {
     pub static_transfers: usize,
     /// Instruction sites that call their opcode's semantic entry.
     pub semantic_entry_sites: usize,
-    /// Whole-program globals the image folds, each checked at its read site.
-    pub frozen_globals: usize,
-    /// Whole-program prototype values the image folds, each guarded at its read site.
-    pub frozen_fields: usize,
     /// Functions whose windowed root map would exceed `MAX_MASK_BYTES`: their frames carry
     /// one conservative all-live map.
     pub wide_frame_functions: usize,

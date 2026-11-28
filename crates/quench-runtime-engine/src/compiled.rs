@@ -286,7 +286,6 @@ pub(crate) mod guard_aarch64;
 pub(crate) mod frozen;
 #[cfg(feature = "native-execution")]
 pub(crate) mod semantic_stop;
-pub(crate) use frozen::ClosedFrozen;
 #[cfg(unix)]
 #[path = "compiled/fault_handler.rs"]
 pub(crate) mod fault_handler;
@@ -1526,8 +1525,6 @@ pub(crate) struct VmFacts<'a> {
     /// Whether those Stable facts come from a closed whole-program image rather than from a
     /// running VM's feedback: `Division::Frozen` instead of `Division::Online`.
     pub(crate) frozen: bool,
-    /// Whole-program prototype values by atom, each guarded at its read site.
-    pub(crate) frozen_fields: Option<&'a quench_runtime::dense_map::DenseMap<Value>>,
     /// The image's constant block, materialized after realm initialization.
     pub(crate) frozen_constants: Option<usize>,
     /// The scalar entry a lane body's direct calls of its own function call (`lane_region::scalar`).
@@ -1570,7 +1567,7 @@ impl VmFacts<'static> {
     /// The facts of no particular VM, for code shared across VMs, as a static image's is:
     /// an IsHTMLDDA object possible, no diagnostics, no known `call`, and no Stable facts.
     pub(crate) const STATIC: Self = Self { html_dda: true, diagnostics: false, tiers: tier_policy::STATIC_ROWS, online: None, frozen: false,
-        frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
+        frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false };
 }
 
 #[quench_macros::ext(CompiledVm)]
@@ -1578,7 +1575,7 @@ impl Vm {
     pub(crate) fn vm_facts(&self) -> VmFacts<'static> {
         let html_dda = self.host.globals().iter().any(|global| global.capability == quench_runtime::host::CapabilityId::IsHTMLDDA);
         VmFacts { html_dda, diagnostics: admission::diagnosing(self), tiers: self.programs.tiers(), online: None, frozen: false,
-            frozen_fields: None, frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
+            frozen_constants: None, scalar: None, held_atoms: None, construct_plans: None, ahead: None, facts: None, graph: None, proven_entry: false }
     }
 }
 

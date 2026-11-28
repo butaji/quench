@@ -70,8 +70,6 @@ pub mod dataflow;
 #[doc(hidden)]
 pub mod webs;
 #[doc(hidden)]
-pub mod dense_map;
-#[doc(hidden)]
 pub mod bytecode;
 /// The operators an instruction's operator immediate names, in the parser's numbering.
 #[doc(hidden)]
