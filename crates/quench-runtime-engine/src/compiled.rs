@@ -115,13 +115,9 @@ pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
 pub mod osr_compile; pub(crate) mod osr_lane; pub(crate) mod base_region; pub(crate) mod base_body; pub(crate) use base_body::image_body; pub(crate) mod base_rows; pub(crate) mod stencil_run; use stencil_run::Crossing;
-pub(crate) use osr_compile::{CallCode, OsrCompile, PendingOsrRegion, RegionCalls};
+pub(crate) use osr_compile::{CallCode, OsrCompile, PendingOsrRegion};
 pub(crate) use quench_runtime::vm::engine_types::OwnedCallRecord;
-#[cfg(feature = "jit")]
-pub(crate) use lane_compile::FactTables;
-pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
-pub(crate) use lane_region::{inlines_in_loop_call, native_method_call};
 use quench_runtime::typed_ir;
 
 #[path = "compiled/facts.rs"]
@@ -287,8 +283,7 @@ pub(crate) mod fault_handler;
 #[cfg(unix)]
 pub use fault_handler::NativeFaultHandler;
 pub(crate) use osr_loop::{
-    CALLEE_CAPTURE, THIS_CAPTURE,
-    FieldReceiver, FieldUse, CalleeSource, InlineCallee, InlineFrame, InlineGuard, LoopEntry, LoopRegion,
+    FieldReceiver, FieldUse, CalleeSource, InlineCallee, LoopEntry, LoopRegion,
     MethodCalls, RegionAnalysisFailure, RegionRejection,
 };
 
@@ -2054,7 +2049,7 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
     table_slot: u64,
     index: u64,
     signature_index: u64,
-    _site: u64,
+    site: u64,
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
@@ -7759,7 +7754,7 @@ impl Vm {
                 full_plan,
                 reference_site_ids: &reference_site_ids[index],
                 admitted,
-                tier: WasmOptimizing { analysis: &analysis, isa: &isa, guarded, fixed_base, diagnostics_enabled },
+                tier: WasmOptimizing { analysis: &analysis, isa: &*isa, guarded, fixed_base, diagnostics_enabled },
             }
             .specialize(&code);
             if diagnostics_enabled {
@@ -7775,7 +7770,7 @@ impl Vm {
             let Ok(WasmResidual::Compiled(built, entry)) = built else { return None };
             Some((index, built, entry))
         });
-        let mut bodies = compile_built_functions(&isa, count, self.memory_policy(), build)?;
+        let mut bodies = compile_built_functions(&*isa, count, self.memory_policy(), build)?;
         for index in 0..count {
             if plans[index].is_none() {
                 continue;
