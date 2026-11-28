@@ -209,7 +209,7 @@ pub(in super::super) fn returning_kind(instruction: WideInstruction) -> Option<u
         return None;
     }
     let traits = instruction.op().traits();
-    if traits.has(Traits::RETURNING_FIELD) { Some(RETURNING_FIELD) }
+    if quench_runtime::compile::body_forms::returning_field(instruction) { Some(RETURNING_FIELD) }
     else if traits.has(Traits::RETURNING_UNARY) { Some(RETURNING_UNARY) }
     else if traits.has(Traits::RETURNING_BINARY) { Some(RETURNING_BINARY) }
     else if traits.has(Traits::RETURNING_OBJECT) { Some(RETURNING_OBJECT) }

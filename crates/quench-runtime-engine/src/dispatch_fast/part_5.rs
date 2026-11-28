@@ -155,7 +155,7 @@ pub(crate) fn derive_lane_view<'live>(
     function_id: u32,
     function: &Function,
     constants: &[Value],
-    heap: quench_runtime::vm::tier_queries::HeapReads<'_>,
+    vm: &quench_runtime::vm::Vm,
     kind: quench_runtime::bytecode::ProgramKind,
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
     sites: &[quench_runtime::bytecode::FieldSite],
@@ -164,6 +164,7 @@ pub(crate) fn derive_lane_view<'live>(
     facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
     planned: Vec<quench_runtime::vm::engine_types::PlannedSite>,
 ) -> LaneView {
+    let heap = vm.heap_reads();
     // The receiver fact picks the trusted forms of the rows that read `this` (`receiver_trusted`, `trust_this_rows`).
     let this_trusted = receiver_trusted(facts, function_id);
     // Boxed before the records name it: a planned record's `mode` points at its site, which the view keeps in place.
@@ -215,6 +216,12 @@ pub(crate) fn derive_lane_view<'live>(
                 binds_memory
                     || memory_register.is_none_or(|register| !writes_in_lane(instruction, register))
             };
+            // The native kind the solve proves of this element access's base (`element_view`), where it names one: the
+            // record's immediate holds the kind's index and its row is that kind's typed row (`element_typed_row`).
+            let typed_element = facts
+                .and_then(|facts| facts.function_facts(function_id).element_view(pc as u32))
+                .and_then(quench_runtime::staged::typed_elements::native_kind_index)
+                .filter(|_| quench_runtime::staged::element_read_family(op) || quench_runtime::staged::element_write_family(op));
             let operand = operand_in_lane(instruction, pc, constants)
                 .filter(|_| {
                     keeps_view && fields_fit_in_lane(instruction, function) && call_fits_in_lane(instruction)
@@ -308,10 +315,22 @@ pub(crate) fn derive_lane_view<'live>(
                 Some(LaneHandler { handler: derived_frames::super_construct_in_frame as Handler, produces: false })
             } else if let Some(kind) = returning_kind(instruction) {
                 Some(LaneHandler { handler: returning_handler(kind), produces: false })
+            } else if let Some(index) = typed_element.filter(|_| acc == ACC_NONE) {
+                Some(LaneHandler {
+                    handler: element_typed_row(quench_runtime::staged::element_read_family(op), index),
+                    produces: false,
+                })
             } else if let Some(handler) = wasm.then(|| wasm_lane_handler(instruction)).flatten() {
                 handler
             } else {
-                handler_in_lane(backward_jump, acc, op as usize)
+                // The installed row of the opcode and accumulator; where that is the first-run field read, the load
+                // chooses its row from the atom and base instead (`named_read_row`), keeping the row's `produces`.
+                handler_in_lane(backward_jump, acc, op as usize).map(|row| {
+                    match (row.handler as usize == row_get_field_first as Handler as usize).then(|| named_read_row(vm, instruction)).flatten() {
+                        Some(handler) => LaneHandler { handler, ..row },
+                        None => row,
+                    }
+                })
             });
             // A generated row reads its record's `a` as its result register (`LaneFields::wide`);
             // a record whose `a` carries result flags (a numeric local target) runs the general
@@ -348,10 +367,14 @@ pub(crate) fn derive_lane_view<'live>(
             accumulator_registers.push(
                 carried.filter(|_| selected.is_some() && acc != ACC_NONE).unwrap_or(NO_ACCUMULATOR),
             );
+            // The kind's index goes to the immediate only where the typed row was the one chosen; any other row keeps
+            // the record's own immediate (a store's strictness among them).
+            let typed_element = typed_element.filter(|&index| selected.is_some_and(|selected| selected.handler as usize
+                == element_typed_row(quench_runtime::staged::element_read_family(op), index) as usize));
             let handler = selected.map_or(exit_lane as Handler, |selected| selected.handler) as *const ();
             LaneInstruction {
                 handler,
-                operand: operand.unwrap_or(LaneOperand { imm: 0 }),
+                operand: typed_element.map(|index| LaneOperand { imm: index }).or(operand).unwrap_or(LaneOperand { imm: 0 }),
                 a: instruction.a(),
                 b: instruction.b(),
                 // A kept argument read finds the values after the function's registers, whose
@@ -500,6 +523,7 @@ pub(crate) fn derive_lane_view<'live>(
     if !wasm {
         specialize_plain_operators(&decoded, constants, &mut records, false, &|_, _| quench_runtime::typed_ir::Type::ANY);
         specialize_register_operands(&mut records);
+        specialize_boolean_flags(&mut records);
     }
     let mut entries = vec![0u64; exits.len().div_ceil(u64::BITS as usize)];
     for (pc, (&exit, reads)) in exits.iter().zip(&reads_accumulator).enumerate() {
@@ -1377,6 +1401,48 @@ pub(super) fn specialize_captures(records: &mut [LaneInstruction]) {
         };
         records[pc].handler = handler as *const ();
     }
+}
+
+/// Gives each `IncDec` record its row at the flag its immediate names (`FLAG_SET`, else `FLAG_CLEAR`), which is static
+/// (`lane_frame::flag_row`). Runs last, past the fusion and accumulator passes, which find the plain rows.
+fn specialize_boolean_flags(records: &mut [LaneInstruction]) {
+    for record in records.iter_mut() {
+        if let Some(row) = lane_frame::flag_row::<{ quench_runtime::staged::INC_DEC_ROW }>(record.handler, record.imm() != 0) {
+            record.handler = row as *const ();
+        }
+    }
+}
+
+/// The first-run row of a `GetField` whose base is no local slot, chosen at load from its atom and base. A private
+/// name reads through its private row (`Vm::is_private_name`: the atom's text decides it). A `length` read takes the
+/// array-length row for a register base, else the general read (`Vm::reads_function_info`: the VM's fixed atoms decide
+/// it). Any other read takes the own-field row, whose misses reach the general read. `None` for a local base, which
+/// `row_get_field_first` reads, and for any other opcode.
+fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction) -> Option<Handler> {
+    let base = instruction.b();
+    let atom = instruction.imm();
+    if !quench_runtime::staged::field_read_family(instruction.op()) || quench_runtime::bytecode::FieldBase(base).local_index().is_some() {
+        return None;
+    }
+    if vm.is_private_name(atom) && base != quench_runtime::bytecode::FieldBase::NESTED {
+        // The private field row of the base; a local base reads through the general private read.
+        return Some(single_base_handler(base,
+            generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS),
+            generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER),
+            protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>()));
+    }
+    if vm.reads_function_info(atom) && atom == vm.length_atom {
+        // A register's `length` is most often an array's, which no function information can answer.
+        return Some(if quench_runtime::bytecode::FieldBase(base).register_index().is_some() && base != quench_runtime::bytecode::FieldBase::NESTED {
+            generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE)
+        } else {
+            general_handler(base)
+        });
+    }
+    // The generated own read of the form of no particular hint, which binds the lane's object records on its first
+    // miss where they are not yet bound.
+    let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
+    Some(single_base_handler(base, this, register, row_get_field_miss))
 }
 
 /// Gives each plain two-operand arithmetic record whose operands are both registers its row at

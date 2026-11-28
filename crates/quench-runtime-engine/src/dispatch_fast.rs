@@ -2506,11 +2506,6 @@ script_handler! {
         };
         let vm = unsafe { vm(cx) };
         let key = vm.canonical_index_key(key);
-        // A register-operand read (the element row's form) that found a typed element switches to
-        // the typed row of its kind (`row_typed_element`), so the next read makes no protocol miss.
-        let registers = i.a <= quench_runtime::bytecode::REGISTER_MASK
-            && i.b <= quench_runtime::bytecode::REGISTER_MASK
-            && i.c <= quench_runtime::bytecode::REGISTER_MASK;
         let Some(value) = vm
             .dense_array_element(base, key)
             // An array's hole (`new Array(n)` read where nothing was written): the typed and string
@@ -2518,7 +2513,7 @@ script_handler! {
             .or_else(|| vm.array_hole_element(base, key))
             // A BigInt kind's element has no typed row, so its record misses here each read: asked first.
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::bigint_typed_element))
-            .or_else(|| if registers { row_typed_element(ip, vm, base, key) } else { vm.plain_typed_element(base, key) })
+            .or_else(|| row_typed_element(vm, base, key))
             .or_else(|| allocated_element_in_lane(vm, base, key, Vm::string_element))
             .or_else(|| vm.absent_array_element(base, key))
             .or_else(|| vm.plain_keyed_get(base, key))
@@ -2751,10 +2746,9 @@ const FIELD_LEAF_READ: u16 = {
 };
 
 /// The site facts of a keyed access of a typed array's element, one per native kind
-/// (`typed_elements::native_kind_at`; `requicken_typed`): the row proves the array's view for
+/// (`typed_elements::native_kind_at`; `element_typed_row`, chosen at load): the row proves the array's view for
 /// the kind its site fixes (`LaneFrame::kept_view`) and reads or stores the element inline with
-/// no dispatch on the kind; a miss takes the host path (`row_index_read_miss`, `row_index_write`),
-/// which records the kind again.
+/// no dispatch on the kind; a miss takes the host path (`row_index_read_miss`, `row_index_write`).
 const TYPED_KIND_SITES: [u8; quench_runtime::staged::typed_elements::NATIVE_KINDS] = {
     const FORMS: [usize; quench_runtime::staged::typed_elements::NATIVE_KINDS] = [26, 27, 28, 29, 51, 52, 53, 54, 55];
     let mut sites = [0; quench_runtime::staged::typed_elements::NATIVE_KINDS];
@@ -3144,52 +3138,15 @@ script_handler! {
 }
 
 script_handler! {
-    /// A `GetField`'s first run: a read of `name` or `length` can enter prototype lookup
-    /// mode (`Vm::reads_function_info`), which only `lane_get_field`'s general probe
-    /// prepares, so such a site keeps it; any other takes the own-field row (`own_formed_handler`).
+    /// A `GetField` of a local slot's first run: the local field row its site's entries name, else the
+    /// general read. A base that is no local slot takes its row at load (`named_read_row`), so this row is
+    /// installed for local bases only.
     #[inline(never)]
     fn row_get_field_first<>(cx, r, ip, i, view) {
-        if quench_runtime::bytecode::FieldBase(i.b).local_index().is_some() {
-            if let Some(handler) = local_field_handler(cx, i) {
-                requicken(ip, handler);
-            }
-            sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
-        }
-        let vm = unsafe { vm(cx) };
-        if vm.is_private_name(i.imm()) && i.b != quench_runtime::bytecode::FieldBase::NESTED {
-            // The private field row of the base; a local base reads through the general private read.
-            let private: Handler = single_base_handler(i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, PRIVATE_FIELD_REGISTER),
-                protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::PRIVATE | protocol_misses::private::GET_PRIVATE_FIELD as u16 }>());
-            requicken(ip, private);
-            sibling!(private, r, ip, Carried::script_in(cx, view))
-        }
-        // `name` reads take the own-field handlers: an own hit needs the receiver's exact shape
-        // to hold `name` as a data slot the general read recorded, which a function's unprepared
-        // `name` never is (it is no slot until `prepare_function_info_prototypes` makes it one),
-        // and every miss still reaches the general read, which prepares it. `user.name` then
-        // costs an own read, not the general probe.
-        if vm.reads_function_info(i.imm()) && i.imm() == vm.length_atom {
-            // A register's `length` is most often an array's, which no function information
-            // can answer.
-            let handler: Handler = if i.imm() == vm.length_atom
-                && quench_runtime::bytecode::FieldBase(i.b).register_index().is_some()
-                && i.b != quench_runtime::bytecode::FieldBase::NESTED
-            {
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, ARRAY_LENGTH_SITE)
-            } else {
-                general_handler(i.b)
-            };
+        if let Some(handler) = local_field_handler(cx, i) {
             requicken(ip, handler);
-            sibling!(handler, r, ip, Carried::script_in(cx, view))
         }
-        // The generated own read of the form of no particular hint, which binds the lane's
-        // object records on its first miss where they are not yet bound.
-        let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
-        let own = single_base_handler(i.b, this, register, row_get_field_miss);
-        requicken(ip, own);
-        sibling!(own, r, ip, Carried::script_in(cx, view))
+        sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -3746,7 +3703,7 @@ script_handler! {
 
 script_handler! {
     /// `GetField` of a private name (`Vm::is_private_name`) from a register or `this`, which
-    /// no field cache records (`row_get_field_first`): the object's private field under
+    /// no field cache records (`named_read_row`): the object's private field under
     /// the name's brand at this record (`private_brand_in_lane`). Any other read, a private
     /// method's or accessor's included, takes `lane_get_field`.
     #[inline(never)]
@@ -3899,7 +3856,7 @@ script_handler! {
 
 
 /// The strict operators `lane_jump_strict_constant_false` decides.
-const STRICT_INEQUALITY_OPERATOR: u32 = oxc_ast::ast::BinaryOperator::StrictInequality as u32;
+use quench_runtime::compile::body_forms::STRICT_INEQUALITY_OPERATOR;
 
 
 
@@ -4998,7 +4955,7 @@ impl Vm {
                 let facts = self.programs.aot_facts(id);
                 let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(function, code, constants, self.heap_reads(), kind, live, sites, crate::compiled::admission::record_plan(false), false,
+                    derive_lane_view(function, code, constants, &*self, kind, live, sites, crate::compiled::admission::record_plan(false), false,
                         facts.as_deref(), planned)
                 });
                 let Some((fresh, settled)) = plan else { continue };
@@ -7123,11 +7080,7 @@ use quench_runtime::vm::engine_types::MemoLeaf;
 /// The memo shapes `script_call_memo_miss` takes as its parameter: a leaf's step
 /// (`MemoLeaf::shape`), with `MEMO_FORWARD` set for a leaf a forwarding body reaches
 /// (`MemoRead::Forward`), so a site's handler makes its memo's steps with no dispatch on them.
-const MEMO_FIELD: u8 = 0;
-const MEMO_ELEMENT: u8 = 1;
-const MEMO_LENGTH: u8 = 2;
-const MEMO_NESTED: u8 = 3;
-const MEMO_FORWARD: u8 = 4;
+use quench_runtime::compile::body_forms::{MEMO_ELEMENT, MEMO_FIELD, MEMO_FORWARD, MEMO_LENGTH, MEMO_NESTED};
 
 #[quench_macros::ext(MemoLeafOps1)]
 impl MemoLeaf {
