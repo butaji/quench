@@ -230,10 +230,10 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: quench_runtime::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
 
-    /// The heap's array record table and collection epoch, where the frame reads live records. The engine's
-    /// frame offers none, so a row that needs the table takes its call-out (as `places.rs` `heap_records` does in bjit).
+    /// The heap's array record table, where the frame reads live array records. The engine's frame offers
+    /// none, so a row that needs the table takes its call-out (as `places.rs` `heap_records` does in bjit).
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value)> { None }
+    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<ir::Value> { None }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {

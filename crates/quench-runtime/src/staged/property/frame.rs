@@ -18,10 +18,6 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn value_fact(&self, _register: Register) -> Type { Type::ANY }
 
-    /// The base of the object record table, which prototype reads and stores address.
-    #[inline(always)]
-    fn object_records(&mut self, _stage: &mut S) -> Option<S::Word> { None }
-
     /// The bound `this` a field access names; a frame whose entry proved it bound answers it
     /// without the test. An unbound `this` leaves at `miss`.
     #[inline(always)]
@@ -159,31 +155,12 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn field_store_host(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word, _miss: S::Miss) -> Option<()> { None }
 
-    /// The store of `value` to `atom` of `object` through the record's own hint `(id, slot)`, in a
-    /// tracked store (`narrow` false) or a narrow one (`narrow`) (`StorePlan::Hinted`); `None`
-    /// where the VM declines, which leaves to the plan's join.
-    #[inline(always)]
-    fn field_store_hinted(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word,
-        _hint: (u32, u16), _narrow: bool) -> Option<()> { None }
-
-    /// The store of `value` to `atom` of `object` through the record's own hint, then the site's
-    /// polymorphic entries, then the proved add (`StorePlan::Polymorphic`); a refusal leaves at the
-    /// miss edge.
-    #[inline(always)]
-    fn field_store_polymorphic(&mut self, _stage: &mut S, _object: S::Word, _atom: u32, _site: u16, _value: S::Word,
-        _hint: (u32, u16)) -> Option<()> { None }
     /// The VM's Math call of `callee` on the first `count` of `arguments` (`CallOut`'s Math
     /// function of Numbers, `number::math_inline_call`), which runs no guest code: the value, or
     /// `None` where the call is not one the frame computes in place. The callee's identity is
     /// the VM's, read from the function record, so no row names the native.
     #[inline(always)]
     fn math_call(&mut self, _stage: &mut S, _callee: S::Word, _arguments: [S::Word; 2], _count: usize) -> Option<S::Word> { None }
-
-    /// The VM's own-field store of `value` to `atom` on `this` through `site`, the store a read
-    /// that stores its value to `this` makes after the read (`primary_own_field_store_hit`
-    /// without widening); `None` leaves the store to the general path.
-    #[inline(always)]
-    fn sink_store(&mut self, _stage: &mut S, _atom: u32, _site: u16, _value: S::Word) -> Option<()> { None }
 
     /// The VM's own-field store hit of `value`, of type `fact`, through the slot the entry bound
     /// for `site`, which a frame that bound one stores into inline first (a value its writes

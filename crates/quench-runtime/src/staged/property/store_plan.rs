@@ -100,13 +100,6 @@ pub enum StorePlan<'a> {
     Host,
     /// The VM's store through the slot the entry bound for the site.
     Bound,
-    /// A store the record's own hint (`id`, `slot`) proves for a tracked or narrow store
-    /// (`narrow`), which `PropertyFrame::field_store_hinted` makes in place; a refusal leaves to
-    /// `join` (the VM's own-field store).
-    Hinted { id: u32, slot: u16, narrow: bool, join: StoreJoin },
-    /// A store the record's own hint, the site's polymorphic entries or the proved add completes
-    /// (`PropertyFrame::field_store_polymorphic`); a refusal leaves at the miss edge.
-    Polymorphic { id: u32, slot: u16 },
 }
 
 impl<'a> StorePlan<'a> {

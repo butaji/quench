@@ -8,7 +8,7 @@ fn concrete(heap: &Heap, ops: &[IcOp], object: Value) -> Option<Value> {
     let mut stage = Concrete::over(heap);
     let record = heap.object(object)?.record_only()? as *const Object as u64;
     // The object record table is gone (S7f): no table base reaches the ops.
-    run(&mut stage, ops, Reached::bare(record), None, ()).map(Value::from_bits)
+    run(&mut stage, ops, Reached::bare(record), ()).map(Value::from_bits)
 }
 
 /// An array of `prototype` whose named properties are `values`, in slots from 1. An ordinary object is a class
@@ -63,7 +63,7 @@ fn site_values_change_holes_not_the_trace() {
         let record = trace.constant(0);
         let at = Reached { record, ..at };
         let ops = [IcOp::GuardShape(shape), IcOp::LoadSlot { slot, form: Form::Either, storage_len: usize::from(slot) + 1, rep: Representation::Tagged }];
-        run(&mut trace, &ops, at, None, ()).expect("a load ends the read");
+        run(&mut trace, &ops, at, ()).expect("a load ends the read");
         trace
     };
     let (first, second) = (read(5, 1), read(6, 0));

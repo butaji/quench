@@ -123,11 +123,10 @@ pub trait Frame<S: Stage> {
     /// no counter.
     fn count_edge(&mut self, _stage: &mut S) -> Option<()> { None }
 
-    /// The heap's array record table and its collection epoch, where the frame reads
-    /// live records (the interpreter's lane); `None` where it does not, leaving a row that needs
-    /// them to its call-out.
+    /// The heap's array record table, where the frame reads live array records; `None` where it does
+    /// not, leaving a row that needs it to its call-out.
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut S) -> Option<(S::Word, S::Word)> { None }
+    fn heap_records(&mut self, _stage: &mut S) -> Option<S::Word> { None }
 
     /// The element store's host helper; `None` where the frame has no helper table.
     #[inline(always)]

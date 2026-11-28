@@ -3174,15 +3174,13 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
-    #[cfg(feature = "profile-native-ops")]
-    let storage = quench_runtime::vm::native_op_profile::StoreStorage::NonRecord;
     // Only the primary entry's hit proves its slot's representation (`general_store`). A site past one shape
     // stores through the VM's polymorphic entries, which were record-tier and are gone (S7g): it leaves.
     let layout = quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative;
     let hit = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
     if hit { general_store::record_store_class(vm, site as u16, value); }
     #[cfg(feature = "profile-native-ops")]
-    quench_runtime::vm::native_op_profile::record_store(storage, hit);
+    quench_runtime::vm::native_op_profile::record_store(hit);
     u64::from(hit)
 }
 

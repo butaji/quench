@@ -12,7 +12,7 @@ use super::completions::return_record_in_lane;
 use quench_runtime::bytecode::{Operand, Register};
 use quench_runtime::typed_ir::Type;
 use quench_runtime::bytecode::RegisterWindow;
-use quench_runtime::staged::{Allocation, CallOut, Form, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, IntFact, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
+use quench_runtime::staged::{Allocation, CallOut, Comparison, NumberOperation, Concrete, Constant, Edge, Float64, Frame, Int32, IntFact, GlobalBinding, NumericFrame, Operation, Protocol, Step, WasmRep};
 
 /// The maker of a frame's heap values: allocates in the lane context it is given and runs no
 /// guest code; `None` leaves the instruction to the general path.
@@ -509,19 +509,9 @@ pub(crate) struct RecordPlan {
     len: usize,
     /// Whether the plan starts from the receiver's word rather than its object record (`length`).
     word: bool,
-    /// The store the record's hint proves (`StorePlan::Layout`), or the add it proves
-    /// (`StorePlan::Add`); `None` for a read's plan.
-    store: Option<quench_runtime::staged::property::StorePlan<'static>>,
-    /// A nested read `a.b.c` of two own hops (`FieldPlan::Chain`): each hop's layout, slot and the storage
-    /// form its site fixed, the first from the record's hint and the second from its site's entry, and the
-    /// base the first reads (`PropertyFrame::nested_base`). `None` for every other plan.
-    nested: Option<([(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2], quench_runtime::bytecode::FieldBase)>,
     /// A read the frame's host answers (`FieldPlan::Fixed`, `FieldPlan::FixedChain`, `FieldPlan::Length`, `FieldPlan::Private`),
     /// which addresses no record: the receiver's word is its operand. `None` for every other plan.
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
-    /// An own read of the hint's `(layout, slot)` held by value (`FieldPlan::Own`), in place of
-    /// `ops`, so the row's plan never lives in a list it addresses; `None` for every other plan.
-    own: Option<(u32, u16)>,
 }
 
 impl RecordPlan {
@@ -535,7 +525,7 @@ impl RecordPlan {
     /// `IcOp::StringLength`), no record addressed before it.
     #[inline(always)]
     pub(crate) fn length(length: quench_runtime::staged::ic::IcOp<'static>) -> Self {
-        Self { ops: [length, length], len: 1, word: true, store: None, nested: None, host: None, own: None }
+        Self { ops: [length, length], len: 1, word: true, host: None }
     }
 
     /// The nested read `a.b.c` of two proven fixed cells (`FieldPlan::FixedChain`, `trusted_read`): `first` and `second`
@@ -557,37 +547,27 @@ impl RecordPlan {
     #[inline(always)]
     pub(crate) fn host_read(plan: quench_runtime::staged::property::FieldPlan<'static>) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardShape(0);
-        Self { ops: [none, none], len: 0, word: false, store: None, nested: None, host: Some(plan), own: None }
+        Self { ops: [none, none], len: 0, word: false, host: Some(plan) }
     }
 }
 
-/// The plans a lane frame holds: the record's own read, its store, its nested chain, or its host read, or none.
+/// The plans a lane frame holds: the record's own read or its host read, or none.
 #[derive(Clone, Copy)]
 pub(crate) struct LanePlans {
     read: Option<([quench_runtime::staged::ic::IcOp<'static>; 2], usize)>,
-    store: Option<quench_runtime::staged::property::StorePlan<'static>>,
-    nested: Option<[(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2]>,
     host: Option<quench_runtime::staged::property::FieldPlan<'static>>,
-    own: Option<(u32, u16)>,
 }
 
 impl quench_runtime::staged::property::PlanSource for LanePlans {
     #[inline(always)]
     fn field_plan(&self, _lookup: quench_runtime::bytecode::FieldLookup) -> Option<quench_runtime::staged::property::FieldPlan<'_>> {
         if let Some(host) = self.host { return Some(host); }
-        use quench_runtime::staged::property::FieldPlan;
-        if let Some((layout, slot)) = self.own { return Some(FieldPlan::Own { layout, slot }); }
-        self.read.as_ref().map(|(ops, len)| FieldPlan::Ops(&ops[..*len]))
+        self.read.as_ref().map(|(ops, len)| quench_runtime::staged::property::FieldPlan::Ops(&ops[..*len]))
     }
-    /// A nested read's two own hops, as the record holds them.
+    /// A lane record holds no store plan: its stores are the VM's, which the frame's own store
+    /// callouts complete (`PropertyFrame::field_store_host`).
     #[inline(always)]
-    fn nested_hops(&self) -> Option<[(quench_runtime::staged::ic::IcOp<'static>, u16, Form); 2]> { self.nested }
-    #[inline(always)]
-    fn store_plan(&self, _site: u16) -> Option<quench_runtime::staged::property::StorePlan<'_>> {
-        // The VM's own-field hit completes what the layout store refuses (`StoreJoin::Host`), and
-        // the VM's adds complete an add record's store (`StorePlan::Add`).
-        self.store
-    }
+    fn store_plan(&self, _site: u16) -> Option<quench_runtime::staged::property::StorePlan<'_>> { None }
 }
 
 impl<const ACC: u8> LaneFrame<ACC> {
@@ -1540,10 +1520,7 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
     #[inline(always)]
     fn plans(&self) -> LanePlans {
         LanePlans {
-            read: self.plan.filter(|plan| plan.host.is_none() && plan.own.is_none()).map(|plan| (plan.ops, plan.len)),
-            own: self.plan.and_then(|plan| plan.own),
-            store: self.plan.and_then(|plan| plan.store),
-            nested: self.plan.and_then(|plan| plan.nested.map(|(hops, _)| hops)),
+            read: self.plan.filter(|plan| plan.host.is_none()).map(|plan| (plan.ops, plan.len)),
             host: self.plan.and_then(|plan| plan.host),
         }
     }

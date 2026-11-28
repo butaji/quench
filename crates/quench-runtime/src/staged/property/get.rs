@@ -45,8 +45,7 @@ pub fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, ba
     // every other plan through `read_with`, which recurses through nested plans.
     if let FieldPlan::Ops(ops) = plan {
         let at = super::read::plan_receiver(stage, frame, (owner, false), object, ops, miss)?;
-        let records = frame.object_records(stage);
-        return run_owned(stage, frame, (owner, true), object, ops, (at, records), miss);
+        return run_owned(stage, frame, (owner, true), object, ops, at, miss);
     }
     if let FieldPlan::Own { layout, slot } = plan {
         let at = frame.receiver_record(stage, owner, object, false, miss)?;
@@ -62,8 +61,7 @@ pub fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, ba
     if let FieldPlan::Hinted { ops, entry } = plan {
         return frame.entried(stage, owner, object, entry, miss, #[inline(always)] |stage, frame, miss| {
             let at = frame.receiver_record(stage, owner, object, false, miss)?;
-            let records = frame.object_records(stage);
-            run_owned(stage, frame, (owner, true), object, ops, (at, records), miss)
+            run_owned(stage, frame, (owner, true), object, ops, at, miss)
         });
     }
     if let FieldPlan::Entry(kind) = plan {

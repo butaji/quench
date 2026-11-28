@@ -304,19 +304,11 @@ fn for_in_next<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F
     }
 }
 
-/// `EnumeratedGet`: where the frame reads live records (`Frame::heap_records`), the key's listed
-/// slot under the state's memo (`iteration::for_in_keyed_get`); any other read, and a frame that
-/// reads none, take the element read the VM makes.
+/// `EnumeratedGet`: the VM's element read of `base[key]` (the call-out). The keyed fast arm over the
+/// for-in state's memo needs the collection epoch, which no frame's `heap_records` offers, so it is gone.
 #[inline(always)]
 fn enumerated_get<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, destination: Register,
-    [state, base, key]: [Register; 3]) -> Step<S::Word, F::Control> {
-    if let Some((arrays, epoch)) = frame.heap_records(stage) {
-        let (state_word, base_word, key_word) = (frame.tagged(stage, state), frame.tagged(stage, base), frame.tagged(stage, key));
-        let miss = frame.miss();
-        if let Some(value) = super::iteration::for_in_keyed_get(stage, arrays, state_word, base_word, key_word, epoch, miss) {
-            return Step::Value(value);
-        }
-    }
+    [_state, base, key]: [Register; 3]) -> Step<S::Word, F::Control> {
     calling(stage, frame, CallOut::EnumeratedGet { base, key }, Some(destination))
 }
 

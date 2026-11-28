@@ -47,7 +47,6 @@ pub(crate) use crate::words::{context_word, payload, set_context_word, word_at};
 use crate::stage::StencilStage;
 use crate::staged::{Frame, Operation, Stage, Step, op_kind, step_local_of, step_of, step_value_of, string_length};
 use crate::codes::{ADD_CLASS_ROW, IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, EMPTY_ARRAY_ROW, EMPTY_OBJECT_ROW, LAST_INT_PIN, MEMINT, PIN, PINF, APPEND_ROW, ARRAY_ROW, CALLEE_CAPTURE_ROW, CAPTURE_IDENTITY_ROW, CAPTURE_ROW, CAPTURE_SET_ROW, CHAR_CODE_AT_ROW, CONSTANT_ROW, DECLARED_ROW, ENV_DEFINE_ROW, PROTOTYPE_ROW, CLASS_ROW, SHAPE_ROW, SHAPE_FLAT_ROW, STORES_ROW, ENV_ROW, ENV_SET_ROW, FIELD_ROW, FOR_IN_ROW, GLOBAL_READ_ROW, GLOBAL_STORE_ROW, HELD_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, IC_SET_ROW, IDENTITY_ROW, INDEX_ROW, KEY_ROW, LENGTH_ROW, LEXICAL_READ_ROW, LEXICAL_WRITE_ROW, LIVE_ROW, LOAD_CHECKED_ROW, LOAD_LOCAL_ROW, MEM, OBJECT_ROW, PARSE_INT_ROW, REALM_ROW, SITE_ROW, SITE_STORE_ROW, STAGED_FIRST, STAGED_LAST, STORE_CHECKED_ROW, STORE_LOCAL_ROW, THIS_ROW, THIS_SITE_ROW, THIS_STORE_ROW, TYPED_INDEX_LAST, TYPED_INDEX_ROW, TYPED_LENGTH_ROW, TYPED_STORE_LAST, TYPED_STORE_ROW, TYPEOF_INDEX_ROW, TYPEOF_ISNOT_ROW, TYPEOF_IS_ROW, TYPEOF_STRING_ROW};
-use crate::staged::object::Form;
 use crate::staged::{code_units, environment, parse_int};
 use crate::places_view::{ELEMENT_SITES, PlacesView, entry_dense, entry_typed, typed_kind};
 use crate::{environment_rows, key_rows, name_rows, site_rows, staged_rows};
@@ -137,31 +136,13 @@ fn declared_row(s: S) -> Out {
     guard_row::<{ op_kind::GUARD_DECLARED }>(s, guard)
 }
 
-/// `GuardPrototype`: continues where the object at the frame offset in hole 0 is a direct object of the exact shape in
-/// hole 1's low half whose prototype link is its high half (`HELD_LINK_AT`), its record read from the object record table
-/// (`guard::prototype`); any other object leaves with nothing written.
-#[inline(always)]
-// S7f DESIGN: the object record table is gone, so a direct object's prototype guard declines (exit, nothing
-// written) until the prototype walk is made on the class cell.
-fn prototype_row(s: S) -> Out {
-    Out::Exit(s)
-}
-
 /// `GuardClass`: continues where the object at the frame offset in hole 0 is a direct object whose live class cell's class
-/// is hole 1 (`guard::class`); any other object leaves with nothing written.
+/// is hole 1 (`guard::class`); any other object leaves with nothing written. The prototype and shape guards test the same
+/// class word: a direct object's cell holds its class, which names its shape and prototype link (`class_row` for each).
 #[inline(always)]
 fn class_row(s: S) -> Out {
     let guard = Operation::GuardClass { source: word_at(s.frame, hole::<0>()), class: hole64::<HOLE_A>() as u32 };
     guard_row::<{ op_kind::GUARD_CLASS }>(s, guard)
-}
-
-/// `GuardShape`: continues where the object at the frame offset in hole 0 is a direct object of the exact shape in hole 1
-/// (its record read from the object record table) in storage `form`; any other object leaves with nothing written.
-#[inline(always)]
-// S7f DESIGN: the object record table is gone, so a direct object's shape guard declines (exit, nothing written)
-// until the shape compare is made on the class cell.
-fn shape_row(s: S, _form: Form) -> Out {
-    Out::Exit(s)
 }
 
 /// `GuardStores`: continues where the run's dispatch says its stores specialized (`JS_STEP_STORES_SPECIALIZED`), else leaves
@@ -472,14 +453,8 @@ pub(crate) fn run<const KIND: u8, const ENTRY: bool, const D: u8, const A: u8, c
         declared_row(s)
     } else if const { KIND == CAPTURE_IDENTITY_ROW } {
         capture_identity_row(s)
-    } else if const { KIND == PROTOTYPE_ROW } {
-        prototype_row(s)
-    } else if const { KIND == CLASS_ROW } {
+    } else if const { KIND == CLASS_ROW || KIND == PROTOTYPE_ROW || KIND == SHAPE_ROW || KIND == SHAPE_FLAT_ROW } {
         class_row(s)
-    } else if const { KIND == SHAPE_ROW } {
-        shape_row(s, Form::Either)
-    } else if const { KIND == SHAPE_FLAT_ROW } {
-        shape_row(s, Form::Arena)
     } else if const { KIND == STORES_ROW } {
         stores_row(s)
     } else if const { KIND == CHAR_CODE_AT_ROW } {

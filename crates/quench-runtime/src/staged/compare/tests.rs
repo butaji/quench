@@ -19,16 +19,14 @@ struct Probe {
     types: Vec<Option<Type>>,
     refined: Vec<(Register, Type, Edge)>,
     html_dda: bool,
-    /// The object record table the frame walks prototypes in, and the constructor `prototype` link
-    /// it holds as a Stable fact.
-    records: Option<u64>,
+    /// The constructor `prototype` link the frame holds as a Stable fact.
     prototype: Option<u64>,
 }
 
 impl Probe {
     fn of(values: &[Value]) -> Self {
         Self { registers: values.iter().map(|value| value.to_bits()).collect(), calls: Vec::new(), answer: None,
-            types: Vec::new(), refined: Vec::new(), html_dda: true, records: None, prototype: None }
+            types: Vec::new(), refined: Vec::new(), html_dda: true, prototype: None }
     }
 }
 
@@ -66,7 +64,6 @@ impl crate::staged::ElementFrame<Concrete> for Probe {}
 impl PropertyFrame<Concrete> for Probe {
     type Plans = NoPlans;
     fn plans(&self) -> NoPlans { NoPlans }
-    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { self.records }
 }
 
 impl NumericFrame<Concrete> for Probe {
