@@ -115,6 +115,11 @@ pub const REGION_MASK: u32 = (1 << REGION_SHIFT) - 1;
 /// The regions, one per capacity class `0..CAPACITY_CLASSES`.
 pub const CAPACITY_CLASSES: usize = 6;
 
+/// The capacity-region bits of a class word (`heap::layouts::intern_class`): bits 22 to 24 of its auxiliary word,
+/// above the shape field (`value_vec::SHAPE_MASK`). A record's auxiliary word has none.
+pub const CLASS_REGION_SHIFT: u32 = 22;
+pub const CLASS_REGION_MASK: u32 = 0b111 << CLASS_REGION_SHIFT;
+
 /// The fields a cell of region `region` holds: its `2^region` granules less the header. A cell's capacity class is
 /// its region, so no word records it.
 pub const fn region_field_capacity(region: u32) -> usize {

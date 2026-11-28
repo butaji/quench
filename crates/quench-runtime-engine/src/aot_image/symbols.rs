@@ -508,7 +508,8 @@ pub(crate) fn guarded_layout(image: &AotImage, vm: &mut Vm, key: u32) -> Option<
     let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
     if recipe.fields.len() <= quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.inline_property_count { return None; }
     let prototype = heap_value(image, vm, recipe.prototype?)?;
-    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape))
+    let region = quench_runtime::tier_surface::cell_region_for(recipe.fields.len())?;
+    Some(quench_runtime::tier_surface::ProtoLink::of(prototype).class(shape, region))
 }
 
 /// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its

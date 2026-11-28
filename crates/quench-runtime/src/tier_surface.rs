@@ -19,6 +19,11 @@ pub use crate::heap::{
     RootId, StackData, TableTarget, TableWords, TypedArrayKind, WasmGcRecord, WeakHandle,
 };
 
+/// The class cell region of `fields` fields (`heap::cell_region_for`), which a class's id names (`ProtoLink::class`).
+pub fn cell_region_for(fields: usize) -> Option<u32> {
+    crate::heap::cell_region_for(fields)
+}
+
 /// Environment storage, which a lane addresses in place.
 pub use crate::heap::{
     absent_environment_storage, EnvironmentRecord, EnvironmentScope, EnvironmentScopeRef,

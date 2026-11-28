@@ -63,13 +63,15 @@ impl Object {
 
     /// Makes `class` (a class id of `heap::layouts`) this object's class: its header word, with the
     /// prototype link, shape and flags the class holds. The storage form stays the object's own
-    /// (`STORAGE_FORM`), which a class word does not record. This is the one writer of a record's
+    /// (`STORAGE_FORM`), which a class word does not record, and the class's capacity region (`CLASS_REGION_MASK`)
+    /// is not the record's: a record's auxiliary word has none. This is the one writer of a record's
     /// class id outside construction.
     #[inline(always)]
     pub(crate) fn set_class(&mut self, class: u32) {
         let word = super::layouts::word(class);
         let storage = self.aux() & crate::value_vec::STORAGE_FORM;
-        self.set_header((word >> u32::BITS) as u32, (word as u32 & !crate::value_vec::STORAGE_FORM) | storage);
+        let class_bits = !(crate::value_vec::STORAGE_FORM | super::layouts::CLASS_REGION_MASK);
+        self.set_header((word >> u32::BITS) as u32, (word as u32 & class_bits) | storage);
     }
 
     #[inline(always)]

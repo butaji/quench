@@ -26,15 +26,17 @@ pub fn decode_staged_word(word: u64) -> Value {
 }
 
 // The storage-form and integrity bits are the shared object encoding (`staged::object_encoding`).
-pub use crate::staged::object_encoding::{DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
+pub use crate::staged::object_encoding::{CLASS_REGION_SHIFT, DICTIONARY_STORAGE, EXOTIC_ACCESS, EXTRAS_FORM, FROZEN, INLINE_FORM, NARROW_FORM, NON_EXTENSIBLE, START_MASK};
 pub const STORAGE_FORM: u32 = INLINE_FORM | EXTRAS_FORM | NARROW_FORM;
 pub(crate) use aux_form::CONSTANT_FORM;
-pub(crate) const SHAPE_MASK: u32 = !(DICTIONARY_STORAGE | EXOTIC_ACCESS | STORAGE_FORM | CONSTANT_FORM | SHAPE_LIMIT_BITS);
-/// The auxiliary bits above `CONSTANT_FORM` no storage form uses (26): no shape reaches them.
-const SHAPE_LIMIT_BITS: u32 = 1 << 26;
-/// Shapes are numbered below `CONSTANT_FORM`.
-pub(crate) const SHAPE_LIMIT: u32 = CONSTANT_FORM - 1;
+/// The auxiliary bits a shape occupies: below the class region bits (`CLASS_REGION_SHIFT`), which a class word uses
+/// for its cell's capacity region and no shape or record word sets. This narrows the shape field from 25 bits to 22,
+/// so `SHAPE_LIMIT` is 4 M shapes less one (the last stays unused, see `set_auxiliary`).
+pub(crate) const SHAPE_MASK: u32 = (1 << CLASS_REGION_SHIFT) - 1;
+/// Shapes are numbered below `SHAPE_LIMIT`, which the all-ones sentinel bounds.
+pub(crate) const SHAPE_LIMIT: u32 = SHAPE_MASK;
 const _: () = assert!(CONSTANT_FORM & (STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && SHAPE_MASK == SHAPE_LIMIT);
+const _: () = assert!(SHAPE_MASK & (CONSTANT_FORM | STORAGE_FORM | DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0);
 const _: () = assert!(STORAGE_FORM & (DICTIONARY_STORAGE | EXOTIC_ACCESS) == 0 && INLINE_FORM & EXTRAS_FORM == 0);
 /// The words a narrow run of `len` values fills.
 #[inline(always)] const fn narrow_words(len: usize) -> usize {

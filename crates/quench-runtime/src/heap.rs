@@ -1727,17 +1727,13 @@ impl Heap {
         }
     }
 
-    /// `object` as a class cell (R4-C2): its class is its shape and prototype link with no flags, its
-    /// fields its values, its slack `Value::DELETED`, in the smallest region holding the larger of its
-    /// fields and `capacity`. Its arena storage moves into the cell, so that storage is released.
-    /// `Err(object)`, unchanged, where the object has a record's form (extras, an array, a class flag,
-    /// more fields than a cell holds) or its region is full.
+    /// `object` as a class cell (R4-C2): its class is its shape, prototype link and flags (class bits: a frozen,
+    /// sealed or constant object is a cell too, its flags in its class word, no departure), its fields its values,
+    /// its slack `Value::DELETED`, in the smallest region holding the larger of its fields and `capacity`. Its
+    /// arena storage moves into the cell, so that storage is released. `Err(object)`, unchanged, where the object
+    /// has a record's form (extras, an array, more fields than a cell holds) or its region is full.
     fn insert_object_as_cell(&mut self, object: Object, capacity: usize) -> Result<Value, Object> {
-        if cfg!(feature = "profile-aggregate")
-            || object.is_array()
-            || object.has_extras()
-            || layouts::word(object.layout_id()) & layouts::CLASS_FLAG_MASK != 0
-        {
+        if cfg!(feature = "profile-aggregate") || object.is_array() || object.has_extras() {
             return Err(object);
         }
         let shape = object.shape();
@@ -1749,7 +1745,8 @@ impl Heap {
         for (slot, field) in fields.iter_mut().enumerate().take(length) {
             *field = self.property_get(&object, slot).unwrap_or(Value::UNDEFINED);
         }
-        let class = layouts::intern_class(shape, object.proto_link(), 0);
+        let flags = layouts::word(object.layout_id()) & layouts::CLASS_FLAG_MASK;
+        let class = layouts::intern_class(shape, object.proto_link(), flags, region);
         let Some(granule) = self.class_space.claim_cell(region, class, &fields[..length], &mut self.allocated) else {
             return Err(object);
         };
@@ -2135,7 +2132,7 @@ impl Heap {
             return None;
         }
         let region = cell_region_for(values.len().max(capacity))?;
-        let class = ProtoLink::of(proto).class(shape);
+        let class = ProtoLink::of(proto).class(shape, region);
         self.mark_prototype(proto);
         self.properties.note_shape_values(shape, values);
         self.rewrite_widened_numbers();
@@ -2145,7 +2142,7 @@ impl Heap {
     }
 
     /// The class cell of a fixed class's instance (R4-F, decision 4.2): claimed from the region of `values.len()`,
-    /// its header the class `intern_class(shape, link, 0)` and its fields `values` in slot order, `Value::DELETED`
+    /// its header the class `intern_class(shape, link, 0, region)` and its fields `values` in slot order, `Value::DELETED`
     /// for an absent union field. `values.len()` is the length of `shape`. No record is made: the region holds
     /// its cells in its address span, so only exhaustion of that span panics, as the record space does.
     pub(crate) fn claim_fixed_cell(&mut self, shape: u32, link: u32, values: &[Value]) -> Value {
@@ -2158,7 +2155,7 @@ impl Heap {
         let words = self.properties.stored_words(shape, values);
         let granule = self
             .class_space
-            .claim_cell(region, link.class(shape), &words, &mut self.allocated)
+            .claim_cell(region, link.class(shape, region), &words, &mut self.allocated)
             .unwrap_or_else(|| panic!("class cells exhausted: the class space holds its address range"));
         Value::direct_object(granule)
     }

@@ -29,26 +29,38 @@ impl Heap {
         (header_class(self.class_space.header(granule)) != DEPARTED_CLASS).then_some(granule)
     }
 
-    /// The header word of `value`'s class cell when it is a live class cell (`live_class_cell`): the class id, which an
-    /// inline empty object claim takes as its header (`JsStepDispatch::empty_object_class`).
+    /// The header word of `value`'s class cell when it is a live class cell (`live_class_cell`) of region 1: the class
+    /// id, which an inline empty object claim takes as its header (`JsStepDispatch::empty_object_class`). That claim
+    /// takes region 1 (`staged::bump::claim_class_cell`), so a class of another region is no answer.
     #[inline(always)]
     pub(crate) fn live_class_header(&self, value: Value) -> Option<u64> {
         let granule = self.live_class_cell(value)?;
-        Some(self.class_space.header(granule))
+        let header = self.class_space.header(granule);
+        (layouts::class_region(header_class(header)) == 1).then_some(header)
     }
 
     /// The receiver key of a field entry for `value` when it is a live class cell outside dictionary
     /// storage and not under a constant mark: its class id OR'd with `CLASS_KEY`. A class id names the
-    /// shape and the prototype link (`layouts::intern_class`), so the key fixes the cell's own slots and
-    /// its holder. A constant-marked class has no key: a store through a key (the staged store, which
-    /// writes the field without `note_cell_write`) would leave the mark standing. A cell that takes the
-    /// mark moves to another class id, so the key of its old class matches nothing. `None` for any
-    /// other value, a record, and a departed cell.
+    /// shape, the prototype link and the flags (`layouts::intern_class`), so the key fixes the cell's own
+    /// slots, its holder and its flags; a flag change is a class change, so the key of the old class
+    /// matches nothing. A frozen or non-extensible class keys: no write to it succeeds, so no store or add
+    /// entry is ever filled from it (the fill is the edge). A constant-marked class has no key: a store
+    /// through a key writes the field without `note_cell_write` and would leave the mark standing. `None`
+    /// for any other value, a record, and a departed cell.
     #[inline(always)]
     pub(crate) fn live_class_key(&self, value: Value) -> Option<u32> {
         let granule = self.live_class_cell(value)?;
         let class = header_class(self.class_space.header(granule));
         (layouts::class_flags(class) & (DICTIONARY_STORAGE as u64 | CONSTANT_FORM as u64) == 0).then_some(class | CLASS_KEY)
+    }
+
+    /// The spill slot of live class `class`, in its region's cell (`layouts::spill_from`): `None` where its shape's
+    /// fields fit the region's capacity, which is every class until a cell spills (slice S2 of the departure-free
+    /// design). The shape length is the property table's, so the answer is per class, never a global constant.
+    #[allow(dead_code)] // S2 (the spill slot) reads it.
+    #[inline(always)]
+    pub(crate) fn class_spill_from(&self, class: u32) -> Option<u32> {
+        layouts::spill_from(layouts::class_region(class), self.properties.shape_length(layouts::class_shape(class)))
     }
 
     /// The field `slot` of the live class cell `value` names (`live_class_cell`), `None` otherwise.
@@ -174,7 +186,7 @@ impl Heap {
         }
         self.class_space.delete_slack(granule, values.len());
         let class = header_class(self.class_space.header(granule));
-        let next = layouts::intern_class(shape, layouts::class_link(class), layouts::class_flags(class));
+        let next = layouts::intern_class(shape, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
         self.class_space.write_header(granule, live_header(next));
         true
     }
@@ -195,7 +207,8 @@ impl Heap {
         self.class_cell_store(granule, slot, word);
         let class = header_class(self.class_space.header(granule));
         debug_assert_eq!(layouts::class_shape(class), before, "an add's cell holds its transition's before-shape");
-        let next = layouts::intern_class(after, layouts::class_link(class), layouts::class_flags(class));
+        // The cell never moves, so its region is the one the class it leaves names.
+        let next = layouts::intern_class(after, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
         self.class_space.write_header(granule, live_header(next));
         self.set_class(before, after);
         true
