@@ -25,6 +25,8 @@ pub use quench_runtime::vm::engine_types::NativeJsProgram;
 impl NativeJsProgram {
     /// Publish `program` as one AOT image of the functions the tier policy runs in AOT mode
     /// (`tier_policy::body_tier`, u-jit over every function). The one publication entry point.
+    /// Not on the `quench aot` build path (`lower_native_js_module_for`) nor on image load (`from_linked_image`); its callers are the
+    /// test262 harness's in-process compile-and-run (`execute_after_harness`) and tests.
     pub fn publish(program: ResidualProgram) -> Result<Self, String> {
         let _admitted = crate::compiled::admission::ahead_unit();
         #[cfg(feature = "jit")]
