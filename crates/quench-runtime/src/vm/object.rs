@@ -1751,6 +1751,11 @@ impl Vm {
     /// `hinted_polymorphic_field_hit`). An entry the object does not match stays as recorded.
     #[inline(always)]
     pub fn form_hint(&self, entry: FieldCache, object: Value) -> FieldCache {
+        // A hint holds a `u16` field index (`LaneInstruction::field_hint`), which a spilled slot word does not fit: a
+        // spilled entry forms no hint, so its site keeps reading through the entry (`class_slot_address`).
+        if is_spilled_slot(entry.slot) {
+            return FieldCache::own(NO_FIELD_RECEIVER, 0);
+        }
         match self.heap.record_object_value(object) {
             Some(receiver) if entry.holder == NO_FIELD_HOLDER && receiver.exact_shape() == entry.receiver =>
                 FieldCache { receiver: receiver.hint_shape(), ..entry },
