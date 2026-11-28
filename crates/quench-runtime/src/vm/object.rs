@@ -3055,7 +3055,10 @@ impl Vm {
         atom: Atom,
         site: usize,
     ) -> Option<Value> {
-        let receiver = self.shape_property_lookup(object, atom)?.record_only()?;
+        let view = self.shape_property_lookup(object, atom)?;
+        let Some(receiver) = view.record_only() else {
+            return self.cell_field_miss_data_value(object, view.shape(), atom, site);
+        };
         let function_receiver = object.direct_object_index().is_none() && self.heap.function(object).is_some();
         if let Some((hit, _, proof)) = self.cached_inherited_field_value(site, receiver, function_receiver) {
             if let Some(proof) = proof {
@@ -3089,13 +3092,62 @@ impl Vm {
             }
             return Some(value);
         }
+        let receiver_shape = receiver.shape();
+        if let Some(value) = self.immediate_prototype_miss(object, receiver_shape, atom, site) {
+            return Some(value);
+        }
+        // The view again: the prototype read above may have recorded an entry.
+        let receiver = self.shape_property_lookup(object, atom)?.record_only()?;
+        // A shape holds every own name of an ordinary object, every named own property of a
+        // direct array (whose elements and virtual length the caller's shape lookup excludes),
+        // every own name `function_links_answer` admits of a function, and every own name of
+        // a collection, date, regexp, promise or iterator (`ordinary_builtin_object`).
+        let shape_holds_own = self.heap.ordinary_view(object).is_some()
+            || self.heap.array(object).is_some()
+            || self.heap.function(object).is_some() && self.function_links_answer(atom)
+            || self.heap.ordinary_builtin_object(object).is_some();
+        let (cache, shapes, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
+        #[cfg(feature = "profile-lane-exits")]
+        self.record_field_probe_path(site, atom, 5);
+        if self.field_cache_records(site) {
+            self.note_field_cache_write(site);
+            let depth = usize::from(cache.depth);
+            self.record_inherited_field(site, cache, &shapes[..depth]);
+        }
+        Some(value)
+    }
+
+    /// `field_miss_data_value` of a live class cell: its own data field, recorded class-keyed (the cell's
+    /// class fixes its shape, so the key is the fact the site's row reads), else its immediate prototype's
+    /// (`immediate_prototype_miss`). A deeper or accessor read is the general path's.
+    fn cell_field_miss_data_value(&mut self, object: Value, shape: u32, atom: Atom, site: usize) -> Option<Value> {
+        if let Some(slot) = self.shape_slot(shape, atom) {
+            if self.shape_may_have_accessors(shape)
+                && self.shape_slot_attributes(shape, slot).is_none_or(|attributes| attributes.accessor)
+            {
+                return None;
+            }
+            let value = self.heap.object(object).and_then(|view| self.heap.property_get_ref(view, slot))?;
+            if slot < FIELD_CACHE_SLOT_CAPACITY && let Some(key) = self.heap.live_class_key(object) {
+                self.record_field_cache(
+                    site,
+                    FieldCache { receiver: key, holder: NO_FIELD_HOLDER, slot: slot as u32, holder_cell: NO_FIELD_HOLDER_LAYOUT },
+                );
+            }
+            return Some(value);
+        }
+        self.immediate_prototype_miss(object, shape, atom, site)
+    }
+
+    /// The read of `atom` from `object`'s immediate prototype, a data field, recording the site's held entry:
+    /// class-keyed for a live cell, else keyed by both exact shapes. `None` where the prototype holds no such field.
+    fn immediate_prototype_miss(&mut self, object: Value, receiver_shape: u32, atom: Atom, site: usize) -> Option<Value> {
         if let Some((holder_shape, holder_cell, slot, value)) = self.immediate_prototype_data_field(object, atom)
             && slot < FIELD_CACHE_SLOT_CAPACITY
         {
             #[cfg(feature = "profile-lane-exits")]
             self.record_field_probe_path(site, atom, 4);
             let proto = self.heap.object(object).map(|object| object.proto());
-            let receiver_shape = receiver.shape();
             match self.heap.live_class_key(object) {
                 // A live cell is keyed by its class, which fixes its prototype link. Its held entry names
                 // the holder cell by granule, so the holder must be a live cell too; a record holder takes
@@ -3126,23 +3178,7 @@ impl Vm {
             }
             return Some(value);
         }
-        // A shape holds every own name of an ordinary object, every named own property of a
-        // direct array (whose elements and virtual length the caller's shape lookup excludes),
-        // every own name `function_links_answer` admits of a function, and every own name of
-        // a collection, date, regexp, promise or iterator (`ordinary_builtin_object`).
-        let shape_holds_own = self.heap.ordinary_view(object).is_some()
-            || self.heap.array(object).is_some()
-            || self.heap.function(object).is_some() && self.function_links_answer(atom)
-            || self.heap.ordinary_builtin_object(object).is_some();
-        let (cache, shapes, value) = self.inherited_field(receiver, shape_holds_own, atom)?;
-        #[cfg(feature = "profile-lane-exits")]
-        self.record_field_probe_path(site, atom, 5);
-        if self.field_cache_records(site) {
-            self.note_field_cache_write(site);
-            let depth = usize::from(cache.depth);
-            self.record_inherited_field(site, cache, &shapes[..depth]);
-        }
-        Some(value)
+        None
     }
 
     /// Whether `object`'s own `atom`, at `slot` of `receiver`'s shape where it has one, is an
