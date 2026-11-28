@@ -208,7 +208,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::lane_region::scalar::CompletionOps3 as _;
     pub use crate::compiled::lane_sites::CompiledLaneSitesVm as _;
     pub use crate::compiled::lane_storage::JsStepDispatchOps2 as _;
-    pub use crate::compiled::lane_unit::CallTargetOps1 as _;
     pub use crate::compiled::lane_unit::InlinedCallOps1 as _;
     pub use crate::compiled::numeric_image::NumericImageOps1 as _;
     pub use crate::compiled::object_slots::InheritedConstantOps1 as _;

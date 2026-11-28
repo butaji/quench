@@ -100,7 +100,7 @@ impl Sites<'_> {
 }
 
 /// The rows of an instruction a body makes in the scratch registers past the function's own (`scratch`): the comparison and the jump on it
-/// of an `instanceof` or `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
+/// of an `in` jump (`sites::compare_jump`). A region reads its entry record, and leaves it to `cover`.
 pub(crate) fn expanded(sites: &Sites, pc: u32, instruction: WideInstruction) -> Option<Vec<What>> {
     (sites.ending == Ending::Body && sites.scratch < quench_runtime::bytecode::REGISTER_MASK).then_some(())?;
     let rows = compare_jump(sites.known, pc, instruction, sites.scratch)?;

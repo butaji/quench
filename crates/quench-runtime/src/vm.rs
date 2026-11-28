@@ -2660,6 +2660,7 @@ impl Vm {
             }
         };
         self.realm.globals = global;
+        self.make_global_values_table();
         let state = match parked {
             Some(parked) => self.unpark_realm_fields(global, parked),
             None => {
@@ -3546,6 +3547,7 @@ impl Vm {
         self.realm.globals = self
             .heap
             .alloc_object(Self::empty_object(Value::NULL));
+        self.make_global_values_table();
         if self.main_realm.is_null() {
             self.main_realm = self.realm.globals;
         }

@@ -422,8 +422,8 @@ pub(crate) mod this_binding;
 use this_binding::ThisBinding;
 pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
 pub(crate) mod construct_plan; pub(crate) mod super_chain; use super_chain::super_construction; pub(crate) mod setters; pub(crate) mod proxy_traps; pub(crate) mod accessor_protocol; pub(crate) mod completions; use completions::*;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, field_reader, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, record_forwarded_resolution, site_class_in_lane, planned_site_in_lane, planned_quick_site_in_lane, initialize_site_in_lane, inline_receiver_site_in_lane};
-pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, construct_plan_holds, materialized_construction_in_lane};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, field_reader, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, site_class_in_lane, planned_site_in_lane, planned_quick_site_in_lane, initialize_site_in_lane, inline_receiver_site_in_lane};
+pub(crate) use construct_plan::{body_construction_in_lane, context_constructs_in_lane, construct_plan_holds, materialized_construction_in_lane};
 use accessor_protocol::AccessorCall;
 pub(crate) mod list_calls;
 pub(crate) mod loop_runs;
@@ -1352,8 +1352,6 @@ impl ScriptTargets {
 
 use quench_runtime::vm::engine_types::FUNCTION_TARGETS;
 const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
-
-use quench_runtime::vm::engine_types::ForwardedResolution;
 
 pub(crate) use quench_runtime::vm::engine_types::CONSTRUCT_PLAN_FIELDS;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
@@ -3323,17 +3321,11 @@ script_handler! {
         if let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site) {
             lane_attempt!(cx, r, attempt);
         }
-        // A loop whose body is still to come keeps its backward jump, which a loop with no body
-        // would otherwise retire before the body is planned.
-        if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) }) && site.body.borrow().pending() {
-            next!(cx, r, header, Carried::script_in(cx, view))
+        // A body refused at its compile retires the loop to its plain jump (`loop_retire_in_lane`); any
+        // other state keeps the backward jump, whose next entry asks for or polls the body.
+        if !site.body.borrow().pending() {
+            loop_retire_in_lane(cx, ip, site);
         }
-        // A loop whose calls no body inlines yet is offered a body once (`offer_body`).
-        if loop_body::offer_body(cx, r, site) {
-            next!(cx, r, header, Carried::script_in(cx, view))
-        }
-        // A loop with no body takes its plain jump from now on.
-        loop_retire_in_lane(cx, ip, site);
         next!(cx, r, header, Carried::script_in(cx, view))
     }
 }
@@ -3660,10 +3652,7 @@ impl Vm {
                         // The construction's skipped forwarding constructor becomes the frame
                         // it would have been, pending at its forwarding call, whose dead
                         // registers hold `undefined`; the method's frame runs inside it.
-                        // A native frame's is its descriptor's (`NativeFrames`), which no entry holds.
-                        // SAFETY: a native frame's callee outlives the run.
-                        let forwarder = unsafe { activation.callee.as_ref() }
-                            .map_or_else(|| payload.forwarder(), |callee| callee.forwarder)
+                        let forwarder = payload.forwarder()
                             .expect("each forwarder activation has its skipped constructor");
                         let constructor_registers = vec![
                             Value::UNDEFINED;
@@ -5556,10 +5545,7 @@ script_handler! {
         // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
         // before anything completes, which a site reaches directly once it is keeping.
         materialize_running_leaf_in_lane(cx);
-        let finished = match construct_planned_fields_in_lane(cx, r, ip, i) {
-            Some(this) => Ok(KeepingConstruction::Finished(this)),
-            None => construct_keeping_activation_in_lane(cx, r, ip, i),
-        };
+        let finished = construct_keeping_activation_in_lane(cx, r, ip, i);
         match finished {
             Ok(KeepingConstruction::Activated(registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Ok(KeepingConstruction::Finished(this)) => {

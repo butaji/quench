@@ -34,8 +34,6 @@ pub(crate) struct StableUses {
     layouts: quench_runtime::staged::HeldLayouts,
     /// Global slots whose observed type the code relied on, each once.
     slots: Vec<quench_runtime::code_dependencies::SlotDependency>,
-    /// Constructors whose `prototype` the code took as a constant for an `instanceof`.
-    instanceofs: BTreeSet<quench_runtime::code_dependencies::InstanceofFact>,
     /// The program whose root constant the code folded, if any (`StableFacts::root_program`).
     pub(crate) root_program: Option<quench_runtime::vm::program_store::ProgramId>,
     /// Loops, by header and backedge, entered only through forward edges that proved the realm
@@ -62,7 +60,7 @@ impl StableUses {
             globals: std::mem::take(&mut self.globals).into_iter().collect(), roots: std::mem::take(&mut self.roots),
             layouts: self.layouts.take(),
             slots: std::mem::take(&mut self.slots).into_iter().collect(),
-            instanceofs: std::mem::take(&mut self.instanceofs).into_iter().collect(), root_program: self.root_program.take(),
+            root_program: self.root_program.take(),
             views: self.views.take(),
             cells: std::mem::take(&mut self.cells).into_iter().collect() }
     }
@@ -140,18 +138,6 @@ fn read_invalidation_word(builder: &mut FunctionBuilder<'_>, helpers: LaneHelper
 }
 
 impl Lowering<'_, '_> {
-    /// The encoded `prototype` link of the constructor in `constructor`, where the facts type it a
-    /// known function and the VM proved its `instanceof` Stable: held from here to the block's next
-    /// helper that may change one (`hold_stable`), under a dependency on the constructor's
-    /// `prototype` slot, its shape and its `@@hasInstance` holder.
-    pub(crate) fn hold_instanceof(&mut self, state: &mut State, exit: ir::Block, constructor: Operand) -> Option<u32> {
-        let identity = state.values[usize::from(constructor.register_index()?)].value.ty.function_identity()?;
-        let fact = (self.vm.online?.instanceofs)(identity)?;
-        self.hold_stable(state, exit);
-        self.stable.instanceofs.insert(fact);
-        Some(fact.link)
-    }
-
     /// The division this lowering specializes under: online where it may take code
     /// dependencies on the VM (`VmFacts::online`), offline for code shared across VMs.
     pub(crate) fn division(&self) -> Division {

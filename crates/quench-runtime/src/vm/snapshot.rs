@@ -412,6 +412,7 @@ impl Vm {
         self.report_memory_if_enabled("snapshot_heap");
         quench_alloc::align_dump_phase();
         self.realm.globals = reader.value()?;
+        self.make_global_values_table();
         self.realm_native_proofs.forget();
         self.realm.global_lexical_declarations = Snap::unsnap(&mut reader)?;
         self.realm.global_lexical_bindings = Snap::unsnap(&mut reader)?;

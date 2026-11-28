@@ -74,7 +74,8 @@ impl Lowering<'_, '_> {
             // A fixed class's cell has no shape to guard: its class is the fact (`fixed_cells`).
             if !(online.shape_stable)(shape) || self.entry_fixed(Some(register)) { continue; }
             let exit = self.guard_exit_for(state, header as u32, ExitFact::Shape);
-            let proof = self.object_header(state, Some(register), false, exit);
+            // An ordinary object names no record a shape guard could hold (`object_header`): its loop keeps no shape.
+            let Some(proof) = self.object_header(state, Some(register), false, exit) else { continue };
             let word = self.register_word(state, register);
             headers::prove_header_shape(&mut self.builder, state, word, proof, shape, exit);
             state.values[usize::from(register)] = RegisterFact { tagged: state.values[usize::from(register)].tagged,

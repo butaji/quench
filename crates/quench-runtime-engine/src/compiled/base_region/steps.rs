@@ -79,7 +79,7 @@ pub(crate) enum Step {
     /// continues; a declined allocation leaves at the record.
     Allocate,
     /// A fast arm whose miss is the leave at the record, which the interpreter runs: an add with no
-    /// in-place step (`lowering`), an `instanceof` jump (`sites::instanceof_jump`).
+    /// in-place step (`lowering`).
     Guard(Heap),
     /// The region leaves at the record.
     Leave,

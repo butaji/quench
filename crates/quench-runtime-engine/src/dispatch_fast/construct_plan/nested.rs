@@ -33,7 +33,7 @@ fn capture_value(vm: &mut Vm, env: Value, capture: u32) -> Option<Value> {
 pub(crate) fn nested_construction(vm: &mut Vm, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
     let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
     let class = vm.ordinary_class(constructor);
-    planned_construction(vm, constructor, class, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, class, argument))
+    planned_construction(vm, constructor, class, argument)
 }
 
 /// The value `construct` gives its field, built from the constructor its capture and chain
@@ -61,8 +61,8 @@ pub(crate) fn nested_construct_in_lane(vm: &mut Vm, env: Value, construct: &Nest
 }
 
 /// The forwarded initializer's adds on `this`, which a construction completes in the lane when
-/// none runs guest code: the plan of the fields they gave it (`None` where it cannot hold one),
-/// nested constructions included, or the outer `None` where an add cannot be applied (the construction then activates).
+/// none runs guest code: `None` where an add cannot be applied (the construction then activates).
+/// A fixed class's receiver takes its stores in its union slots.
 pub(crate) fn finish_forwarded_in_lane(
     vm: &mut Vm,
     code: &ResidualProgram,
@@ -72,48 +72,31 @@ pub(crate) fn finish_forwarded_in_lane(
     argument: impl Fn(u16) -> Value,
     read: impl Fn(u32) -> bool,
     union: Option<quench_runtime::vm::engine_types::FixedUnion>,
-) -> Option<Option<ConstructPlan>> {
-    let mut fields = Some(EMPTY_CONSTRUCT_PLAN);
-    let nested = std::cell::Cell::new(None);
-    // Each store's name and value in store order: a fixed receiver's slot writes, and its plan's slots.
+) -> Option<()> {
+    // Each store's name and value in store order: a fixed receiver's slot writes.
     let mut atoms = [0; quench_runtime::heap::MAX_CELL_FIELDS];
     let mut values = [Value::UNDEFINED; quench_runtime::heap::MAX_CELL_FIELDS];
     let mut stored = 0;
     let applied = add_initializer_fields_in_lane(vm, code, this, function, argument, read, union.is_some(),
-        |vm, construct| {
-            let (built, field) = nested_construct_in_lane(vm, env, construct)?;
-            nested.set(Some(field));
-            Some(built)
-        },
+        |vm, construct| nested_construct_in_lane(vm, env, construct).map(|(built, _)| built),
         |store, value| {
             if let (Some(atom), Some(stored_value)) = (atoms.get_mut(stored), values.get_mut(stored)) {
                 *atom = store.atom;
                 *stored_value = value;
             }
             stored += 1;
-            fields = fields.and_then(|fields| match store.value {
-                InitializerValue::Construct(_) => fields.with_nested(nested.take()?),
-                _ => fields.with_field(store, value),
-            });
         });
     if !applied {
         return None;
     }
     let Some(union) = union else {
-        return Some(fields);
+        return Some(());
     };
     for (&atom, &value) in atoms.iter().zip(&values).take(stored) {
         let slot = union.slot_of(atom).expect("a fixed class's store names one of its union slots");
         vm.store_fixed_cell_slot(this, slot, atom, value);
     }
-    // The fields' plan holds the cell's slots, as `initialize_stores_in_lane`'s does (`record_forwarded_fields_in_lane`).
-    Some(fields.map(|fields| ConstructPlan {
-        fixed: Some(quench_runtime::vm::engine_types::FixedCellPlan {
-            shape: union.shape,
-            slots: union.cell_slots(&atoms[..usize::from(fields.fields)]).expect("a fixed class's store names one of its union slots"),
-        }),
-        ..fields
-    }))
+    Some(())
 }
 
 #[quench_macros::ext(ConstructPlanOps2)]

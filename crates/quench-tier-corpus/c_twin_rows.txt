@@ -138,7 +138,6 @@ heap::CONSTANT_ROW - constant load; no kernel isolates it
 heap::APPEND_ROW arr_push
 heap::FOR_IN_ROW v_for_in
 heap::IC_GET_ROW field_read
-heap::IC_GET_HOLDER_ROW v_proto_chain3_field
 heap::IC_SET_ROW field_store
 heap::IC_SET_INT_ROW field_store
 heap::ENV_ROW c_closure_read
@@ -150,22 +149,8 @@ heap::TYPED_INDEX_ROW typed_load
 heap::TYPED_STORE_ROW typed_store_f64
 heap::TYPED_LENGTH_ROW typed_length
 heap::IC_PROOF_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::IC_KNOWN_GET_ROW field_read
-heap::IC_KNOWN_SET_ROW field_store
-heap::IC_KNOWN_SET_INT_ROW field_store
-heap::IC_KNOWN_SET_ADMITTED_ROW field_store
-heap::IC_KNOWN_SET_INT_ADMITTED_ROW field_store
-heap::IC_KNOWN_GET_FLAT_ROW field_read
-heap::IC_KNOWN_SET_FLAT_ROW field_store
-heap::IC_KNOWN_SET_INT_FLAT_ROW field_store
-heap::IC_KNOWN_SET_FLAT_ADMITTED_ROW field_store
-heap::IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW field_store
 heap::DECLARED_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::CAPTURE_IDENTITY_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::PROTOTYPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::SHAPE_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::SHAPE_FLAT_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
-heap::STORES_ROW - entry guard: its cost is the guarded operation's, no kernel isolates it
 heap::CHAR_CODE_AT_ROW str_charcodeat
 heap::PARSE_INT_ROW parse_int
 heap::STAGED_REMAINDER int_mod

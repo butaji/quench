@@ -71,9 +71,6 @@ impl StoreArm {
 pub enum StoreJoin {
     /// The VM's own-field store hit, which a failure leaves at the miss edge.
     Host,
-    /// The same hit through the site's bound slot first, which the frame addressed before the
-    /// run (`PropertyFrame::field_store_bound`).
-    Bound,
     /// The VM's adding entries, which complete a store of any shape without leaving; a frame
     /// that uses it holds no object proof past the store.
     Add,
@@ -89,7 +86,7 @@ pub enum StorePlan<'a> {
     /// at `slot` in place: one compare of the record's own word proves its shape, form and
     /// flags, and the form the id's entry names picks the store with no test
     /// (`store::own_store`, hinted). Every other store runs through `join`. The generated
-    /// own-store rows build it (`RecordPlan::own_store`).
+    /// own-store rows build it (`store::own_store`).
     Layout { id: u32, slot: u16, join: StoreJoin },
     /// The slot a loop's entry projected for this store, which the frame addresses
     /// (`PropertyFrame::entry_slot_store`).
@@ -98,15 +95,6 @@ pub enum StorePlan<'a> {
     Add,
     /// A setter, a read-only or dictionary property, a proxy: the VM's store.
     Host,
-    /// The VM's store through the slot the entry bound for the site.
-    Bound,
-    /// A store the record's own hint (`id`, `slot`) proves for a tracked or narrow store
-    /// (`narrow`), which `PropertyFrame::field_store_hinted` makes in place; a refusal leaves to
-    /// `join` (the VM's own-field store).
-    Hinted { id: u32, slot: u16, narrow: bool, join: StoreJoin },
-    /// A store the record's own hint, the site's polymorphic entries or the proved add completes
-    /// (`PropertyFrame::field_store_polymorphic`); a refusal leaves at the miss edge.
-    Polymorphic { id: u32, slot: u16 },
 }
 
 impl<'a> StorePlan<'a> {
@@ -116,7 +104,6 @@ impl<'a> StorePlan<'a> {
         match (arms.is_empty(), join) {
             (false, join) => Self::Own { arms, join },
             (true, StoreJoin::Host) => Self::Host,
-            (true, StoreJoin::Bound) => Self::Bound,
             (true, StoreJoin::Add) => Self::Add,
         }
     }

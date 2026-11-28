@@ -132,33 +132,8 @@ pub(crate) unsafe fn materialized_construction_in_lane(vm: &mut Vm, code: &Resid
     }
     // SAFETY: the caller passes the body's argument registers.
     let argument = |parameter: u16| if parameter < argc { unsafe { *arguments.add(usize::from(parameter)) } } else { Value::UNDEFINED };
-    // A forwarding constructor's plan (`this.initialize(...)`) holds with its forwarding.
     let this = planned_construction(vm, callee, class, argument)
-        .or_else(|| forwarded_fields_in_lane(vm, callee, class, argument))
         .or_else(|| initializer_construction(vm, code, callee, class, argument))?;
-    note_allocation(vm);
-    Some(this)
-}
-
-/// The receiver of a construction through forwarding constructor `callee` whose forwarded
-/// initializer the body calls by its entry (`DirectCallee::forwarder`): allocated finished
-/// from the plan while it holds, whose forwarding has no fields of its own. `None` leaves
-/// the body to its helper path before any effect.
-pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value, class: u32) -> Option<Value> {
-    if !quench_runtime::staged::call_construct::concrete_unpending(vm.construct_target.is_some()) || vm.collection_due() || vm.with_scope_entered {
-        return None;
-    }
-    let index = holding_construct_plan_index(vm, callee, class)?;
-    let plan = &vm.lane_stack.construct_plans[index];
-    if plan.kind != ConstructPlanKind::Forwarding || plan.fields != 0 || plan.forwarded.is_none() {
-        return None;
-    }
-    let plan = *plan;
-    // A fixed class's receiver is its union cell (R4-F), as `allocate_receiver` makes it.
-    let this = match plan.fixed {
-        Some(_) => plan.allocate(vm, |_| Value::UNDEFINED),
-        None => vm.allocate_planned_object(plan.header, plan.prototype, &[Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS], 0),
-    };
     note_allocation(vm);
     Some(this)
 }
@@ -182,9 +157,8 @@ pub(super) fn initializer_construction(vm: &mut Vm, code: &ResidualProgram, call
 }
 
 /// `planned_construction_in_lane` under the plan at `index` with defaulted fields, whose values
-/// it computes first; `None` for a forwarding constructor's plan, which holds only with its
-/// forwarding (`forwarded_fields_in_lane`). Out of line, so plans of plain fields keep their
-/// code.
+/// it computes first; `None` for a forwarding constructor's plan. Out of line, so plans of plain
+/// fields keep their code.
 #[inline(never)]
 pub(super) fn defaulted_construction_in_lane(vm: &mut Vm, index: usize, argument: impl Fn(u16) -> Value) -> Option<Value> {
     let plan = &vm.lane_stack.construct_plans[index];
@@ -241,12 +215,5 @@ pub(crate) fn holding_construct_plan_index(vm: &Vm, callee: Value, class: u32) -
     (plan.callee == callee && plan.class == class
         && vm.lane_stack.construct_watches[index].as_ref().is_some_and(|watch| watch.is_published()))
     .then_some(index)
-}
-
-/// Records `resolution`, where `callee`'s forwarding read `function`, in plan `index`, which
-/// then also holds only while `function` and the holder of its `apply` keep their layouts.
-pub(crate) fn record_forwarded_resolution(vm: &mut Vm, index: usize, function: Value, resolution: ForwardedResolution) {
-    vm.lane_stack.construct_plans[index].forwarded = Some(resolution);
-    watch_construct_plan(vm, index, false, &[function, resolution.apply_holder]);
 }
 

@@ -281,7 +281,7 @@ pub(crate) fn lower(
     lowering.refine_loop_inputs(entry_pc, &initial, &instructions, &leaders, &loops, &own_shape);
     lowering.require_object_latches(&instructions, &leaders, &loops);
     for &pc in generic { lowering.facts.widen(pc); }
-    if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions, &loops)); }
+    if !numeric { lowering.entry = Some(lowering.entry_facts(&instructions)); }
     // A preliminary run of the facts over the arrays the loops index without their captured reads
     // (`loop_arrays` before the hoists): a typed or double view's store the run proves a Number store
     // changes no length, so it does not keep a loop's `length` from its entry (`invariant_reads`).

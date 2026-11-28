@@ -25,10 +25,9 @@ impl PlanSource for Plans {
     fn store_plan(&self, _site: u16) -> Option<StorePlan<'_>> { Some(self.store) }
 }
 
-/// A frame over a few registers and the heap's object records, whose callouts log their name.
+/// A frame over a few registers, whose callouts log their name.
 struct Host<'p> {
     registers: Vec<u64>,
-    records: u64,
     plans: &'p Plans,
     answers: bool,
     log: Vec<&'static str>,
@@ -38,8 +37,8 @@ struct Host<'p> {
 }
 
 impl<'p> Host<'p> {
-    fn new(records: u64, plans: &'p Plans, registers: Vec<u64>) -> Self {
-        Self { registers, records, plans, answers: true, log: Vec::new(), proven: None, proved: Vec::new() }
+    fn new(plans: &'p Plans, registers: Vec<u64>) -> Self {
+        Self { registers, plans, answers: true, log: Vec::new(), proven: None, proved: Vec::new() }
     }
 
     fn call(&mut self, name: &'static str) -> bool {
@@ -76,7 +75,6 @@ impl crate::staged::CallFrame<Concrete> for Host<'_> {}
 impl<'p> PropertyFrame<Concrete> for Host<'p> {
     type Plans = &'p Plans;
     fn plans(&self) -> &'p Plans { self.plans }
-    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { Some(self.records) }
     fn proven_shape(&mut self, _stage: &mut Concrete, _owner: Owner) -> Option<(u32, crate::staged::ShapeFact)> {
         self.proven.map(|shape| (shape, crate::staged::ShapeFact::entry_guard()))
     }
@@ -89,10 +87,6 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     }
     fn field_store_host(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _value: u64, _miss: ()) -> Option<()> {
         self.call("field_store_host").then_some(())
-    }
-    fn field_store_bound(&mut self, _stage: &mut Concrete, _owner: Owner, _object: u64, _site: (u32, u16), _value: (u64, Type),
-        _miss: ()) -> Option<()> {
-        self.call("field_store_bound").then_some(())
     }
     fn entry_slot_store(&mut self, _stage: &mut Concrete, _site: u16, _value: u64, _miss: ()) -> Option<()> {
         self.call("entry_slot_store").then_some(())
@@ -146,13 +140,10 @@ fn object_of(heap: &mut Heap, values: &[Value]) -> (Value, u32) {
     (object, shape)
 }
 
-/// The object record table is gone (S7f): no table base, so a record plan reads none.
-pub fn records(_heap: &Heap) -> u64 { 0 }
-
 /// `plan` read from `object` on the concrete stage, by a frame that holds no proof.
 fn read(heap: &Heap, plan: FieldPlan<'static>, object: Value) -> Option<Value> {
     let plans = Plans { read: plan, store: NO_STORE };
-    let mut frame = Host::new(records(heap), &plans, vec![0]);
+    let mut frame = Host::new(&plans, vec![0]);
     let mut stage = Concrete::over(heap);
     read_with(&mut stage, &mut frame, (Owner::Temporary, false), object.to_bits(), plan, ()).map(Value::from_bits)
 }
@@ -263,7 +254,7 @@ fn the_property_instructions_decode_to_their_operations() {
 /// and the shapes its guards recorded.
 fn read_owned_by(heap: &Heap, plan: FieldPlan<'static>, object: Value, proven: Option<u32>) -> (Option<Value>, Vec<u32>) {
     let plans = Plans { read: plan, store: NO_STORE };
-    let mut frame = Host::new(records(heap), &plans, vec![0]);
+    let mut frame = Host::new(&plans, vec![0]);
     frame.proven = proven;
     let mut stage = Concrete::over(heap);
     let lookup = FieldLookup::Atom { atom: 0, base: FieldBase::register(1), cache_site: 0 };
@@ -294,7 +285,7 @@ fn a_guard_is_recorded_as_the_owners_proof_and_a_proven_shape_is_not_tested_agai
 fn store_step(heap: &mut Heap, plan: StorePlan<'static>, registers: Vec<u64>, operation: Operation<u64, ()>)
     -> (Option<Value>, Vec<&'static str>) {
     let plans = Plans { read: FieldPlan::Host { atom: 0, site: 0 }, store: plan };
-    let mut frame = Host::new(records(heap), &plans, registers);
+    let mut frame = Host::new(&plans, registers);
     let mut stage = Concrete::over(&*heap);
     let word = match step(&mut stage, &mut frame, operation) {
         Step::Value(word) => Some(Value::from_bits(word)),
@@ -356,16 +347,15 @@ fn several_arms_store_through_the_one_that_holds_the_receivers_shape() {
 }
 
 #[test]
-fn bound_and_entry_plans_reach_their_frame_callouts_and_a_bound_join_completes_what_no_arm_takes() {
+fn an_entry_plan_reaches_its_frame_callout_and_an_arm_takes_its_shape() {
     let mut heap = heap_of(1);
     let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
     let (other, _) = object_of(&mut heap, &[]);
-    assert_eq!(store(&mut heap, StorePlan::Bound, object, Value::integer(1)).1, ["field_store_bound"]);
     assert_eq!(store(&mut heap, StorePlan::Entry, object, Value::integer(1)).1, ["entry_slot_store"]);
     let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, class: Type::ANY, image: false }]));
-    let plan = StorePlan::of(arms, StoreJoin::Bound);
+    let plan = StorePlan::of(arms, StoreJoin::Host);
     assert_eq!(store(&mut heap, plan, object, Value::integer(2)).1, Vec::<&str>::new(), "the arm takes its shape");
-    assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_bound"], "the join the plan names");
+    assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_host"], "the join the plan names");
 }
 
 #[test]

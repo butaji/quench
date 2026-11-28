@@ -41,26 +41,6 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// Admit once at the edge; later raw stores consume the compile-time domain proof.
-    pub(super) fn admit_field_writes(&mut self, binding: &mut FieldSlotBinding, writes: Type, exit: ir::Block) {
-        if binding.writes.is_some_and(|domain| writes.is_subtype(domain)) {
-            if let Some(admitted) = binding.admitted { emit_js_guard(&mut self.builder, admitted, exit); }
-            return;
-        }
-        let admitted = self.field_writes_admitted(binding, writes);
-        emit_js_guard(&mut self.builder, admitted, exit);
-    }
-
-    /// Whether the slot `binding` names admits `writes` (`LaneHelper::FieldWriteAdmission`),
-    /// the domain then recorded on the binding.
-    pub(super) fn field_writes_admitted(&mut self, binding: &mut FieldSlotBinding, writes: Type) -> ir::Value {
-        let shape = self.raw_unary(Unary::ZeroExtend(Lane::I64), binding.receiver);
-        let slot = binding.slot.read(&mut self.builder);
-        let (admitted, domain) = self.slot_writes_admitted(shape, slot, writes);
-        binding.writes = Some(binding.writes.map_or(domain, |held| held.join(domain)));
-        admitted
-    }
-
     /// Admits at entry the writes `writes` to `slot` of `shape`, failing through `exit`
     /// (`Heap::admit_slot_writes`).
     pub(crate) fn admit_slot_writes(&mut self, (shape, slot): (ir::Value, ir::Value), writes: Type, exit: ir::Block) {
@@ -188,9 +168,9 @@ impl Lowering<'_, '_> {
         (atom, site, ty): (Atom, u16, Type), exit: ir::Block) -> Option<()> {
         let (arms, join) = self.site_store_plan(site, ty);
         let plan = StorePlan::of(&arms, join);
-        let (admitted, split) = if !arms.is_empty() || join == StoreJoin::Bound {
+        let (admitted, split) = if !arms.is_empty() {
             let (admitted, split) = self.store_atom_admission(state, atom, exit);
-            (Some(admitted), split.filter(|_| !arms.is_empty()))
+            (Some(admitted), split)
         } else { (None, None) };
         // A store whose one arm is an ahead image's construction (`StoreArm::image`) stores a class cell's field: a miss
         // leaves, so the class's proof holds past the store.
@@ -214,16 +194,13 @@ impl Lowering<'_, '_> {
     }
 
     /// The in-place arms and the VM's completion of a store of a value of type `ty` through
-    /// `site`, which the row runs (`StorePlan::of`): one arm for each of the site's own shapes
-    /// whose layout the plan admits and whose slot the value's type fits or widens by a test
-    /// (`StoreArm::of`); the VM's own-field hit where no arm takes the store, through the slot
-    /// the entry bound for the site where there is one, with no arm whose test the value's type
-    /// never passes; and in a body that completes through
-    /// the VM's polymorphic entries (`status_and_pc`) a site of several shapes ends in its
-    /// adding entry.
+    /// `site`, which the row runs (`StorePlan::of`): the class arms of the site's class-keyed loads
+    /// (`StoreArm::of_class`), then one arm for each of its shape loads whose layout the plan admits
+    /// and whose slot the value's type fits or widens by a test (`StoreArm::of`); the VM's own-field
+    /// hit where no arm takes the store; and in a body that completes through the VM's polymorphic
+    /// entries (`status_and_pc`) a site of several shapes ends in its adding entry.
     pub(super) fn site_store_plan(&self, site: u16, ty: Type) -> (Vec<StoreArm>, StoreJoin) {
         let own: Vec<&NativeFieldLoad> = site_loads(self.fields, site).into_iter().flatten().filter(|load| load.holder.is_none()).collect();
-        let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         // The class-keyed loads are the class arms, which lead the shape arms: a live cell takes its class's arm
         // (`StoreArm::of_class`, whose cell's gate admits the write, so the slot's type is no test here), and the other
         // receivers the shape arms; with no shape arm, a cell of another class leaves for the VM's store.
@@ -244,8 +221,7 @@ impl Lowering<'_, '_> {
                 .filter(|arm: &StoreArm| arm.holds.is_none_or(|holds| holds.is_subtype(ty)));
             classes.chain(shapes).collect()
         };
-        let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add }
-            else if bound { StoreJoin::Bound } else { StoreJoin::Host };
+        let join = if own.len() > 1 && self.completion.status_and_pc() { StoreJoin::Add } else { StoreJoin::Host };
         (arms, join)
     }
 
@@ -262,11 +238,8 @@ impl Lowering<'_, '_> {
     fn after_store(&mut self, state: &mut State, join: StoreJoin) {
         self.forget_append_rooms(self.at);
         match join {
-            StoreJoin::Add => {
-                self.reshaped(state);
-                self.reload_receiver();
-            }
-            StoreJoin::Host | StoreJoin::Bound => state.proofs.stable = false,
+            StoreJoin::Add => self.reshaped(state),
+            StoreJoin::Host => state.proofs.stable = false,
         }
     }
 
@@ -277,29 +250,6 @@ impl Lowering<'_, '_> {
         match self.field_step(state, frame::Edges::ValueGuarded { miss: exit }, operation, (&plans, held)) {
             quench_runtime::staged::Step::Value(_) => Some(()),
             _ => None,
-        }
-    }
-
-    /// The receiver's shape and storage kind again, and the entry's tests of its shape, after
-    /// a store that may have changed them (`emit_lane_receiver`, `Lowering::entry_facts`).
-    fn reload_receiver(&mut self) {
-        let entry = self.entry.as_ref().expect("entry facts");
-        let (object_var, shape_var, inline_var) = (entry.receiver.object, entry.receiver.shape, entry.receiver.inline);
-        let tests: Vec<(u32, Variable)> = entry.receiver_shapes.iter().map(|(shape, variable)| (*shape, *variable)).collect();
-        let object = self.builder.use_var(object_var);
-        let (found, done) = (self.builder.create_block(), self.builder.create_block());
-        let present = self.raw_compare_imm(Relation::NotEqual, object, 0);
-        self.branch_if(present, (found, &[]), (done, &[]));
-        self.builder.switch_to_block(found);
-        let (shape, _, inline, _) = super::object_slots::shape_and_inline(&mut self.builder, object);
-        self.builder.def_var(shape_var, shape);
-        self.builder.def_var(inline_var, inline);
-        self.goto(done, &[]);
-        self.builder.switch_to_block(done);
-        let shape = self.builder.use_var(shape_var);
-        for (expected, variable) in tests {
-            let same = self.raw_compare_imm(Relation::Equal, shape, i64::from(expected));
-            self.builder.def_var(variable, same);
         }
     }
 

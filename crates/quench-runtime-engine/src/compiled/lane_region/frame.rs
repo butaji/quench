@@ -35,8 +35,6 @@ pub(crate) enum Edges {
 pub(crate) struct Sites<'a> {
     pub(crate) call_out: Option<&'a call_out::CallOutSite>,
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,
-    /// The Stable `prototype` link of an `instanceof`'s constructor (`Lowering::hold_instanceof`).
-    pub(crate) prototype: Option<u32>,
 }
 
 /// The lane specializer's register frame (`quench_runtime::staged::Frame`): the SSA homes and the facts
@@ -86,8 +84,6 @@ pub(crate) struct EmitFrame<'a> {
     pub(crate) capture: Option<&'a super::captures::CaptureSite>,
     /// Whether an IsHTMLDDA object can exist (`VmFacts::html_dda`).
     pub(crate) html_dda: bool,
-    /// The Stable `prototype` link of the step's `instanceof` constructor.
-    pub(crate) prototype: Option<u32>,
 }
 
 /// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
@@ -230,11 +226,10 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: quench_runtime::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
 
-    /// The heap's array and object record tables and collection epoch, where the frame reads live
-    /// records. S7f DESIGN: the object table is gone, so no triple is offered and a row that needs
-    /// the tables takes its call-out (the same choice `places.rs` `heap_records` makes in bjit).
+    /// The heap's array record table, where the frame reads live array records. The engine's frame offers
+    /// none, so a row that needs the table takes its call-out (as `places.rs` `heap_records` does in bjit).
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value)> { None }
+    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<ir::Value> { None }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {
@@ -506,10 +501,6 @@ impl quench_runtime::staged::NumericFrame<Emit<'_, '_>> for EmitFrame<'_> {
 
     fn html_dda_possible(&self) -> bool {
         self.html_dda
-    }
-
-    fn stable_prototype(&mut self, stage: &mut Emit<'_, '_>, _constructor: Register) -> Option<ir::Value> {
-        self.prototype.map(|link| stage.raw_const(Lane::I64, i64::from(link)))
     }
 
     fn int_fact(&self) -> RegisterFact {

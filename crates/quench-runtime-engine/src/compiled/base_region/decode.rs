@@ -126,7 +126,7 @@ pub(crate) struct Decoded {
     /// The receiver a folded prototype-held read stands on, with its value in `hole`.
     pub(crate) folded: Option<Folded>,
     /// A named read of a class-typed parameter's prototype value (`declared::class_member_read`): a Linked held read
-    /// that `proofs::prove` makes a constant load where the receiver's shape is proven at the row.
+    /// that `proofs::prove` makes a constant load where the receiver's class shape holds at the row.
     pub(crate) class_read: bool,
     /// The recorded class-keyed transition the add row runs (`adds`).
     pub(crate) add: Option<adds::Add>,
@@ -163,26 +163,11 @@ pub(crate) struct Decoded {
     /// subscribed by the body (`Stitched::push`), and its realm proved once (`globals::held_realm`).
     /// The slot type the fact store proves of a site read's one own flat entry (`decode::fields::cached_read`): a
     /// Number type or the direct-object family, which the code holds as a dependency (`held_slot_types`), and a
-    /// widening of the slot retires it over. A Number read's inline-cache row then delivers the word to a pinned
-    /// double with no tag test (`plan::ic_plan`); an object read's destination is a direct object after it
-    /// (`proofs::typed_object`). Kept only where that row runs and the code makes no call (`repr::keep_typed_reads`).
+    /// widening of the slot retires it over. An object-family proof lets the fast row skip the destination's
+    /// direct-object check, which the site row's path keeps (`plan::ic_plan`'s proof row). Kept only where that row
+    /// runs and the code makes no call (`repr::keep_typed_reads`).
     pub(crate) typed: Option<quench_runtime::code_dependencies::SlotDependency>,
     pub(crate) cell: Option<quench_runtime::vm::global_facts::StableCell>,
-    /// Every path proves the inline-cache access's receiver of its entry's shape (`proofs::prove`): the row
-    /// reads or writes the slot with no guard.
-    pub(crate) proven: bool,
-    /// Where `proven`, the receiver's storage form is proven flat too (`proofs::prove`): the row's slot is the arena run's,
-    /// with no compare of the auxiliary word (`Heap::IcKnownGetFlat`, `Heap::IcKnownSetFlat`).
-    pub(crate) flat: bool,
-    /// Some receiver proof reaches the row (`proofs::prove`), which a later row may stand on: the code
-    /// is not resumed here.
-    pub(crate) relies: bool,
-    /// A proven store whose run-level stores test the region's entry made, and no call since (`proofs::prove`): the row
-    /// tests nothing of its own (`Heap::IcKnownSet`'s `admitted`), or the test `recheck` makes before it.
-    pub(crate) admitted: bool,
-    /// A proven store a call cleared the run-level stores test for, which re-reads the run's stores word
-    /// before it (`Heap::Stores`, a mid-body guard), so the stores after it are admitted (`proofs::prove`).
-    pub(crate) recheck: bool,
     /// A generic `Binary` (its operator is data, so its step helper runs any operands): a numeric row whose site is a
     /// string `+` (`Variant::Concat`) keeps the region running through that helper as its miss (`plan::concat_run`).
     pub(crate) generic: bool,
@@ -198,7 +183,7 @@ pub(crate) struct Decoded {
 
 impl Decoded {
     pub(crate) fn number(kind: Kind, dst: Option<Register>, a: Option<Source>, b: Option<Source>, target: Option<u32>) -> Self {
-        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, global: None, lexical: None, add: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, proven: false, flat: false, relies: false, admitted: false, recheck: false, generic: false, int_a: false, int_b: false, own_step: None }
+        Self { kind, dst, also: None, a, b, target, heap: None, base: None, hole: 0, atom: None, folded: None, class_read: false, step: None, packed: None, checked: false, completes: false, global: None, lexical: None, add: None, slot: None, slot_shape: None, ic: None, declined: None, holder: None, typed: None, cell: None, generic: false, int_a: false, int_b: false, own_step: None }
     }
 
     pub(crate) fn heap(heap: Heap, dst: Option<Register>, a: Option<Source>, b: Option<Source>) -> Self {

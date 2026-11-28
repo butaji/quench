@@ -1014,8 +1014,6 @@ pub struct LoopSite {
     pub tier: std::cell::RefCell<LoopTier>,
     /// The function's lane body planned to start at this loop's header (`run_loop_body`).
     pub body: std::cell::RefCell<LoopBody>,
-    /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
-    pub body_offered: std::cell::Cell<bool>,
     /// The view that refused it: the site lies in that view, so its epoch is read through this pointer.
     /// Whether an enclosing admitted loop still enters (`LoopSite::inside_admitted_loop`); false once none does.
     pub enclosed: std::cell::Cell<bool>,
@@ -1380,11 +1378,9 @@ pub struct CallbackHeader {
 /// Binding time of a callee: a published closure, whose identity the call compares, or a
 /// static body whose actual closure and environment are admitted at the call. Function
 /// bindings are accepted for verified plain bodies with explicit restart or exact-state
-/// recovery. A forwarded binding is a closure the site called through a native that
-/// forwards its receiver as the callee (`Function.prototype.call`, `Vm::forwarded_call`):
-/// the call guards the native's identity too.
+/// recovery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CalleeBinding { Identity(Value), Function, Forwarded { through: Value, callee: Value } }
+pub enum CalleeBinding { Identity(Value), Function }
 
 #[derive(Clone, Copy)]
 pub struct Case {
@@ -1421,11 +1417,6 @@ pub struct DirectCallee {
     pub capture_len: usize,
     /// Whether those slots admit every direct store (`dispatch_fast::capture_stores`).
     pub capture_stores: bool,
-    /// For a construction site, the forwarding constructor whose activation the call skips:
-    /// `callee` is that constructor, which the call guards, and `target` its forwarded
-    /// initializer, which runs with the receiver the constructor's plan allocates and
-    /// whose result the construction ignores (`construct_keeping_activation_in_lane`).
-    pub forwarder: Option<SkippedForwarder>,
     /// The closure of the function the site calls now and its capture word, which a u-jit call reads at run time.
     pub bound: BoundClosure,
 }
@@ -2249,10 +2240,6 @@ pub struct ConstructPlan {
     pub classes: [FieldClass; CONSTRUCT_PLAN_FIELDS],
     pub operators: [u8; CONSTRUCT_PLAN_FIELDS],
     pub fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
-    /// For a forwarding constructor's plan, where its body's reads resolved
-    /// (`forwarded_construction_in_lane`), which the plan's own proof keeps. Its fields, if any, are
-    /// those its forwarded initializer stores (`record_forwarded_fields_in_lane`).
-    pub forwarded: Option<ForwardedResolution>,
     /// The field a nested construction gives a fresh object each time (`NestedField`).
     pub nested: Option<NestedField>,
     /// For a class whose constructor only constructs its parent (`super_construction`),
@@ -2391,24 +2378,8 @@ pub enum ConstructPlanKind {
     /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`), or a fixed class's cell (`ConstructPlan::fixed`),
     /// whose fields are gathered into the cell's slots.
     Defaulted,
-    /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
-    /// forwarding (`forwarded_fields_in_lane`).
+    /// A forwarding constructor's plan (`planned_receiver_in_lane`).
     Forwarding,
-}
-
-/// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
-/// a construct plan (`ConstructPlan::forwarded`). The plan's dependency covers the plan's
-/// prototype (the method's slot value), the method (its shape and prototype, which could
-/// shadow `apply`) and the holder of `apply`, so while the plan holds `method` is what the
-/// forwarding reads and `apply` is the intrinsic: a use reads them from here.
-#[derive(Clone, Copy)]
-pub struct ForwardedResolution {
-    pub method: Value,
-    pub apply_holder: Value,
-    /// The forwarded method's function whose initializer stores the plan's fields record
-    /// (`record_forwarded_fields_in_lane`), when it has fields: the method this resolution
-    /// reads must still be of it.
-    pub initializer: Option<(ProgramId, u32)>,
 }
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -3601,7 +3572,6 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     classes: [FieldClass::Passed; CONSTRUCT_PLAN_FIELDS],
     operators: [0; CONSTRUCT_PLAN_FIELDS],
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
-    forwarded: None,
     nested: None,
     super_parent: Value::UNDEFINED,
     recorded: false,
@@ -3725,13 +3695,6 @@ pub enum Frameless {
     /// Its body is one returning `GetField` (`returning_kind` of its first instruction),
     /// whose hit a call answers without activating it (`call_read_in_lane`).
     Reads,
-    /// Its body reads a field of `this` or a parameter, then an element of that by a
-    /// parameter, and returns it (`body_forms::element_read_body`), which a call answers likewise.
-    ReadsElement,
-    /// Its body returns a call of a method of a field of `this` or a parameter with its
-    /// parameters in order (`body_forms::forwarding_read_body`), which a call answers where that method
-    /// is a `Reads` or `ReadsElement` target whose read hits.
-    ForwardsRead,
     /// Its body returns one of its captures (`body_forms::capture_read_body`), as a bundler's export
     /// getter `() => binding` compiles, which a call answers by reading the capture.
     ReadsCapture,
@@ -4493,7 +4456,7 @@ impl CallTarget {
     #[inline]
 
     pub fn identity(self) -> Option<Value> {
-        match self.callee { CalleeBinding::Identity(value) | CalleeBinding::Forwarded { callee: value, .. } => Some(value), _ => None }
+        match self.callee { CalleeBinding::Identity(value) => Some(value), _ => None }
     }
 }
 

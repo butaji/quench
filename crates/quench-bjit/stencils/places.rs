@@ -175,20 +175,6 @@ pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
     if put_tagged::<D>(&mut s, word) { Out::Next(s) } else { Out::Exit(s) }
 }
 
-/// `deliver` of a `word` the fact store proved a Number (an int word or a double, `ic_rows::known_get`): a
-/// pinned double takes it with no tag test and no exit, an int word converted; any other place as `deliver`.
-#[inline(always)]
-pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
-    match D {
-        PINF.. => {
-            let bits = if is_double(word) { word } else { widen(word) };
-            s.f[(D - PINF) as usize] = f64::from_bits(bits);
-            Out::Next(s)
-        }
-        _ => deliver::<D>(s, word),
-    }
-}
-
 /// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
 /// and every result fit its place, else the row leaves with the state as it was.
 #[inline(always)]
@@ -469,12 +455,6 @@ impl Frame<Concrete> for Places {
     #[inline(always)]
     fn array_append(&mut self, stage: &mut Concrete, array: Register, value: u64) -> Option<()> { self.heap_array_append(stage, array, value) }
 
-    /// ForInNext's fast arm (`places_names`).
-    #[inline(always)]
-    fn vm_step(&mut self, stage: &mut Concrete, operation: crate::staged::CallOut, _result: Option<Register>) -> Option<(u64, Representation)> {
-        self.call_out_fast(stage, operation)
-    }
-
     /// The typeof string table at hole 2 (`places_names`).
     #[inline(always)]
     fn typeof_string(&mut self, stage: &mut Concrete, name: u64) -> Option<(u64, Representation)> { self.typeof_entry(stage, name) }
@@ -526,12 +506,10 @@ impl Frame<Concrete> for Places {
         Some((word_at(locals, 0), Representation::Tagged))
     }
 
-    /// The array and object record tables and the collection epoch the for-in fast arm reads (the lane
-    /// frame's `heap_records`). The object table left the payload with the object records.
-    // S7f DESIGN: the fast for-in arm declines (`None`, the call-out); the trait now carries the array table
-    // and epoch alone, so restoring the arm is reading those two payload words here.
+    /// The array record table the frame reads live records through (`Frame::heap_records`); the bjit payload
+    /// holds none, so a row that needs it takes its call-out.
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64)> { None }
+    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<u64> { None }
 
     #[inline(always)]
     fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: Option<()>) -> bool {

@@ -87,9 +87,6 @@ pub(crate) fn resume_stubs(layout: &Layout, planned: &[Planned], (first, starts)
         .entries
         .iter()
         .filter(|&&(_, row)| !planned[row as usize].stencil.code.is_empty() || !planned[row as usize].pre.is_empty())
-        // A row a body-established receiver proof reaches stands on the access that proved it, which a resume skips.
-        // An entry-seeded proof is re-established by `entry_rows`, which runs every declared guard (`layout.guards`).
-        .filter(|&&(_, row)| !layout.relies.get(row as usize).copied().unwrap_or(false))
         .map(|&(pc, row)| {
             let rows = entry_rows(layout, &layout.webs.live_at(&layout.span, row), row as usize)?;
             Ok(Stub { pc, rows, target: first + starts[row as usize] })
@@ -149,7 +146,7 @@ mod tests {
     #[test]
     fn a_built_region_has_a_stub_at_each_pc() {
         let (program, id, region) = loop_region("function f(n){let s=0;for(let i=0;i<n;i++){s=s+i;}return s;} f(4);", "f");
-        let known = Known { program: &program, stitch: &crate::compiled::tier_policy::STITCH, stores: None, reads: None, adds: None, invalidation: None, constants: &[], typeof_names: &[], presences: None, fields: None, globals: None, classes: &[], shapes: &[] };
+        let known = Known { program: &program, stitch: &crate::compiled::tier_policy::STITCH, stores: None, reads: None, adds: None, invalidation: None, constants: &[], typeof_names: &[], presences: None, fields: None, globals: None, classes: &[] };
         let spec = function::BodySpec { function: id as u32, registers: program.function(id).registers, known, realm: Some(RealmProof::default()), seen: &[], facts: None, typed: &[] };
         let helpers = crate::compiled::process_lane_helpers();
         // SAFETY: the region has no callees, so no entry cell is read.

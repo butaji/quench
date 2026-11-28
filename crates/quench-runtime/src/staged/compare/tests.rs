@@ -19,16 +19,12 @@ struct Probe {
     types: Vec<Option<Type>>,
     refined: Vec<(Register, Type, Edge)>,
     html_dda: bool,
-    /// The object record table the frame walks prototypes in, and the constructor `prototype` link
-    /// it holds as a Stable fact.
-    records: Option<u64>,
-    prototype: Option<u64>,
 }
 
 impl Probe {
     fn of(values: &[Value]) -> Self {
         Self { registers: values.iter().map(|value| value.to_bits()).collect(), calls: Vec::new(), answer: None,
-            types: Vec::new(), refined: Vec::new(), html_dda: true, records: None, prototype: None }
+            types: Vec::new(), refined: Vec::new(), html_dda: true }
     }
 }
 
@@ -66,7 +62,6 @@ impl crate::staged::ElementFrame<Concrete> for Probe {}
 impl PropertyFrame<Concrete> for Probe {
     type Plans = NoPlans;
     fn plans(&self) -> NoPlans { NoPlans }
-    fn object_records(&mut self, _stage: &mut Concrete) -> Option<u64> { self.records }
 }
 
 impl NumericFrame<Concrete> for Probe {
@@ -79,7 +74,6 @@ impl NumericFrame<Concrete> for Probe {
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn html_dda_possible(&self) -> bool { self.html_dda }
-    fn stable_prototype(&mut self, _stage: &mut Concrete, _constructor: Register) -> Option<u64> { self.prototype }
     fn int_fact(&self) {}
     fn number_fact(&self) {}
 }

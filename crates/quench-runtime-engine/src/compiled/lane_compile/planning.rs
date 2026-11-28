@@ -14,13 +14,11 @@ pub(crate) struct LanePlan {
 }
 
 /// The VM's facts a lane body's lowering may ask (`OnlineFacts`), answered when it is planned for
-/// the identities, shapes and naming sites its unit names: the constructors its global reads
-/// and frames name (`Vm::instanceof_fact`), the shapes its field loads prove
+/// the shapes and naming sites its unit names: the shapes its field loads prove
 /// (`Vm::shape_is_stable`), and its `SetFunctionName` sites (`Vm::native_function_name`). A
 /// question outside them answers that no fact holds, which folds less and stays exact.
 #[derive(Clone, Default, PartialEq)]
 pub(crate) struct FactTables {
-    pub(super) instanceofs: std::collections::BTreeMap<u64, quench_runtime::code_dependencies::InstanceofFact>,
     pub(super) stable_shapes: std::collections::BTreeSet<u32>,
     pub(super) names: std::collections::BTreeMap<(u16, Atom), (quench_runtime::staged::add_plan::Transition, u64)>,
     /// The capture reads of the unit's own instructions that reach the program root's environment

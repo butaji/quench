@@ -1226,10 +1226,8 @@ print(out.join(" "));
 #[test]
 fn forwarding_constructors_keep_their_initializers_constant_fields() {
     // Two closures of one forwarding constructor (`this.initialize.apply(this, arguments)`)
-    // whose initializers differ: the plan a forwarded construction records keeps which of
-    // its fields are constants (`record_forwarded_fields_in_lane`), so C's `this.w = 1` stays 1
-    // beside a defaulted parameter field. In a function, whose loops run in the lane. Node
-    // prints the same.
+    // whose initializers differ: C's `this.w = 1` stays 1 beside a defaulted parameter field.
+    // In a function, whose loops run in the lane. Node prints the same.
     let source = r#"
 (function () {
 var Class = { create: function() { return function() { this.initialize.apply(this, arguments); }; } };

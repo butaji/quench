@@ -2,7 +2,7 @@
 //! `typeof` and `for-in`. Each row builds the staged `Operation` the interpreter
 //! decodes for its instruction, over the row's places, and runs its family step on `StencilStage`
 //! (`staged/{steps,generic,control,names,heap}.rs`). The frame methods those steps call on `Places`
-//! live in `places_names.rs` (`typeof_entry`, `call_out_fast`).
+//! live in `places_names.rs` (`typeof_entry`).
 
 use crate::codes::{MEM, KEY_ROW, OBJECT_ROW, TYPEOF_INDEX_ROW, TYPEOF_STRING_ROW, TYPEOF_IS_ROW, TYPEOF_ISNOT_ROW};
 use crate::numeric::{HOLE_B, Out, S};
@@ -62,10 +62,10 @@ fn typeof_is_row<const NEGATED: bool>(s: S) -> Out {
     finish_fast(frame, done)
 }
 
-/// `ForInNext`'s fast arm: the for-in state (hole 1) yields its next key to the destination (hole 0)
-/// where the state's memo proves the snapshot current (`Frame::vm_step` answers `CallOut::ForInNext`
-/// through `Places::call_out_fast`, `iteration::for_in_next`), which moves the state's cursor; a hit
-/// continues at TAKEN. `names::for_in_next` branches on the exhausted marker, which the fast arm never yields.
+/// `ForInNext`: the for-in state (hole 1) yields its next key to the destination (hole 0) through the
+/// frame's `vm_step`, which answers no `CallOut::ForInNext` fast arm now (the memo needs the collection
+/// epoch, which no frame offers), so the row leaves to the call-out. `names::for_in_next` branches on the
+/// exhausted marker.
 #[inline(always)]
 fn for_in_row(s: S) -> Out {
     let mut frame = Places::new::<MEM, MEM, MEM>(s);

@@ -86,13 +86,13 @@ impl Lowering<'_, '_> {
                     if !proven {
                         let matched = match target.callee {
                             CalleeBinding::Function => self.function_binding(value, target.function),
-                            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.is_identity(value, identity),
+                            CalleeBinding::Identity(identity) => self.is_identity(value, identity),
                         };
                         emit_js_guard(&mut self.builder, matched, exit);
                     }
                     ty = match target.callee {
                         CalleeBinding::Function => Type::function_body(target.function),
-                        CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } =>
+                        CalleeBinding::Identity(identity) =>
                             Type::function(identity).expect("admitted callee locator"),
                     };
                 }
@@ -118,60 +118,27 @@ impl Lowering<'_, '_> {
                     _ => None,
                 }
             } else { None };
-            let stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> =
-                field.into_iter().flat_map(|index| self.loop_fields[index].stores.iter()).filter_map(|store| {
-                    // No own slot holds raw doubles (invariant I), so only an int32 store is carried.
-                    if !int32 { return None; }
-                    let site = self.unit.instructions[*store].cache_site_index();
-                    let binding = self.entry.as_ref()?.fields.iter().find_map(|(known, binding)|
-                        (*known == site).then_some(*binding));
-                    Some((*store, binding))
-                }).collect();
+            // No own slot holds raw doubles (invariant I), so only an int32 store is carried.
+            let stores: smallvec::SmallVec<[usize; INLINE_FIELD_BINDINGS]> = if int32 {
+                field.into_iter().flat_map(|index| self.loop_fields[index].stores.iter().copied()).collect()
+            } else { smallvec::SmallVec::new() };
             // A fixed class's receiver is no record: its stores project their union slots in its cell (`fixed_loop_store`).
-            let mut record_stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> = smallvec::SmallVec::new();
-            for (store, binding) in stores {
+            // An ordinary receiver's store names no loop slot: it takes the general store, whose class arms are the site's.
+            let mut has_record_stores = false;
+            for store in stores {
                 match receiver {
                     Some((owner, _)) if self.writable_class(store, Some(owner)).is_some() => {
                         if let Some(loop_store) = self.fixed_loop_store(state, store, owner) {
                             self.loop_stores.insert(store, loop_store);
                         }
                     }
-                    _ => record_stores.push((store, binding)),
+                    _ => has_record_stores = true,
                 }
             }
-            let stores = record_stores;
-            // An entry-fixed receiver has no record a store could name, so its record stores decline (`fixed_loop_store`).
-            let object_header = if !stores.is_empty() && !receiver.is_some_and(|(owner, _)| self.entry_fixed(Some(owner))) {
-                receiver.map(|(owner, _)| self.object_header(state, Some(owner), false, exit))
+            // An entry-fixed receiver has no record a store could name, so it proves no header (`fixed_loop_store`).
+            let object_header = if has_record_stores && !receiver.is_some_and(|(owner, _)| self.entry_fixed(Some(owner))) {
+                receiver.and_then(|(owner, _)| self.object_header(state, Some(owner), false, exit))
             } else { None };
-            if let (Some((owner, _)), Some(object_header)) = (receiver, object_header) {
-                let object = self.tagged(state, owner);
-                for (store, binding) in stores {
-                    let instruction = self.unit.instructions[store];
-                    let site = instruction.cache_site_index();
-                    let mut binding = binding.unwrap_or_else(|| emit_js_field_binding(
-                        &mut self.builder, self.payload, site, exit));
-                    self.admit_field_writes(&mut binding, Type::INT32, exit);
-                    let allowed = self.store_atom_admitted(state, instruction.atom_index(), exit);
-                    emit_js_guard(&mut self.builder, allowed, exit);
-                    let packed = self.builder.create_block();
-                    let packed_address = self.builder.append_block_param(packed, types::I64);
-                    let done = self.builder.create_block();
-                    let address = self.builder.append_block_param(done, types::I64);
-                    let arena_address = emit_js_cached_field_slot(&mut self.builder,
-                        self.payload, object, site,
-                        false, exit, Some(binding), Some(object_header), Some(packed));
-                    self.goto(done, &[arena_address]);
-                    self.builder.switch_to_block(packed);
-                    self.goto(done, &[packed_address]);
-                    self.builder.switch_to_block(done);
-                    let packed_range = field.and_then(|index| {
-                        let field = &self.loop_fields[index];
-                        field.stores.iter().position(|pc| *pc == store).and_then(|index| field.store_ranges[index])
-                    });
-                    self.loop_stores.insert(store, LoopStore { header: object_header, address, packed_range, domain: Type::INT32 });
-                }
-            }
             let read = LoopRead { value: variable, ty, representation, receiver, header: object_header, step: None };
             if let Some(index) = field {
                 for pc in &self.loop_fields[index].reads { self.hoisted.insert(*pc, read); }

@@ -171,18 +171,12 @@ fn site_holes(decoded: &Decoded, heap: Heap, base: u64, [dst_hole, a_hole, _]: [
     let folded = decoded.folded.map_or(0, Folded::word);
     let object = dst_hole | a_hole << numeric::site_bits::SITE_OBJECT_AT;
     Some(padded_holes(match heap {
-        Heap::IcGet | Heap::IcKnownGet | Heap::IcGetClass => { let (key, slot, _) = IcEntry::words(decoded.ic); [object, upper, key, slot, 0] }
+        Heap::IcGet | Heap::IcGetClass => { let (key, slot, _) = IcEntry::words(decoded.ic); [object, upper, key, slot, 0] }
         // A held class read names the holder cell's granule in hole 4 (`ic_rows::class_get_row`).
         Heap::IcHeldClass => { let (key, slot, holder) = IcEntry::words(decoded.ic); [object, upper, key, slot, holder] }
         // A class store takes no atom: the key names the cell, and the field index follows it.
         Heap::IcSetClass => { let (key, slot, _) = IcEntry::words(decoded.ic); [base, a_hole, key, slot, 0] }
-        Heap::IcSet { .. } | Heap::IcKnownSet { admitted: false, .. } => { let (shape, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), shape, offset] }
-        // An admitted store takes no atom test, so its shape is hole 2 (`slot_store::own_flat_known`) and the offset hole 3.
-        Heap::IcKnownSet { admitted: true, .. } => { let (shape, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, shape, offset, 0] }
-        // The flat rows read no shape: the offset follows the atom where the store tests it (`IcKnownSetFlat`), else leads.
-        Heap::IcKnownGetFlat => { let (_, offset, _) = IcEntry::words(decoded.ic); [object, upper, 0, offset, 0] }
-        Heap::IcKnownSetFlat { admitted: false, .. } => { let (_, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), offset, 0] }
-        Heap::IcKnownSetFlat { admitted: true, .. } => { let (_, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, offset, 0, 0] }
+        Heap::IcSet { .. } => { let (shape, offset, _) = IcEntry::words(decoded.ic); [base, a_hole, u64::from(decoded.atom.unwrap_or_default()), shape, offset] }
         Heap::SiteStore => [base, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisStore => [0, a_hole, decoded.hole, decoded.admitted_tags(), 0],
         Heap::ThisSite | Heap::ThisChain => [dst_hole, upper, decoded.hole, 0, 0],
@@ -246,8 +240,7 @@ fn heap_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_h
 /// A site read's or store's run with its inline-cache row (`Decoded::ic`) ahead of it: the row's
 /// hit, the shape it holds, continues at the next instruction; a miss, or a destination that
 /// cannot hold the word, falls to the site row behind it, which the entry tables answer, and then
-/// to the proof that the receiver is a direct object (`proofs`), which the receiver stays while its register
-/// holds it. A receiver every path proved takes the row that only compares its shape (`Decoded::proven`).
+/// to the proof that the receiver is a direct object (`proof_row`).
 fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hole), (a, a_hole)]: [(Place, u64); 2], mut site: Planned) -> Result<Planned, String> {
     let Some(_) = decoded.ic.filter(|_| matches!(heap, Heap::Site | Heap::SiteStore)) else { return Ok(site) };
     let receiver = if heap == Heap::Site { a_hole } else { decoded.base.map_or(0, |register| u64::from(homes.orig[usize::from(register)]) * SLOT) };
@@ -260,30 +253,21 @@ fn ic_plan(decoded: &Decoded, homes: &Homes, heap: Heap, pc: u32, [(dst, dst_hol
         }
         return Ok(site);
     }
-    // A typed object read's destination is proved a direct object on the site row's path as well (`proofs::typed_object`):
+    // A typed object read's destination is checked a direct object on the site row's path as well:
     // the fast row delivers a word the slot's dependency holds to be one, but the site row delivers any word, so the
     // proof leaves unless it is a direct object. The destination is a frame slot (`repr::keep_typed_reads`).
     let delivered = (heap == Heap::Site && decoded.typed.is_some_and(|dependency| dependency.ty == quench_runtime::typed_ir::Type::DIRECT_OBJECT_FAMILY))
         .then(|| proof_row(dst_hole, pc)).transpose()?;
     let int = decoded.slot.is_some_and(|ty| ty.is_subtype(quench_runtime::typed_ir::Type::INT32));
-    // A class-keyed entry takes the class rows, which test the live cell's class themselves, so neither the receiver's
-    // proof nor its flat form changes them.
-    let ic = match (heap, decoded.ic, decoded.proven, decoded.flat) {
-        (Heap::Site, Some(IcEntry::Class { holder: Some(_), .. }), _, _) => Heap::IcHeldClass,
-        (Heap::Site, Some(IcEntry::Class { holder: None, .. }), _, _) => Heap::IcGetClass,
-        (_, Some(IcEntry::Class { .. }), _, _) => Heap::IcSetClass,
-        (Heap::Site, _, false, _) => Heap::IcGet,
-        (Heap::Site, _, true, false) => Heap::IcKnownGet,
-        (Heap::Site, _, true, true) => Heap::IcKnownGetFlat,
-        (_, _, false, _) => Heap::IcSet { int },
-        (_, _, true, false) => Heap::IcKnownSet { int, admitted: decoded.admitted },
-        (_, _, true, true) => Heap::IcKnownSetFlat { int, admitted: decoded.admitted },
+    // A class-keyed entry takes the class rows, which test the live cell's class themselves.
+    let ic = match (heap, decoded.ic) {
+        (Heap::Site, Some(IcEntry::Class { holder: Some(_), .. })) => Heap::IcHeldClass,
+        (Heap::Site, Some(IcEntry::Class { holder: None, .. })) => Heap::IcGetClass,
+        (_, Some(IcEntry::Class { .. })) => Heap::IcSetClass,
+        (Heap::Site, _) => Heap::IcGet,
+        (_, _) => Heap::IcSet { int },
     };
-    // A known get whose slot the fact store proved a Number (`Decoded::typed`, kept by `repr::keep_typed_reads`)
-    // takes the row variant that delivers to its pinned double untested: its entry flag cleared. An object slot
-    // has no such variant: its destination is a direct object by the dependency alone (`proofs::typed_object`).
-    let untested = ic == Heap::IcKnownGet && decoded.typed.is_some_and(|dependency| dependency.ty.is_subtype(quench_runtime::typed_ir::Type::NUMBER)) && matches!(dst, Place::PinF(_));
-    let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: !untested };
+    let row = HeapRow { heap: ic, dst, a, b: Place::Mem, entry: true };
     let holes = heap_holes(decoded, homes, ic, false, [dst_hole, a_hole, 0]);
     let mut fast = Planned::single(base_rows::stencil(row)?, holes, Some(pc + 1), None);
     fast.exits = vec![Exit::Ahead(1)];
@@ -384,8 +368,7 @@ fn planned_row(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
         if let Some(step) = decoded.declines(a) {
             return plan_step(&Decoded::step(step, None), layout, pc, helpers);
         }
-        let planned = heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)])?;
-        return Ok(if decoded.recheck { planned.after(vec![stores_guard(pc)?]) } else { planned });
+        return heap_plan(decoded, homes, heap, pc, [(dst, dst_hole), (a, a_hole), (b, b_hole)]);
     }
     // `Math.pow` is the leaf call, whatever its operands' places: a constant operand is read from its own place
     // (`steps::leaf_operands`), so no `Math.pow` keeps the row for a constant exponent that is no `SmallPower`.
@@ -401,13 +384,6 @@ fn planned_row(decoded: &Decoded, layout: &Layout, pc: u32, (general, variant): 
         return Ok(planned);
     }
     number_plan(decoded, layout, pc, (general, variant, helpers), [(dst, dst_hole), (a, a_hole), (b, b_hole)])
-}
-
-/// The run's stores test before a store the proofs re-admit (`Decoded::recheck`), a mid-body guard: a miss leaves at the
-/// store's PC with nothing written, as a failed store guard does (`Exit::Spilling`), and a hit falls into the store.
-fn stores_guard(pc: u32) -> Result<Planned, String> {
-    let row = HeapRow { heap: Heap::Stores, dst: Place::Mem, a: Place::Mem, b: Place::Mem, entry: false };
-    Ok(Planned::single(base_rows::stencil(row)?, padded_holes([0, 0, 0]), None, Some(pc)))
 }
 
 /// The plan of a number row: a jump that polls the interrupt on a backward edge, or the chosen arithmetic row.

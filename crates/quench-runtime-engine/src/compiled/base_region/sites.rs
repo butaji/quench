@@ -122,7 +122,7 @@ pub(crate) fn membership_row(known: Known, pc: u32, instruction: WideInstruction
 /// the register `scratch`, then the jump to the instruction's target where that boolean is false.
 pub(crate) fn compare_jump(known: Known, pc: u32, instruction: WideInstruction, scratch: Register) -> Option<Vec<Decoded>> {
     matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::CompareJump { .. })).then_some(())?;
-    // S7f DESIGN: an `instanceof` jump has no row since the object-record walk went (S7j4a); its helper step decides it.
+    // An `instanceof` jump has no row (its helper step decides it, the general path).
     let compared = membership_row(known, pc, instruction, scratch)?;
     let jump = Decoded::number(Kind::JumpFalse, None, Some(Source::Register(scratch)), None, Some(instruction.jump_target()));
     Some(vec![compared, jump])

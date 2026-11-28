@@ -31,7 +31,7 @@ impl Lowering<'_, '_> {
     pub(super) fn body_entry(&self) -> bool { matches!(self.coverage, Coverage::Prefix | Coverage::PrefixFrom(_)) }
 
     /// The facts every run proves once at entry.
-    pub(super) fn entry_facts(&mut self, instructions: &[WideInstruction], _loops: &[(usize, usize)]) -> Entry {
+    pub(super) fn entry_facts(&mut self, instructions: &[WideInstruction]) -> Entry {
         let this_bits = match self.helpers {
             LaneHelpers::Numeric => unreachable!("Number signatures have no receiver"),
             LaneHelpers::Bound(..) => self.fixed_this(),
@@ -39,13 +39,10 @@ impl Lowering<'_, '_> {
             _ => self.entry_receiver_bits(),
         };
         let accesses_fields = self.accesses_fields(instructions);
-        // The receiver fact makes the receiver a direct object (`dispatch_fast::receiver_trusted`).
-        let trusted = accesses_fields && crate::dispatch_fast::receiver_trusted(self.vm.facts, self.function_id) && self.vm.online.is_some() && self.completion == Completion::Body;
         // A body whose named reads are all class-keyed reads its receiver's cell, never its record: no record is loaded here.
-        let receiver = if accesses_fields && !self.class_keyed_reads(instructions) { emit_lane_receiver(&mut self.builder, self.payload, this_bits, trusted) } else { self.absent_receiver() };
+        let receiver = if accesses_fields && !self.class_keyed_reads(instructions) { emit_lane_receiver(&mut self.builder, self.payload) } else { self.absent_receiver() };
         let this = self.builder.declare_var(types::I64);
         self.builder.def_var(this, this_bits);
-        let receiver_shapes = self.entry_receiver_shapes(&receiver);
         let store_atoms = self.entry_store_atoms(instructions);
         // The running activation's dense capture slots (`EnvironmentSlots::native_dense_view`),
         // fixed for the run; each read loads its slot where it runs, after any call that may
@@ -102,7 +99,7 @@ impl Lowering<'_, '_> {
                             let callee = self.raw_load(Lane::I64, regions::frame(), self.registers_base, register_offset(root));
                             let matched = match call.target.callee {
                                 CalleeBinding::Function => self.function_binding(callee, call.target.function),
-                                CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => self.is_identity(callee, identity),
+                                CalleeBinding::Identity(identity) => self.is_identity(callee, identity),
                             };
                             let exit = *miss.get_or_insert_with(|| self.builder.create_block());
                             emit_js_guard(&mut self.builder, matched, exit);
@@ -122,68 +119,8 @@ impl Lowering<'_, '_> {
                 emit_js_guard(&mut self.builder, matched, exit);
             }
         }
-        let fields = {
-            let mut fields = smallvec::SmallVec::new();
-            if matches!(self.helpers, LaneHelpers::Bound(..)) {
-                let mut uses = smallvec::SmallVec::<[(u16, bool, Type); INLINE_FIELD_BINDINGS]>::new();
-                for (pc, instruction) in instructions.iter().enumerate() {
-                    // An inlined call's later alternatives are entered by its switch, an edge
-                    // the bytecode facts do not see: their sites bind too, or they would read
-                    // through the VM's caches for the whole run.
-                    if !self.facts.reached(pc) && !matches!(self.unit.origins[pc], super::lane_unit::Origin::Inlined { .. }) { continue; }
-                    // A field chain names sequential sites, not alternatives for
-                    // one polymorphic access. Bind each distinct column once.
-                    let mut sites = smallvec::SmallVec::<[u16; 3]>::new();
-                    match () {
-                        _ if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::GetField { .. })) => match instruction.field_lookup() {
-                            Some(FieldLookup::Atom { cache_site, .. }) => sites.push(cache_site),
-                            Some(FieldLookup::Site(site)) => {
-                                let site = self.program.field_sites[site];
-                                sites.push(site.first.1);
-                                if let Some((_, cache)) = site.second { sites.push(cache); }
-                                if instruction.writes_current_this()
-                                    && let Some((_, cache)) = site.sink { sites.push(cache); }
-                            }
-                            _ => {},
-                        },
-                        _ if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. })) => sites.push(instruction.cache_site_index()),
-                        _ => {},
-                    }
-                    let repeated = _loops.iter().any(|&(header, back)| (header..=back).contains(&pc));
-                    for site in sites {
-                        let writes = if matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::SetField { .. })) {
-                            self.cell_before(pc, instruction.register_a()).ty.machine()
-                        } else if instruction.writes_current_this()
-                            && matches!(instruction.field_lookup(), Some(FieldLookup::Site(index))
-                                if self.program.field_sites[index].sink.is_some_and(|(_, sink)| sink == site)) {
-                            Type::ANY
-                        } else { Type::NEVER };
-                        if let Some((_, reused, domain)) = uses.iter_mut().find(|(known, _, _)| *known == site) {
-                            *reused |= repeated;
-                            *domain = domain.join(writes);
-                        } else { uses.push((site, repeated, writes)); }
-                    }
-                }
-                for (site, repeated, writes) in uses {
-                    let exit = *miss.get_or_insert_with(|| self.builder.create_block());
-                    let mut binding = emit_js_field_binding(&mut self.builder, self.payload, site, exit);
-                    let slot = binding.slot.read(&mut self.builder);
-                    binding.slot = FieldSlot::Bound(slot);
-                    // A slot whose writes the run does not admit leaves only at its stores
-                    // (`EmitFrame::bound_store`): the rest of the run, which reads it by shape, holds.
-                    if writes != Type::NEVER { binding.admitted = Some(self.field_writes_admitted(&mut binding, writes)); }
-                    // The extra entry arithmetic pays for repeated receiver loads.
-                    // A one-off access keeps its cheaper storage-plus-slot form.
-                    if repeated {
-                        binding.arena = binding.arena.bind(&mut self.builder, slot);
-                    }
-                    fields.push((site, binding));
-                }
-            }
-            fields
-        };
         self.admit_store_domains(instructions, &mut miss);
-        let records = self.entry_field_records(instructions, &receiver, this, &mut miss);
+        let records = self.entry_field_records(instructions, this);
         if let Some(miss) = miss {
             let admitted = self.builder.create_block();
             self.goto(admitted, &[]);
@@ -198,23 +135,7 @@ impl Lowering<'_, '_> {
             self.return_at(origin(self.coverage.entry()));
             self.builder.switch_to_block(admitted);
         }
-        Entry { receiver, records, receiver_shapes, store_atoms, capture_values, capture_len, capture_stores, environment, this, fields, calls, call_receivers }
-    }
-
-    /// Per receiver shape a field site folds, whether the receiver has it.
-    fn entry_receiver_shapes(&mut self, receiver: &LaneReceiver) -> BTreeMap<u32, Variable> {
-        let mut receiver_shapes = BTreeMap::new();
-        for field in self.fields.iter().flatten().flatten().filter(|field| !field.guessed()) {
-            if receiver_shapes.contains_key(&field.shape) {
-                continue;
-            }
-            let shape = self.builder.use_var(receiver.shape);
-            let same = self.raw_compare_imm(Relation::Equal, shape, i64::from(field.shape));
-            let variable = self.builder.declare_var(types::I8);
-            self.builder.def_var(variable, same);
-            receiver_shapes.insert(field.shape, variable);
-        }
-        receiver_shapes
+        Entry { receiver, records, store_atoms, capture_values, capture_len, capture_stores, environment, this, calls, call_receivers }
     }
 
     /// Per atom the unit stores, whether the run admits direct stores of it. A direct store of an
@@ -251,10 +172,9 @@ impl Lowering<'_, '_> {
     /// `invariant_field_records`; a body that left at its entry binds only its own receiver's
     /// record there (an object on every run of a method): the reads of a register it hoisted ran
     /// under a branch (`packet != null`) and the run declined at its start.
-    fn entry_field_records(&mut self, instructions: &[WideInstruction], receiver: &LaneReceiver, this: Variable,
-        miss: &mut Option<ir::Block>) -> Vec<Option<ObjectRecord>> {
+    fn entry_field_records(&mut self, instructions: &[WideInstruction], this: Variable) -> Vec<Option<ObjectRecord>> {
         let receiver_only = self.generic.contains(&entry_leave(self.unit));
-        self.invariant_field_records(instructions, receiver, this, miss, receiver_only)
+        self.invariant_field_records(instructions, this, receiver_only)
     }
 
     /// The register (or `unit.registers` for `this`) whose object the field access at `pc` reads or

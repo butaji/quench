@@ -54,11 +54,11 @@ fn refine_owner(state: &mut State, owner: Option<Register>, fact: Option<Verifie
 /// A dominating proof of `owner`'s object (a register's, or `this`'s), for its lifetime until
 /// an effect that may change it retires the proof (`State::headers`), derived from the
 /// entry's record certificate where it has one, otherwise proved here: for a `read` of a
-/// value not known to be a direct object, an object's or a function's record
-/// (`ObjectHeader::prove_readable`); for a store, an object's only. A store of a read's proof
-/// tests the family once, after which the proof is the object's.
+/// value not known to be a direct object, a function's record (`ObjectHeader::prove_readable`).
+/// An ordinary object has no record (every ordinary object is a class cell), so a store, and a
+/// read the entry proved no record for, answers None: its shape is not proved here.
 pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut Registers, state: &mut State,
-    (entry, payload): (&Entry, ir::Value), owner: Option<Register>, read: bool, exit: ir::Block) -> ObjectHeader {
+    (entry, payload): (&Entry, ir::Value), owner: Option<Register>, read: bool, exit: ir::Block) -> Option<ObjectHeader> {
     let fact = owner.map(|register| state.values[usize::from(register)].value);
     let bits = match owner {
         Some(register) => register_word(builder, registers, state, register),
@@ -76,7 +76,7 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
             refine_owner(state, owner, fact);
             for record in state.proofs.records.iter_mut().filter(|(word, ..)| *word == bits) { record.2 = false; }
         }
-        return header;
+        return Some(header);
     }
     let index = owner.map_or(state.values.len(), usize::from);
     let mut readable = false;
@@ -93,11 +93,9 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
         } else if read && !fact.is_some_and(|fact| super::tag_proofs::proves_object(fact.ty)) {
             readable = true;
             let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
-            let class_base = class_table_base(builder, payload);
-            ObjectHeader::prove_readable(builder, bits, fact, functions, class_base, exit)
+            ObjectHeader::prove_readable(builder, bits, fact, functions, exit)
         } else {
-            let class_base = class_table_base(builder, payload);
-            ObjectHeader::prove(builder, bits, class_base, fact, exit)
+            return None;
         };
         if kept.is_none_or(|(.., was_readable)| was_readable && !readable) {
             state.proofs.records.retain(|(word, ..)| *word != bits);
@@ -107,7 +105,7 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
     };
     state.proofs.headers.push((bits, header, readable));
     if !readable { refine_owner(state, owner, fact); }
-    header
+    Some(header)
 }
 
 /// The staged shape guard (`ic::guard_shape`) on the object `word` names, whose header `header` read its

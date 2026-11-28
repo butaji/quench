@@ -225,7 +225,7 @@ impl Lowering<'_, '_> {
             .and_then(|read| self.hoisted.get(&read).copied()).ok_or(())?;
         let target = self.unit.frames[frame].target;
         let admitted = match target.callee {
-            CalleeBinding::Identity(identity) | CalleeBinding::Forwarded { callee: identity, .. } => read.ty.function_identity() == Some(identity),
+            CalleeBinding::Identity(identity) => read.ty.function_identity() == Some(identity),
             CalleeBinding::Function => read.ty.body_index() == Some(target.function),
         };
         if admitted { Ok(Some(self.builder.use_var(read.value))) } else { Err(()) }

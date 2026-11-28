@@ -8,9 +8,8 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
-use super::super::object_slots::emit;
 use quench_runtime::staged::flow::FlowStage;
-use quench_runtime::staged::{Region, ShapeFact, Shaped, Stage};
+use quench_runtime::staged::{ShapeFact, Shaped, Stage};
 use super::field_plans::LanePlans;
 use super::fixed_cells::entry_fixed_record;
 use super::frame::calls;
@@ -138,10 +137,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
     /// The semantic type the lowering's state holds of the register: a static fact.
     fn value_fact(&self, register: Register) -> Type { self.state.values[usize::from(register)].value.ty }
 
-    /// S7f DESIGN: the object record table is gone (every ordinary object is a class cell), so no table is
-    /// offered; a planned read that needed it leaves through its own decline.
-    fn object_records(&mut self, _stage: &mut Emit<'b, 'c>) -> Option<ir::Value> { None }
-
     /// The entry's `this`, which a body that reads fields has proved bound.
     fn field_this(&mut self, stage: &mut Emit<'b, 'c>, _miss: ir::Block) -> Option<ir::Value> {
         Some(headers::this_word(stage.builder, self.this?))
@@ -183,22 +178,21 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             stage.builder.switch_to_block(other);
             let this = stage.builder.use_var(self.this?);
             let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
-            let class_base = headers::class_table_base(stage.builder, self.payload);
-            let header = ObjectHeader::prove_readable(stage.builder, this, None, functions, class_base, miss);
+            let header = ObjectHeader::prove_readable(stage.builder, this, None, functions, miss);
             // A readable proof names a record or a function's object, whose shape and storage form it reads.
             let (shape, inline) = (header.shape.expect("a readable header names a record"), header.inline.expect("a readable header names a record"));
             stage.goto(join, &[header.address, shape, inline]);
             stage.builder.switch_to_block(join);
             return Some(Reached { shape: Some(shape_at), inline: Some(inline_at), ..Reached::bare(record) });
         }
+        // An owner with no record to prove (`object_header`) leaves this native read: its shape is not held here.
         let header = match owner {
             Owner::Temporary => {
                 let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
-                let class_base = headers::class_table_base(stage.builder, self.payload);
-                ObjectHeader::prove_readable(stage.builder, object, None, functions, class_base, miss)
+                ObjectHeader::prove_readable(stage.builder, object, None, functions, miss)
             }
-            Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
-            Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),
+            Owner::This => self.object_header(stage.builder, entry, None, readable, miss)?,
+            Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss)?,
         };
         Some(Reached { shape: header.shape, inline: header.inline, word: header.word, auxiliary: header.auxiliary, ..Reached::bare(header.address) })
     }
@@ -287,11 +281,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(Some(free))
     }
 
-    fn field_store_bound(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, site: (u32, u16),
-        value: (ir::Value, Type), miss: ir::Block) -> Option<()> {
-        self.bound_store(stage, owner, object, site, value, miss)
-    }
-
     fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
         self.loop_slot_store(stage, site, value, miss)
     }
@@ -320,39 +309,11 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(())
     }
 
-    /// The VM's own field-cache read (`Vm::cached_field_hit`), prototype holders included,
-    /// through the site's bound slot first where the entry bound one; a miss leaves at `miss`.
-    fn field_probe(&mut self, stage: &mut Emit<'b, 'c>, owner: Owner, object: ir::Value, atom: u32, site: u16,
+    /// The VM's own field read of the receiver through its site: the general call-out, which a site with no class arm
+    /// takes at compile time. A class-keyed receiver's reads are its plan's class arms, which decide before the probe.
+    fn field_probe(&mut self, stage: &mut Emit<'b, 'c>, _owner: Owner, object: ir::Value, atom: u32, site: u16,
         miss: ir::Block) -> Option<ir::Value> {
-        let entry = self.entry();
-        let bound = entry.and_then(|entry| entry.fields.iter().find_map(|(known, binding)| (*known == site).then_some(*binding)));
-        let (Some(entry), Some(binding)) = (entry, bound) else {
-            return self.field_get_host(stage, object, atom, site, miss);
-        };
-        let header = self.proof_key(owner).map(|key| self.object_header(stage.builder, entry, key, true, miss));
-        let builder = &mut *stage.builder;
-        let (slow, done, packed) = (builder.create_block(), builder.create_block(), builder.create_block());
-        builder.set_cold_block(slow);
-        let packed_address = builder.append_block_param(packed, types::I64);
-        let result = builder.append_block_param(done, types::I64);
-        let address = emit_js_cached_field_slot(builder, self.payload, object,
-            site, true, slow, Some(binding), header, Some(packed));
-        let value = emit(builder).raw_load(Lane::I64, regions::property_flags(self.fields.as_ref().and_then(|facts| facts.property)), address, 0);
-        emit(builder).jump(done, &[value]);
-        builder.switch_to_block(packed);
-        let narrow = emit(builder).load_i32(Region::Payload.mutable(), packed_address, 0);
-        let table = match self.helpers {
-            LaneHelpers::Bound(_, symbol) => super::super::linked_narrow_table(builder, symbol),
-            // A linking lowering names the loader's table by symbol, never this process's address.
-            LaneHelpers::Ahead => crate::symbol_words::symbol_address(builder, crate::aot_image::symbols::NARROW_WORDS_NAMESPACE, 0),
-            _ => super::super::process_narrow_table(builder),
-        };
-        emit_narrow_read(builder, narrow, table, done);
-        builder.switch_to_block(slow);
-        let value = self.field_get_host(stage, object, atom, site, miss)?;
-        stage.jump(done, &[value]);
-        stage.builder.switch_to_block(done);
-        Some(result)
+        self.field_get_host(stage, object, atom, site, miss)
     }
 
     /// The VM's element read past a hole or an index past the backing (`frame_elements::index_get`).

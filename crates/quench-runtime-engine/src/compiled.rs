@@ -121,7 +121,7 @@ pub(crate) use quench_runtime::vm::engine_types::OwnedCallRecord;
 pub(crate) use lane_compile::FactTables;
 pub(crate) use lane_facts::bind_callees as bind_region_callees;
 pub(crate) use lane_region::ElementViews;
-pub(crate) use lane_region::{inlines_in_loop, inlines_in_loop_call, native_method_call};
+pub(crate) use lane_region::{inlines_in_loop_call, native_method_call};
 use quench_runtime::typed_ir;
 
 #[path = "compiled/facts.rs"]
@@ -585,198 +585,6 @@ pub(crate) fn emit_dense_array_uncounted(builder: &mut FunctionBuilder<'_>, view
     quench_runtime::staged::elements::uncount_backing(&mut object_slots::emit(builder), view.values);
 }
 
-/// Flat field input bound once for a no-GC, layout-preserving region. Values
-/// may change; the field table, arena and record reservation cannot.
-#[derive(Clone, Copy)]
-struct FieldSlotBinding {
-    receiver: ir::Value,
-    holder: ir::Value,
-    slot: FieldSlot,
-    arena: FieldArena,
-    writes: Option<quench_runtime::typed_ir::Type>,
-    /// Whether the run's entry admitted `writes` for the slot (`Lowering::entry_facts`): a
-    /// store through the binding guards it, so an unadmitted slot leaves only its stores.
-    admitted: Option<ir::Value>,
-}
-
-/// A bound slot moves invariant address arithmetic off the receiver-load chain.
-/// The remaining length is zero when the slot lies outside the arena; forming
-/// an integer base grants no permission to dereference it.
-#[derive(Clone, Copy)]
-enum FieldArena {
-    Unbound { values: ir::Value, length: ir::Value },
-    BoundSlot { base: ir::Value, remaining: ir::Value },
-}
-
-impl FieldArena {
-    fn bind(self, builder: &mut FunctionBuilder<'_>, slot: ir::Value) -> Self {
-        let Self::Unbound { values, length } = self else { return self; };
-        let (base, remaining) = quench_runtime::staged::object::bind_arena_slot(&mut object_slots::emit(builder), values, length, slot);
-        Self::BoundSlot { base, remaining }
-    }
-
-    fn address(self, builder: &mut FunctionBuilder<'_>, storage: ir::Value,
-        slot: FieldSlot, fallback: ir::Block) -> ir::Value
-    {
-        let (values, length, position) = match self {
-            Self::Unbound { values, length } => {
-                let slot = slot.read(builder);
-                (values, length, object_slots::emit(builder).add(storage, slot))
-            }
-            Self::BoundSlot { base, remaining } => (base, remaining, storage),
-        };
-        quench_runtime::staged::object::arena_slot_address(&mut object_slots::emit(builder), values, length, position, fallback)
-            .expect("the emit stage continues past its guards")
-    }
-}
-
-/// A region binds its slot once; a single operation decodes it only after
-/// storage admission so failed packed/shape probes do no slot work.
-#[derive(Clone, Copy)]
-enum FieldSlot {
-    Row(ir::Value),
-    Bound(ir::Value),
-}
-
-impl FieldSlot {
-    fn read(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
-        match self {
-            Self::Bound(value) => value,
-            Self::Row(row) => quench_runtime::staged::entry::entry_slot(&mut object_slots::emit(builder), row),
-        }
-    }
-}
-
-fn emit_js_field_binding(builder: &mut FunctionBuilder<'_>, payload: ir::Value,
-    site: u16, miss: ir::Block) -> FieldSlotBinding
-{
-    use quench_runtime::staged::machine::{Binary, Lane, Relation};
-    use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-    let entries = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.field_entries));
-    let (values, length) = emit_js_property_values(builder, payload);
-    let mut stage = object_slots::emit(builder);
-    // ObjectHeader owns record-base admission, including reused region proofs.
-    for base in [entries, values] {
-        let present = stage.raw_compare_imm(Relation::NotEqual, base, 0);
-        stage.guard(present, miss);
-    }
-    let entry = stage.add_imm(entries, (usize::from(site) * CACHE.entry_size) as u64);
-    let mut word = |offset: usize, complement: u32| {
-        let stored = stage.raw_load(Lane::I32, MemFlagsData::trusted(), entry, offset as i32);
-        let complement = stage.raw_const(Lane::I32, i64::from(complement));
-        stage.raw_binary(Binary::Xor, stored, complement)
-    };
-    let receiver = word(CACHE.receiver_offset, CACHE.receiver_complement);
-    let holder = word(CACHE.holder_offset, CACHE.holder_complement);
-    FieldSlotBinding { receiver, holder, slot: FieldSlot::Row(entry),
-        arena: FieldArena::Unbound { values, length }, writes: None, admitted: None }
-}
-
-// `packed_slot`, when requested, receives a proved own-slot address holding a narrow
-// u32. The ordinary return addresses a full tagged Value in arena or holder extras. Neither
-// projection survives an operation that can change storage or collect the object.
-fn emit_js_cached_field_slot(
-    builder: &mut FunctionBuilder<'_>,
-    payload: ir::Value,
-    receiver: ir::Value,
-    site: u16,
-    allow_holder: bool,
-    fallback: ir::Block,
-    binding: Option<FieldSlotBinding>,
-    header: Option<object_slots::ObjectHeader>,
-    packed_slot: Option<ir::Block>,
-) -> ir::Value {
-    use quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT as OBJECT;
-    use quench_runtime::staged::machine::{Binary, Lane, Relation};
-    use quench_runtime::staged::object::plain_payload;
-    use quench_runtime::staged::region::Region;
-    use quench_runtime::vm::NATIVE_FIELD_CACHE_LAYOUT as CACHE;
-
-    let base = receiver;
-
-    let binding = binding.unwrap_or_else(|| emit_js_field_binding(builder, payload, site, fallback));
-    let FieldSlotBinding { holder, receiver: receiver_shape, slot, arena, .. } = binding;
-    let own = object_slots::emit(builder).raw_compare_imm(Relation::Equal, holder, i64::from(CACHE.own_holder));
-    if !allow_holder {
-        emit_js_guard(builder, own, fallback);
-    }
-
-    let object_slots::ObjectHeader { record, shape, inline, address: object, .. } = header
-        .unwrap_or_else(|| {
-            let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
-            object_slots::ObjectHeader::prove(builder, base, class_base, None, fallback)
-        });
-    // A cached field read names a record, whose shape and storage form its header holds (a fixed class's cell takes `fixed_cells`).
-    let (Some(shape), Some(inline)) = (shape, inline) else { unreachable!("a cached field read's header names a record") };
-    // The exact shape includes dictionary storage, which cannot match an own-data row.
-    let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
-    emit_js_guard(builder, same_shape, fallback);
-    // A holder read uses only the receiver's shape and prototype link. Its own
-    // property representation is unrelated to the holder's slot address.
-    let own_storage = |builder: &mut FunctionBuilder<'_>| {
-        if let Some(packed_slot) = packed_slot {
-            let packed = builder.create_block();
-            let arena = builder.create_block();
-            object_slots::emit(builder).branch_if(inline, (packed, &[]), (arena, &[]));
-            builder.switch_to_block(packed);
-            let mut stage = object_slots::emit(builder);
-            let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
-            let plain = plain_payload(&mut stage, storage);
-            stage.guard(plain, fallback);
-            let slot = slot.read(stage.builder);
-            let fits = stage.raw_compare_imm(Relation::UnsignedLess, slot, OBJECT.inline_property_count as i64);
-            stage.guard(fits, fallback);
-            let stride = stage.raw_const(Lane::I64, size_of::<u32>() as i64);
-            let offset = stage.raw_binary(Binary::Mul, slot, stride);
-            let address = record.offset_address(stage.builder, offset);
-            let payload_offset = stage.raw_const(Lane::I64, OBJECT.payload_offset as i64);
-            let address = stage.raw_binary(Binary::Add, address, payload_offset);
-            stage.goto(packed_slot, &[address]);
-            builder.seal_block(packed);
-            builder.seal_block(arena);
-            builder.switch_to_block(arena);
-        }
-        let mut stage = object_slots::emit(builder);
-        if packed_slot.is_none() {
-            let arena_storage = stage.raw_compare_imm(Relation::Equal, inline, 0);
-            stage.guard(arena_storage, fallback);
-        }
-        // Plain storage has the arena start alone in the payload's lower half.
-        let storage = stage.raw_load(Lane::I64, MemFlagsData::trusted(), object, OBJECT.payload_offset as i32);
-        let half = stage.raw_const(Lane::I64, i64::from(u32::BITS));
-        let upper = stage.raw_binary(Binary::ShiftRightUnsigned, storage, half);
-        let plain = stage.raw_compare_imm(Relation::Equal, upper, 0);
-        stage.guard(plain, fallback);
-        storage
-    };
-    let address = if allow_holder {
-        let own_block = builder.create_block();
-        let holder_block = builder.create_block();
-        let join = builder.create_block();
-        builder.append_block_param(join, types::I64);
-        object_slots::emit(builder).branch_if(own, (own_block, &[]), (holder_block, &[]));
-        builder.switch_to_block(own_block);
-        let storage = own_storage(builder);
-        let address = arena.address(builder, storage, slot, fallback);
-        object_slots::emit(builder).goto(join, &[address]);
-
-        builder.switch_to_block(holder_block);
-        // S7f DESIGN: the prototype hop read the prototype's object record (the link's record id in the record table),
-        // which no ordinary object has. The holder read declines to the fallback until the hop reads the prototype's
-        // class cell (the lowered read's replacement for `object_record_at`).
-        object_slots::emit(builder).goto(fallback, &[]);
-        builder.seal_block(own_block);
-        builder.seal_block(holder_block);
-        builder.seal_block(join);
-        builder.switch_to_block(join);
-        builder.block_params(join)[0]
-    } else {
-        let storage = own_storage(builder);
-        arena.address(builder, storage, slot, fallback)
-    };
-    address
-}
-
 /// A word of the running dispatch's payload (`JsStepDispatch`).
 fn emit_js_payload_word(builder: &mut FunctionBuilder<'_>, payload: ir::Value, offset: usize) -> ir::Value {
     use quench_runtime::staged::region::Region;
@@ -868,11 +676,9 @@ fn class_mark_table() -> usize {
     std::mem::offset_of!(JsStepDispatch, head.class_mark_lists)
 }
 
-/// What a lane body knows of its receiver from entry on: the record, exact shape and
-/// storage mode found at entry, which only an adding store changes, after which the body reads
-/// them again (`Lowering::reload_receiver`); and the property arena's base, which an
-/// allocating helper may move, after which the body reloads it
-/// (`Lowering::reload_property_arena`).
+/// What a lane body knows of its receiver from entry on: `NO_FIELD_RECEIVER` as its shape, which no folded
+/// field matches (`emit_lane_receiver`); and the property arena's base, which an allocating helper may move,
+/// after which the body reloads it (`Lowering::reload_property_arena`).
 struct LaneReceiver {
     object: Variable,
     shape: Variable,
@@ -903,73 +709,26 @@ fn linked_data_symbol(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Glo
     })
 }
 
-/// The narrow decode's upper-word table in a live compile: this process's own table.
-fn process_narrow_table(builder: &mut FunctionBuilder<'_>) -> ir::Value {
-    object_slots::emit(builder).constant(quench_runtime::value::NarrowLayout::upper_words() as u64)
-}
-
-/// The narrow decode's upper-word table of a statically linked image: the object's copy.
-fn linked_narrow_table(builder: &mut FunctionBuilder<'_>, symbol: u32) -> ir::Value {
-    let global = linked_data_symbol(builder, symbol);
-    object_slots::emit(builder).symbol_address(global)
-}
-
-/// `staged::object::decode_narrow_through`'s residual for the 32-bit narrow word `narrow` and the
-/// table `address` it decodes through, passed to `join`.
-fn emit_narrow_read(builder: &mut FunctionBuilder<'_>, narrow: ir::Value,
-    address: ir::Value, join: ir::Block)
-{
-    use quench_runtime::staged::machine::{Lane, Unary};
-    let table = address;
-    let mut stage = object_slots::emit(builder);
-    let narrow = stage.raw_unary(Unary::ZeroExtend(Lane::I64), narrow);
-    let encoded = quench_runtime::staged::object::decode_narrow_through(&mut stage, narrow, table);
-    stage.goto(join, &[encoded]);
-}
-
-/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape
-/// where the receiver is no direct object or the heap bases are absent, which no folded
-/// field matches.
-/// `trusted`: the receiver fact holds (`dispatch_fast::receiver_trusted`), so `this` is a direct
-/// object the binding checked once, and only the tables are tested.
-fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value, this: ir::Value, trusted: bool) -> LaneReceiver {
-    use quench_runtime::staged::machine::{Binary, Lane, Relation, Unary};
+/// Establish a lane body's `LaneReceiver` once, at entry: `NO_FIELD_RECEIVER` as its shape and no record, which no folded
+/// field matches. An ordinary receiver is a class cell whose reads take its class word (`IcOp::GuardClass`), so no
+/// receiver record is walked here; a fixed class's receiver is named by its entry record (`fixed_cells`).
+fn emit_lane_receiver(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> LaneReceiver {
+    use quench_runtime::staged::machine::Lane;
     let receiver = LaneReceiver {
         object: builder.declare_var(types::I64),
         shape: builder.declare_var(types::I32),
         inline: builder.declare_var(types::I8),
         properties: builder.declare_var(types::I64),
     };
-    let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
     let (properties, _) = emit_js_property_values(builder, payload);
     builder.def_var(receiver.properties, properties);
-    let (found, done) = (builder.create_block(), builder.create_block());
-    // The payload is the stage's, so the record hop's class base reads the dispatch head (`Table::ClassSpace`).
-    let mut stage = object_slots::Emit { builder, property_values: None, gate: None, payload: Some(payload), facts: Default::default(), fresh: false };
+    let mut stage = object_slots::emit(builder);
     let none = stage.raw_const(Lane::I32, i64::from(quench_runtime::vm::NO_FIELD_RECEIVER));
     let null = stage.raw_const(Lane::I64, 0);
     let outside = stage.raw_const(Lane::I8, 0);
     stage.builder.def_var(receiver.shape, none);
     stage.builder.def_var(receiver.inline, outside);
     stage.builder.def_var(receiver.object, null);
-    // The direct object's granule must name a cell of the class space; its cell's header then names the record.
-    let granule = stage.raw_unary(Unary::Narrow(Lane::I32), this);
-    let granule = stage.raw_unary(Unary::ZeroExtend(Lane::I64), granule);
-    let in_range = stage.raw_compare_imm(Relation::UnsignedLess, granule, i64::from(quench_runtime::staged::layout_offsets::CLASS_SPACE_GRANULES));
-    let has_classes = stage.raw_compare_imm(Relation::NotEqual, class_base, 0);
-    let has_properties = stage.raw_compare_imm(Relation::NotEqual, properties, 0);
-    let ok = if trusted { in_range } else {
-        let object = quench_runtime::staged::value::is_direct_object(&mut stage, this);
-        stage.raw_binary(Binary::And, object, in_range)
-    };
-    let ok = stage.raw_binary(Binary::And, ok, has_classes);
-    let ok = stage.raw_binary(Binary::And, ok, has_properties);
-    stage.branch_if(ok, (found, &[]), (done, &[]));
-    stage.builder.switch_to_block(found);
-    // S7f DESIGN: the object record table is gone and a receiver names no record, so the receiver stays
-    // `NO_FIELD_RECEIVER`, which the slow path decides (the class cell's receiver read replaces this walk).
-    stage.goto(done, &[]);
-    builder.switch_to_block(done);
     receiver
 }
 
@@ -1119,7 +878,6 @@ lane_helper_inventory! {
     Construct => constructions::construct_in_lane,
     /// A materialized kept receiver's planned construction, made whatever is due (`materialize_construct_in_lane`).
     MaterializeConstruct => constructions::materialize_construct_in_lane,
-    ConstructReceiver => constructions::construct_receiver_in_lane,
     /// Whether a construct plan holds (`dispatch_fast::construct_plan_holds`).
     ConstructPlanHolds => constructions::construct_plan_holds_in_lane,
     /// A construction of the body's own, by the call protocol (`dispatch_fast::body_construct_helper`).
@@ -1401,8 +1159,6 @@ pub(crate) struct OnlineFacts<'a> {
     pub(crate) invalidation: usize,
     /// The program's constants as the VM made and roots them (`Vm::active_constant`).
     pub(crate) constants: &'a [Value],
-    /// What the VM proved of a constructor's `instanceof` (`Vm::instanceof_fact`), by its identity.
-    pub(crate) instanceofs: &'a dyn Fn(Value) -> Option<quench_runtime::code_dependencies::InstanceofFact>,
     /// Whether code may hold an object's exact shape past a call (`Vm::shape_is_stable`).
     pub(crate) shape_stable: &'a dyn Fn(u32) -> bool,
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
@@ -3238,16 +2994,13 @@ unsafe extern "C" fn field_set_in_lane(vm: u64, residual: u64, receiver: Value, 
     #[cfg(test)] FIELD_HELPER_CALLS.with(|counts| { let mut values = counts.get(); values[1] += 1; counts.set(values); });
     // SAFETY: as `field_get_in_lane`; a hit stores into an existing slot and allocates nothing.
     let (vm, residual) = unsafe { (&mut *(vm as *mut Vm), &*(residual as *const ResidualProgram)) };
-    // S7f DESIGN: the object record table is gone, so every direct object is classed as `NonRecord` by the profile.
-    #[cfg(feature = "profile-native-ops")]
-    let storage = quench_runtime::vm::native_op_profile::StoreStorage::NonRecord;
     // Only the primary entry's hit proves its slot's representation (`general_store`). A site past one shape
     // stores through the VM's polymorphic entries, which were record-tier and are gone (S7g): it leaves.
     let layout = quench_runtime::tier_surface::PropertyStoreLayout::PreserveNative;
     let hit = vm.primary_own_field_store_hit::<true>(residual, receiver, atom as Atom, value, site as u16, layout);
     if hit { general_store::record_store_class(vm, site as u16, value); }
     #[cfg(feature = "profile-native-ops")]
-    quench_runtime::vm::native_op_profile::record_store(storage, hit);
+    quench_runtime::vm::native_op_profile::record_store(hit);
     u64::from(hit)
 }
 
@@ -4288,12 +4041,8 @@ fn native_operation_fallback_kind(vm: &Vm, frame: usize, instruction: WideInstru
         }
         let cache = vm.field_cache_entry(cache_site);
         if cache.holder != NO_FIELD_HOLDER {
-            if cache.receiver != object.exact_shape() {
-                "prototype-receiver-shape-miss"
-            } else {
-                // S7f DESIGN: a prototype holder's record is gone, so every prototype read is non-record here.
-                "prototype-non-record"
-            }
+            // A prototype's slot is read through the holder's class cell, which the native shape path does not read.
+            "prototype-holder"
         } else if cache.receiver != object.exact_shape() {
             "own-shape-miss"
         } else {
@@ -8686,45 +8435,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn native_narrow_decoder_matches_value_bits() {
-        use quench_runtime::value::NarrowLayout as N;
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        let mut signature = ir::Signature::new(isa.default_call_conv());
-        signature.params.push(AbiParam::new(types::I32));
-        signature.returns.push(AbiParam::new(types::I64));
-        let mut function = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-        let mut context = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut function, &mut context);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        let narrow = builder.block_params(entry)[0];
-        let done = builder.create_block();
-        let result = builder.append_block_param(done, types::I64);
-        let table = process_narrow_table(&mut builder);
-        emit_narrow_read(&mut builder, narrow, table, done);
-        builder.switch_to_block(done);
-        builder.ins().return_(&[result]);
-        builder.seal_all_blocks();
-        builder.finalize(isa.frontend_config());
-        let memory = compile_native_function(function, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the function above accepts one u32 and returns its decoded u64.
-        let decode: unsafe extern "C" fn(u32) -> u64 = unsafe { std::mem::transmute(memory.pointer()) };
-        let indices = [0, 1, (1 << N::INTEGER_BITS) - 1, u32::MAX];
-        for code in 0..=N::CODE_MASK {
-            for index in indices {
-                let narrow = (index << N::INDEX_SHIFT) | (code << N::CODE_SHIFT);
-                assert_eq!(unsafe { decode(narrow) }, Value::from_narrow(narrow).to_bits());
-            }
-        }
-        let half = 1_i32 << (N::INTEGER_BITS - 1);
-        for integer in [i32::MIN, -half, -half + 1, -1, 0, 1, half - 1, half, i32::MAX] {
-            let narrow = ((integer as u32) << N::CODE_SHIFT) | N::INTEGER_FLAG;
-            assert_eq!(unsafe { decode(narrow) }, Value::from_narrow(narrow).to_bits());
-        }
-    }
-
     #[cfg(target_arch = "aarch64")]
     #[test]
     fn aarch64_logical_right_shift_selection_preserves_all_integer_widths() {
@@ -9729,52 +9439,6 @@ mod tests {
             vm.set_execution_mode(ExecutionMode::Compiled);
             let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{error}");
-        }
-    }
-
-    #[test]
-    fn bound_field_arena_preserves_slot_bounds() {
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        for bound in [false, true] {
-            let mut signature = Signature::new(isa.default_call_conv());
-            signature.params.extend([AbiParam::new(types::I64); 4]);
-            signature.returns.push(AbiParam::new(types::I64));
-            let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-            let mut context = FunctionBuilderContext::new();
-            let mut builder = FunctionBuilder::new(&mut native, &mut context);
-            let entry = builder.create_block();
-            builder.append_block_params_for_function_params(entry);
-            builder.switch_to_block(entry);
-            let p = builder.block_params(entry).to_vec();
-            let arena = FieldArena::Unbound { values: p[0], length: p[1] };
-            let arena = if bound { arena.bind(&mut builder, p[3]) } else { arena };
-            let miss = builder.create_block();
-            let address = arena.address(&mut builder, p[2], FieldSlot::Bound(p[3]), miss);
-            builder.ins().return_(&[address]);
-            builder.switch_to_block(miss);
-            let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-            builder.ins().return_(&[deleted]);
-            builder.seal_all_blocks();
-            builder.finalize(isa.frontend_config());
-            let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
-            // SAFETY: this function performs integer address arithmetic only and
-            // never dereferences the synthetic arena or returned address.
-            let run = unsafe { std::mem::transmute::<*mut u8,
-                unsafe extern "C" fn(u64, u64, u64, u64) -> u64>(memory.pointer()) };
-            let width = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as u64;
-            let base = width;
-            for (length, storage, slot) in [
-                (0, 0, 0), (1, 0, 0), (1, 0, 1), (1, 0, 2),
-                (3, 1, 1), (3, 2, 1),
-                (u64::from(u32::MAX), u64::from(u32::MAX), 0),
-                (u64::from(u32::MAX) + u64::from(u16::MAX) + 1,
-                    u64::from(u32::MAX), u64::from(u16::MAX)),
-            ] {
-                let expected = if storage + slot < length { base + (storage + slot) * width }
-                    else { Value::DELETED.to_bits() };
-                assert_eq!(unsafe { run(base, length, storage, slot) }, expected,
-                    "bound={bound}, length={length}, storage={storage}, slot={slot}");
-            }
         }
     }
 

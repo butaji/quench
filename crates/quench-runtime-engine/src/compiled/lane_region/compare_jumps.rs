@@ -182,8 +182,7 @@ impl Lowering<'_, '_> {
         // `Decide` helper cannot answer, the jump leaves to the exact path.
         let site = self.decide_record(pc, [left, right]).filter(|_| comparison.operator().is_some() && !matches!(comparison, Comparison::Decided(_)))
             .map(|record| self.call_out_site(pc, record, None));
-        let prototype = (comparison == Comparison::Instanceof).then(|| self.hold_instanceof(state, exit, right)).flatten();
-        let sites = frame::Sites { call_out: site.as_ref(), prototype, ..frame::Sites::default() };
+        let sites = frame::Sites { call_out: site.as_ref(), ..frame::Sites::default() };
         self.step_with(state, frame::Edges::Branch { target: taken, following: fall, miss: exit }, row, StepWith { sites, ..StepWith::default() });
         if comparison.runs_guest_code() { state.call_effect(); }
         self.continue_branch(state, pc, target, taken, fall);
