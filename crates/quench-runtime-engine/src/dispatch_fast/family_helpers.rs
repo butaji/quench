@@ -63,8 +63,8 @@ pub(crate) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Optio
     let instruction = raw.without_return();
     let operation = direct_operation(instruction)?;
     // SAFETY: the running lane's context; the VM, frame and program are the ones `lane_in_place` dispatches.
-    let (vm, frame, program) = unsafe { (&mut *(*cx).vm, (*cx).frame(), &*(*cx).code) };
-    if let Operation::SetField { value, base, .. } = operation { return unsafe { set_field(cx, program, instruction, value, base) }; }
+    let (vm, frame) = unsafe { (&mut *(*cx).vm, (*cx).frame()) };
+    if let Operation::SetField { value, base, .. } = operation { return unsafe { set_field(cx, instruction, value, base) }; }
     if !vm.lane_stack.activations().is_empty() || !unsafe { (*cx).leaf.call }.is_null() {
         return None;
     }
@@ -76,7 +76,7 @@ pub(crate) unsafe fn direct(cx: *mut LaneContext, first: u64, imm: u64) -> Optio
         Operation::ElementRead { base, key, .. } => element_read(vm, frame, instruction, base, key),
         Operation::ElementWrite { value, base, key, .. } => element_write(vm, frame, value, base, key),
         Operation::GetField { lookup: FieldLookup::Atom { atom, base, cache_site }, .. } =>
-            get_field(vm, program, frame, instruction, (atom, base, cache_site)),
+            get_field(vm, frame, instruction, (atom, base, cache_site)),
         Operation::LogicalNot { destination, source } => query(vm, frame, (destination, source), Vm::logical_not),
         Operation::TypeofIndex { destination, source } => query(vm, frame, (destination, source), Vm::typeof_index_value),
         _ => false,
@@ -129,7 +129,7 @@ fn element_write(vm: &mut Vm, frame: usize, value: Register, base: Register, key
 /// A named read of an object's own or prototype-held data field the cache site holds (`cached_field_hit`), the
 /// interpreter's `GetField` Atom arm without its getter, private-name and frame cases, which decline. A miss
 /// declines before the general read, which then probes the site again.
-fn get_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideInstruction,
+fn get_field(vm: &mut Vm, frame: usize, instruction: WideInstruction,
     (atom, base, cache_site): (Atom, FieldBase, u16)) -> bool {
     if base.local_index().is_some() || vm.is_private_name(atom) {
         return false;
@@ -142,7 +142,7 @@ fn get_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideIn
         return false;
     }
     vm.prepare_named_function_info_lookup(object, atom);
-    let FieldCacheProbe::Hit(value) = vm.cached_field_hit(p, object, cache_site) else {
+    let FieldCacheProbe::Hit(value) = vm.cached_field_hit(object, cache_site) else {
         return false;
     };
     vm.write(frame, instruction.result_register(), value);
@@ -150,12 +150,12 @@ fn get_field(vm: &mut Vm, p: &ResidualProgram, frame: usize, instruction: WideIn
 }
 
 /// A store to an own data field the site's entry holds (`cached_field_store_hit`, the interpreter's first `set_field_cached` arm) of a register's object or the fixed `this` (`fixed_this_in_lane`), in the innermost window, as the general step (`native_frames::in_innermost_frame`).
-unsafe fn set_field(cx: *mut LaneContext, p: &ResidualProgram, instruction: WideInstruction, value: Register, base: Option<Register>) -> Option<u64> {
+unsafe fn set_field(cx: *mut LaneContext, instruction: WideInstruction, value: Register, base: Option<Register>) -> Option<u64> {
     Some(super::native_frames::in_innermost_frame(cx, || {
         // SAFETY: the running lane's context, its innermost body's state installed.
         let (vm, r) = unsafe { (&mut *(*cx).vm, (*cx).registers) };
         let object = match base { Some(base) => Some(r.get(base)), None => unsafe { super::fixed_this_in_lane(cx, r) } };
-        if object.is_some_and(|object| vm.cached_field_store_hit(p, object, instruction.atom_index(), r.get(value), instruction.cache_site_index())) { LANE_CALL_COMPLETED } else { crate::compiled::LANE_CALL_MISSED }
+        if object.is_some_and(|object| vm.cached_field_store_hit(object, instruction.atom_index(), r.get(value), instruction.cache_site_index())) { LANE_CALL_COMPLETED } else { crate::compiled::LANE_CALL_MISSED }
     })).filter(|status| *status == LANE_CALL_COMPLETED)
 }
 

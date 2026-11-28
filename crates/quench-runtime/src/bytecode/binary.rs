@@ -217,7 +217,6 @@ fn encode_program(program: &super::ResidualProgram, atoms: AtomEncoding, source_
     let mut out = BinaryWriter::new();
     out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
-    out.u8(u8::from(program.specialized));
     out.u8(program.kind.binary_tag());
     out.string(&program.source_name);
     let source = program.source.as_ref().filter(|_| !matches!(source_encoding, SourceEncoding::Omitted));
@@ -630,11 +629,6 @@ fn decode_program(
     if abi != super::ResidualProgram::RUNTIME_ABI_FINGERPRINT {
         return Err("residual runtime ABI mismatch".into());
     }
-    let specialized = match input.u8()? {
-        0 => false,
-        1 => true,
-        _ => return Err("invalid residual specialization mode".into()),
-    };
     let kind = super::ProgramKind::from_binary_tag(input.u8()?)
         .ok_or_else(|| "invalid residual program kind".to_owned())?;
     let source_name = input.string()?;
@@ -861,7 +855,6 @@ fn decode_program(
     let rewrite_room = if input.bool()? { Some([input.u32()? as usize, input.u32()? as usize]) } else { None };
     input.finish()?;
     let mut program = super::ResidualProgram {
-        specialized,
         kind,
         module_requests,
         module_imports,

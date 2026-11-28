@@ -33,7 +33,7 @@ pub(crate) fn watch_construct_plan(vm: &mut Vm, index: usize, renew: bool, objec
 /// Whether program code may read field `atom` of the instances `callee` constructs (`AotFacts::field_has_reader`),
 /// settled once when a plan is built. Where the callee has no class of the running program, or its program has no
 /// facts, there is no fact to ask, and every field has a reader, as `field_has_reader` answers without a reader set.
-pub(crate) fn field_reader(vm: &Vm, callee: Value) -> impl Fn(u32) -> bool {
+pub(crate) fn field_reader(vm: &Vm, callee: Value) -> impl Fn(u32) -> bool + use<> {
     let (facts, class) = match vm.same_realm_user_target(callee).filter(|&(program, _, _)| program == vm.active_program) {
         Some((program, class, _)) => (vm.programs.aot_facts(program), Some(class)),
         None => (None, None),
@@ -74,8 +74,8 @@ pub(crate) fn initialize_stores_in_lane(
         ..EMPTY_CONSTRUCT_PLAN
     });
     // Each store's name and value, in store order: the plan's fields while it holds, and a fixed class's slot writes.
-    let mut atoms = [0; quench_runtime::heap::MAX_CELL_FIELDS];
-    let mut values = [Value::UNDEFINED; quench_runtime::heap::MAX_CELL_FIELDS];
+    let mut atoms = [0; quench_runtime::tier_surface::MAX_CELL_FIELDS];
+    let mut values = [Value::UNDEFINED; quench_runtime::tier_surface::MAX_CELL_FIELDS];
     let mut stored = 0;
     let nested = std::cell::Cell::new(None);
     let added = adds(vm, this, union.is_some(),

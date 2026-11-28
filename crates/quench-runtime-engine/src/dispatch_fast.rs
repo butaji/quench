@@ -122,7 +122,6 @@ macro_rules! returning_operator_row_of {
 
 
 use quench_runtime::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
-use quench_runtime::staged::Form;
 use quench_runtime::vm::tier_events::Event;
 use crate::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use quench_runtime::vm::dispatch_frame::PendingGeneralCall;
@@ -137,8 +136,6 @@ use quench_runtime::bytecode::{
 };
 #[cfg(feature = "jit")]
 use quench_runtime::wasm::float::F64UnaryOperator;
-use quench_runtime::wasm::integer::I32BinaryOperator;
-use quench_runtime::wasm::memory::{MemoryLoad, MemoryStore};
 
 /// The arithmetic operators the lane decides per operator (`lane_operator`,
 /// `returning_operator_miss`): `$pick!(OPERATOR)` of `$operator`'s, else `None`; or with
@@ -420,9 +417,9 @@ use quench_runtime::vm::lane_values::{self, HEAP_WINDOW};
 use quench_runtime::vm::lane_activations::LaneActivations;
 pub(crate) mod this_binding;
 use this_binding::ThisBinding;
-pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
+pub(crate) mod loop_fields;
 pub(crate) mod construct_plan; pub(crate) mod super_chain; use super_chain::super_construction; pub(crate) mod setters; pub(crate) mod proxy_traps; pub(crate) mod accessor_protocol; pub(crate) mod completions; use completions::*;
-use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, field_reader, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, site_class_in_lane, planned_site_in_lane, planned_quick_site_in_lane, initialize_site_in_lane, inline_receiver_site_in_lane};
+use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, site_class_in_lane, planned_site_in_lane, planned_quick_site_in_lane, initialize_site_in_lane, inline_receiver_site_in_lane};
 pub(crate) use construct_plan::{body_construction_in_lane, context_constructs_in_lane, construct_plan_holds, materialized_construction_in_lane};
 use accessor_protocol::AccessorCall;
 pub(crate) mod list_calls;
@@ -2850,11 +2847,8 @@ script_handler! {
         // proved inherited entry first, neither of which walks the chain.
         let quick = quench_runtime::bytecode::FieldBase(i.b).register_index().and_then(|register| {
             let vm = unsafe { vm(cx) };
-            // SAFETY: the context's program outlives the lane run.
-            let code = unsafe { &*(*cx).code };
             let object = r.get(register);
-            vm.specialized_operations_enabled(code).then_some(())?;
-            vm.proved_inherited_field_hit(code, object, i.c)
+            vm.proved_inherited_field_hit(object, i.c)
         });
         let Some(value) = quick.or_else(|| unsafe { field_value_in_lane(cx, r, i) }) else {
             if let Some(base) = field_read_beside_activations_in_lane(cx, r, i) {
@@ -2958,7 +2952,7 @@ script_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
-        if !vm.cached_field_write_hit(code, this, sink.0, value, sink.1) {
+        if !vm.cached_field_write_hit(this, sink.0, value, sink.1) {
             return exit(ip);
         }
         // Adding a property can allocate.
@@ -4045,7 +4039,7 @@ impl Vm {
         // its own program; a target is a callee's fact, so the form is the same at every site that calls it. The
         // body's shape is taken within it.
         let frameless = quench_runtime::compile::call_plan::entry_form(self.programs.aot_facts(program).as_deref(), function)
-            == quench_runtime::staged::effects::CallForm::Frameless;
+            == quench_runtime::compile::call_plan::CallForm::Frameless;
         // SAFETY: the program store keeps a derived view alive with its program.
         let shape = *unsafe { &*view }.target_body.get_or_init(|| {
             let constructs = Self::inline_constructible(body);
@@ -4199,13 +4193,6 @@ impl Vm {
         capture
     }
 
-    /// Whether `program` runs in the lane when dynamic execution is allowed:
-    /// Wasm always, JavaScript where it and the VM are specialized. A lane run keeps its program and the VM's specialization, so the
-    /// lane's field caches (`Vm::primary_own_field_hit` and its kin) need not test them.
-    pub(crate) fn specialized_operations_enabled(&self, program: &ResidualProgram) -> bool {
-        program.kind == quench_runtime::bytecode::ProgramKind::Wasm || (self.specialized && program.specialized)
-    }
-
     /// Whether the lane may run program `id`: every program in a dynamic build, else one with a loaded AOT image.
     pub(crate) fn may_run_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
         self.execution_mode.allows_dynamic_execution() || self.programs.ahead_images(id, code).is_some()
@@ -4217,7 +4204,7 @@ impl Vm {
     }
 
     pub(crate) fn admits_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
-        self.may_run_in_lane(id, code) && self.specialized_operations_enabled(code)
+        self.may_run_in_lane(id, code)
     }
 
     /// The words a lane run's direct calls push onto (`compiled::DirectCallee`), bound together: the
@@ -5455,7 +5442,7 @@ script_handler! {
         if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some()) {
             return exit(ip);
         }
-        let Some(this) = unsafe { planned_quick_site_in_lane(vm, cx, ip, r, i) } else {
+        let Some(this) = (unsafe { planned_quick_site_in_lane(vm, cx, ip, r, i) }) else {
             sibling!(planned_construct_full_in_lane, r, ip, Carried::script_in(cx, view))
         };
         r.set(i.a, this);
@@ -5473,7 +5460,7 @@ script_handler! {
     #[inline(never)]
     fn planned_construct_full_in_lane<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
-        let Some(this) = unsafe { planned_site_in_lane(vm, cx, ip, r, i) } else {
+        let Some(this) = (unsafe { planned_site_in_lane(vm, cx, ip, r, i) }) else {
             sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
         };
         // Allocating the receiver can make a collection due.

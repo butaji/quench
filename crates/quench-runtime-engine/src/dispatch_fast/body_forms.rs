@@ -41,7 +41,6 @@ pub(crate) struct BodyCall<'a> {
     pub(crate) ip: Ip,
     /// The running activation's `this`; the deleted marker where the body reads a lexical one.
     this: Value,
-    code: &'a ResidualProgram,
     /// The registers of a method call's argument list; none for a window.
     list: &'a [Register],
 }
@@ -75,7 +74,7 @@ impl<'a> BodyCall<'a> {
             Arguments::Window { .. } => &[],
         };
         // SAFETY: `call_pc` is a record of the function whose records start at `base`.
-        Some(Self { site, registers, ip: unsafe { base.add(call_pc as usize) }, this, code, list })
+        Some(Self { site, registers, ip: unsafe { base.add(call_pc as usize) }, this, list })
     }
 
     /// How many arguments the call passes.
@@ -101,7 +100,7 @@ impl<'a> BodyCall<'a> {
             Receiver::This { path } => {
                 let this = Some(self.this).filter(|this| !this.is_deleted())?;
                 let Some((_, cache)) = path else { return Some(this) };
-                match vm.cached_field_hit(self.code, this, cache) {
+                match vm.cached_field_hit(this, cache) {
                     FieldCacheProbe::Hit(value) => Some(value),
                     FieldCacheProbe::OrdinaryMiss | FieldCacheProbe::Ineligible => None,
                 }
@@ -117,7 +116,7 @@ impl<'a> BodyCall<'a> {
     pub(crate) fn callee(&self, vm: &mut Vm, receiver: Value) -> Option<Value> {
         match self.site.callee {
             Callee::Register(register) => Some(self.registers.get(register)),
-            Callee::Method { atom, site } => vm.method_cache_load(self.code, site as usize, atom, receiver),
+            Callee::Method { atom, site } => vm.method_cache_load(site as usize, atom, receiver),
             Callee::Known(function) => known_callee(vm, self.link(), function),
         }
     }

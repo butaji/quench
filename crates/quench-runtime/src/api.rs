@@ -9899,7 +9899,6 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         let host = TestHost::default().with_test262();
         let mut runtime = Runtime::new(host);
         let program = Engine::specialize(source, "specialized.js").unwrap();
-        assert!(program.specialized);
         assert!(program.cache_sites.get() > 0);
         assert!(program.functions.iter().any(|function| {
             function

@@ -3583,7 +3583,7 @@ pub(crate) fn native_commonjs_source(
         keep_records: entry, typescript,
     };
     let source = [WRAPPER_PREFIX, body, WRAPPER_SUFFIX].concat();
-    quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &["specialized", &options.cache_goal(), &source])
+    quench_runtime::NativeSourceKey::new(&filename.to_string_lossy(), &[&options.cache_goal(), &source])
 }
 
 /// Compiles and evaluates a CommonJS wrapper. An entry module's functions keep their compiled

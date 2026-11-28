@@ -195,8 +195,7 @@ impl Vm {
 
     /// The facts of the program's sites the code folds, where it `folds`: its membership tests, and its global names'
     /// accesses, which read the global object's slots under its layout.
-    fn site_facts(&mut self, folds: bool, program: &ResidualProgram, function: u32, code: &[WideInstruction], body: &quench_runtime::bytecode::Function) -> SiteFacts {
-        if !folds { return SiteFacts { presences: Vec::new(), globals: None }; }
+    fn site_facts(&mut self, program: &ResidualProgram, function: u32, code: &[WideInstruction], body: &quench_runtime::bytecode::Function) -> SiteFacts {
         SiteFacts {
             presences: self.membership_facts(code),
             globals: Some(self.global_table(program, function, &super::lane_unit::whole_function(body), GlobalTable::Base)),
@@ -272,9 +271,8 @@ impl Vm {
         let seen = observed(parameters);
         let callees = self.stitch_callees(program, function, region.instructions(), &direct(&mut *self));
         let invalidation = Invalidation::default();
-        // Where the VM and the program run specialized, the code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
-        let folds = self.specialized && program.specialized;
-        let SiteFacts { presences, globals } = self.site_facts(folds, program, function, region.instructions(), body);
+        // The code holds Stable facts: stores run in place for the atoms no method cache names, prototype-held reads fold.
+        let SiteFacts { presences, globals } = self.site_facts(program, function, region.instructions(), body);
         let classes = self.class_prototypes(program, function, region.instructions(), parameters);
         let reads = |site: u16| self.native_field_read_descriptors(site);
         let adds = |site: u16, atom, chained| self.native_field_add(site, atom, chained);

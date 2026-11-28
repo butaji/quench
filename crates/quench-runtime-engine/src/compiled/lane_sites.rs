@@ -33,7 +33,7 @@ impl Vm {
                     Some((_, value)) => GlobalRead::Constant(*value),
                     None => match stored.get(&atom) {
                         Some(slot) => *slot,
-                        None => self.stable_global_read(program, atom, site),
+                        None => self.stable_global_read(atom, site),
                     },
                 };
                 (pc, read)
@@ -174,7 +174,7 @@ impl Vm {
             if !self.reads_global_scope(program, function, atom) {
                 return None;
             }
-            match self.stable_global_read(program, atom, load.cache_site_index()) {
+            match self.stable_global_read(atom, load.cache_site_index()) {
                 GlobalRead::Stable { value, fact, .. } if value == callee => Some(Held::Global(fact)),
                 _ => None,
             }
@@ -207,7 +207,7 @@ impl Vm {
         if entered.contains(member) || base.register_index()? != code[read].result_register() { return None; }
         let load = code[read];
         if !quench_runtime::staged::meaning::means(load, quench_runtime::staged::meaning::Meaning::ThrowingNameLoad) || !self.reads_global_scope(program, function, load.atom_index()) { return None; }
-        let GlobalRead::Stable { value: object, .. } = self.stable_global_read(program, load.atom_index(), load.cache_site_index()) else { return None };
+        let GlobalRead::Stable { value: object, .. } = self.stable_global_read(load.atom_index(), load.cache_site_index()) else { return None };
         let value = self.own_plain_data(object, atom)??;
         let quench_runtime::tier_surface::FunctionRecord { kind: quench_runtime::tier_surface::FunctionKind::Native(native), .. } = self.function_record(value)? else { return None };
         let native = *native;

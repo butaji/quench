@@ -250,7 +250,7 @@ pub(crate) use view_holders::live_view_changed;
 
 /// The inline fields of the largest class cell region (`class_space`). A class with more fields spills past it
 /// (`layouts::spill_from`), so this bounds inline words only, never the field count.
-pub(crate) const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
+pub const MAX_CELL_FIELDS: usize = crate::staged::object_encoding::region_field_capacity(crate::staged::object_encoding::CAPACITY_CLASSES as u32 - 1);
 
 /// The class cell region of `fields` fields: the smallest of regions `1..CAPACITY_CLASSES` whose capacity
 /// holds them (an empty object's is region 1). Past the largest region the cell takes the largest region and

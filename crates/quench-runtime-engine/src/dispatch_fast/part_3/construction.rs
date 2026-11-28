@@ -101,14 +101,14 @@ pub(in super::super) fn forwarded_construction_in_lane(
     // A read of `name` or `length` prepares its lookup (`Vm::reads_function_info`), which
     // only the general read does.
     let function = match (!vm.reads_function_info(method.method.0))
-        .then(|| vm.polymorphic_field_hit(code, this, method.method.1))
+        .then(|| vm.polymorphic_field_hit(this, method.method.1))
         .flatten()
     {
         Some(function) => function,
         None => lane_frame::LaneFrame::<ACC_NONE>::cached_read(cx, code, this, method.method.0, method.method.1, 0)?,
     };
     let apply = match (!vm.reads_function_info(method.apply.0))
-        .then(|| vm.cell_holder_field_hit(code, function, method.apply.1))
+        .then(|| vm.cell_holder_field_hit(function, method.apply.1))
         .flatten()
     {
         Some(apply) => apply,

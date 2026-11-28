@@ -99,8 +99,8 @@ pub(crate) fn general_field_read(context: *mut (), record: usize, register: bool
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let quick = if register && vm.specialized_operations_enabled(code) {
-        vm.proved_inherited_field_hit(code, object, site)
+    let quick = if register {
+        vm.proved_inherited_field_hit(object, site)
     } else {
         None
     };

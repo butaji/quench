@@ -8,7 +8,6 @@ use super::lane_unit::CalleeBinding;
 use quench_runtime::vm::tier_policy::{lane_body_tier, PredictedTier};
 use quench_runtime::bytecode::{Function, ResidualProgram};
 use crate::dispatch_fast::lane_body_stats::{miss, Miss};
-use crate::dispatch_fast::LaneView;
 use quench_runtime::vm::Vm;
 
 /// Why a compile or a callee's admission is refused. Each variant is one refusal site. The OSR region reasons (`RegionRejection`) share this enum

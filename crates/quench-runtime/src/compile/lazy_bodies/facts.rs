@@ -50,7 +50,7 @@ pub(in crate::compile) struct BodyFacts {
     /// The functions checked without their tree whose bodies may stream, which their
     /// compilation finds by reading their statements first (`statement_stream`).
     pub(in crate::compile) stream_candidates: FxHashSet<u32>,
-    pub(in crate::compile) native_source_requests: Option<(bool, Vec<crate::compile::NativeSourceKey>)>,
+    pub(in crate::compile) native_source_requests: Option<Vec<crate::compile::NativeSourceKey>>,
 }
 
 impl BodyFacts {
@@ -120,8 +120,8 @@ impl BodyFacts {
         }
         self.checked.push(program.span.start);
         let inner = self.compose_released(program, built.semantic.scoping());
-        if let Some((specialized, requests)) = &mut self.native_source_requests {
-            requests.extend(crate::compile::Engine::native_source_requests(program, built.semantic.scoping(), *specialized, global_script_calls));
+        if let Some(requests) = &mut self.native_source_requests {
+            requests.extend(crate::compile::Engine::native_source_requests(program, built.semantic.scoping(), global_script_calls));
         }
         self.add_facts(&built.semantic, program, in_function, &inner);
         true

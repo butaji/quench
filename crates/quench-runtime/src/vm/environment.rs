@@ -2122,7 +2122,7 @@ impl Vm {
     ) -> Result<Value, JsError> {
         if let Some(cache) = cache
             && let super::object::FieldCacheProbe::Hit(value) =
-                self.cached_field_hit(p, self.realm.globals, cache)
+                self.cached_field_hit(self.realm.globals, cache)
         {
             return Ok(value);
         }
