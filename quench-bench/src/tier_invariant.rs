@@ -148,7 +148,7 @@ struct Report {
     violation_count: usize,
 }
 
-fn mode_engines(options: &Options, config: &Config) -> Vec<EngineSpec> {
+fn mode_engines(options: &Options) -> Vec<EngineSpec> {
     let mut engines: Vec<EngineSpec> = MODES
         .iter()
         .map(|mode| {
@@ -192,7 +192,7 @@ fn fixture_report(
     }
 }
 
-fn print_table(config: &Config, name: &str, report: &FixtureReport) {
+fn print_table(name: &str, report: &FixtureReport) {
     let cells = MODES.iter().map(|mode| {
         let score = report.scores[mode.label];
         let rss = report.max_rss_bytes[mode.label];
@@ -234,12 +234,12 @@ fn parse(args: &[String]) -> (Config, Options) {
 pub(crate) fn run(args: &[String]) -> i32 {
     let (config, options) = parse(args);
     let (config, options) = (&config, &options);
-    let engines = mode_engines(options, config);
+    let engines = mode_engines(options);
     let mut fixtures = BTreeMap::new();
     for file in selected_fixtures(options) {
         let record = run_fixture(options.suite, &file, &engines, options.rounds, options.timeout_ms);
         let report = fixture_report(config, &record.summaries, record.valid, record.output_equal);
-        print_table(config, &fixture_name(&file), &report);
+        print_table(&fixture_name(&file), &report);
         fixtures.insert(fixture_name(&file), report);
     }
     let violation_count = fixtures.values().map(|fixture| fixture.violations.len()).sum();
