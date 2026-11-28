@@ -17,7 +17,7 @@ fn eager_publication_reports_lane_bodies() {
         function sum(n) { let s = 0; for (let i = 0; i < n; i++) { s += i * 2; } return s; }
         globalThis.answer = sum(1000);
     "#;
-    let program = Engine::specialize_unspecialized(source, "eager-report.js").unwrap();
+    let program = Engine::specialize(source, "eager-report.js").unwrap();
     // The counts describe this publication's lowering; stencil publication has
     // its own shapes and is measured separately.
     let native = crate::NativeJsProgram::publish(program.clone()).unwrap();

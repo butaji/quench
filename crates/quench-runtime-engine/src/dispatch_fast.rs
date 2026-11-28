@@ -7169,9 +7169,6 @@ pub(crate) mod on_demand_metadata;
 use on_demand_metadata::lane_completes_return;
 
 #[cfg(test)]
-pub(crate) mod numeric_pair_tests;
-
-#[cfg(test)]
 pub(crate) mod leaf_call_tests;
 #[cfg(test)]
 pub(crate) mod retirement_tests;

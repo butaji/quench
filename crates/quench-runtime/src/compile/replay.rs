@@ -802,7 +802,7 @@ pub(crate) fn recompile_source(
     program: &crate::bytecode::ResidualProgram,
     id: u32,
 ) -> Result<Recompiled, String> {
-    use super::{Compiler, Constant, SpecializationMode, capture_layout, liveness};
+    use super::{Compiler, Constant, capture_layout, liveness};
     let replay = program.replay.as_deref().ok_or("the program keeps no replay")?;
     let function_replay = replay
         .functions
@@ -864,12 +864,7 @@ pub(crate) fn recompile_source(
         index: &replay.atoms,
         specialized: replay.specialized,
     };
-    let mode = if replay.specialized {
-        SpecializationMode::Enabled
-    } else {
-        SpecializationMode::Disabled
-    };
-    let mut compiler = Compiler::new(&program.source_name, text, mode, &atoms, FxHashMap::default());
+    let mut compiler = Compiler::new(&program.source_name, text, &atoms, FxHashMap::default());
     compiler.source_comments = parsed
         .program
         .comments

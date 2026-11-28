@@ -26,13 +26,8 @@ mod growth;
 const PAIR_INITIAL: f64 = 17.5;
 const PAIR_FACTOR: f64 = 0.5;
 
-fn call_boundary<const NATIVE: bool, const BODY: bool, const SPECIALIZED: bool>(b: &mut Bencher) {
-    let compile = if SPECIALIZED {
-        crate::Engine::specialize
-    } else {
-        crate::Engine::specialize_unspecialized
-    };
-    let program = compile(
+fn call_boundary<const NATIVE: bool, const BODY: bool>(b: &mut Bencher) {
+    let program = crate::Engine::specialize(
         "function identity(x) { return x; } var nativeAbs = Math.abs;",
         "primitive-call.js",
     ).unwrap();
@@ -72,13 +67,11 @@ fn call_boundary<const NATIVE: bool, const BODY: bool, const SPECIALIZED: bool>(
 // The native body includes its rooting policy and interrupt check. It omits
 // callee lookup, realm/native activation and stack guarding of the full call.
 #[bench]
-fn primitive_call_native_abs_batch(b: &mut Bencher) { call_boundary::<true, false, false>(b); }
+fn primitive_call_native_abs_batch(b: &mut Bencher) { call_boundary::<true, false>(b); }
 #[bench]
-fn primitive_call_native_abs_body_batch(b: &mut Bencher) { call_boundary::<true, true, false>(b); }
+fn primitive_call_native_abs_body_batch(b: &mut Bencher) { call_boundary::<true, true>(b); }
 #[bench]
-fn primitive_call_user_identity_general_batch(b: &mut Bencher) { call_boundary::<false, false, false>(b); }
-#[bench]
-fn primitive_call_user_identity_specialized_batch(b: &mut Bencher) { call_boundary::<false, false, true>(b); }
+fn primitive_call_user_identity_batch(b: &mut Bencher) { call_boundary::<false, false>(b); }
 
 fn native_arity<const DERIVED: bool>(b: &mut Bencher) {
     use crate::heap::Native;

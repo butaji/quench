@@ -4297,7 +4297,6 @@ impl ResidualProgram {
                 methods: self,
                 field_sites: &self.field_sites,
                 superinstructions: &self.superinstructions,
-                specialized: self.specialized,
                 undefined_constant,
             },
             |atom| self.atoms.get(atom),

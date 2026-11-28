@@ -8,7 +8,7 @@ const BACKEND_COMPILER_SYMBOLS: &[&str] = &[
     "cranelift_native", "cranelift_object", "cranelift_module", "target_isa_for",
 ];
 const JS_SOURCE_COMPILER_SYMBOLS: &[&str] = &[
-    "FunctionCompiler", "specialize_host_script", "specialize_with_mode",
+    "FunctionCompiler", "specialize_host_script", "specialize_with_private_names",
     "specialize_module_with_atom_prefix", "specialize_eval_with_context",
     "specialize_function_constructor",
 ];

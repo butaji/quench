@@ -739,7 +739,6 @@ mod tests {
         for (foreign, message) in [
             (Engine::specialize("function foreign() { print('effect'); } foreign();", "foreign.js").unwrap(), "atom IDs"),
             (Engine::specialize("function foreign(argument) { print(extra); } foreign();", "foreign.js").unwrap(), "atom IDs"),
-            (Engine::specialize_unspecialized("function original() { print('effect'); } original();", "native-bootstrap.js").unwrap(), "specialization"),
         ] {
             let native = crate::NativeJsProgram::publish(foreign).unwrap();
             let mut runtime = Runtime::new(crate::test_host::TestHost::default());
