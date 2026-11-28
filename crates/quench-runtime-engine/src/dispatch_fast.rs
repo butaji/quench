@@ -4071,7 +4071,7 @@ impl Vm {
             && shape.entry == CallEntry::framed(Framed::Activates)
             && tier_may_claim
             // SAFETY: as below.
-            && (!crate::compiled::admission::lane_bodies_enrolled(self) || unsafe { &*view }.tier_unclaimed_in_lane())
+            && (!quench_runtime::vm::tier_policy::lane_bodies_claim(&self.programs) || unsafe { &*view }.tier_unclaimed_in_lane())
         {
             // SAFETY: the program store keeps a derived view alive with its program.
             unsafe { &*view }.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow);
@@ -4135,7 +4135,7 @@ impl Vm {
     /// Whether a callee of another program (where `cross`) may take the tier prologue: a lane
     /// body runs in its own program's context, which the activation enters first.
     fn claims_across(&self, cross: bool) -> bool {
-        !cross || crate::compiled::admission::lane_bodies_enrolled(self)
+        !cross || quench_runtime::vm::tier_policy::lane_bodies_claim(&self.programs)
     }
 
     /// Record a resolved `target`, also as its function's unless its closure is numeric; a
@@ -4192,12 +4192,12 @@ impl Vm {
 
     /// Whether the lane may run program `id`: every program in a dynamic build, else one with a loaded AOT image.
     pub(crate) fn may_run_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
-        self.execution_mode.allows_dynamic_execution() || self.programs.ahead_images(id, code).is_some()
+        quench_runtime::vm::tier_policy::interprets_unimaged(self.execution_mode) || self.programs.ahead_images(id, code).is_some()
     }
 
     /// Whether an AOT image's bodies run where the lane enters them: with lane bodies, or as the only code.
     pub(crate) fn images_run_in_lane(&self) -> bool {
-        crate::compiled::admission::lane_bodies_enrolled(self) || !self.execution_mode.allows_dynamic_execution()
+        quench_runtime::vm::tier_policy::images_run_in_lane(self.execution_mode, &self.programs)
     }
 
     pub(crate) fn admits_in_lane(&self, id: ProgramId, code: &ResidualProgram) -> bool {
@@ -6571,7 +6571,7 @@ impl Vm {
         receiver: Value,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
-        if !self.execution_mode.allows_dynamic_execution() { return None; }
+        if !quench_runtime::vm::tier_policy::interprets_unimaged(self.execution_mode) { return None; }
         let site = self.lane_native?;
         let cx: *mut LaneContext = site.cx.cast();
         // The native runs from the lane's frame, the innermost, with no activation above it:
@@ -6685,7 +6685,7 @@ impl Vm {
         receiver: Value,
         args: &[Value],
     ) -> Option<Result<Value, JsError>> {
-        if !self.execution_mode.allows_dynamic_execution() { return None; }
+        if !quench_runtime::vm::tier_policy::interprets_unimaged(self.execution_mode) { return None; }
         let deferred = self.lane_deferred?;
         let cx: *mut LaneContext = deferred.cx.cast();
         if deferred.frames != self.frames.len()
@@ -6987,7 +6987,7 @@ impl Vm {
     /// `native_callback_in_lane`'s tests and resolution, made once for a native's loop of calls
     /// of `callee` with `receiver`: `None` where none of them would run in the lane.
     pub(crate) fn prepare_lane_callback(&mut self, callee: Value, receiver: Value) -> Option<PreparedLaneCallback> {
-        if !self.execution_mode.allows_dynamic_execution() || self.lane_deferred.is_some() {
+        if !quench_runtime::vm::tier_policy::interprets_unimaged(self.execution_mode) || self.lane_deferred.is_some() {
             return None;
         }
         let site = self.lane_native?;
