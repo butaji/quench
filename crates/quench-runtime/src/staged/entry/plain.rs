@@ -26,8 +26,9 @@ pub fn own_entry<S: Stage>(stage: &mut S, entry: S::Word) -> S::Cond {
 /// The slot the entry at `entry` names.
 #[inline(always)]
 pub fn entry_slot<S: Stage>(stage: &mut S, entry: S::Word) -> S::Word {
-    let slot = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.slot_offset as i32);
-    stage.and_imm(slot, u64::from(u16::MAX))
+    // The whole slot word: a class-keyed entry's spill bit (`spilled_slot`) is part of it, and a shape-keyed
+    // entry's word is below `SPILLED_SLOT` (a u32 load, so no mask is needed).
+    stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.slot_offset as i32)
 }
 
 /// The value at `slot` of the object record at `record`, whose shape the caller proved: `None`

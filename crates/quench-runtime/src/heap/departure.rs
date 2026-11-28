@@ -72,13 +72,6 @@ impl Heap {
         Some(self.class_slot_value(granule, slot))
     }
 
-    /// The field `slot` of the live class cell at `granule`, a holder cell a class-keyed held entry names
-    /// (`FieldCache::holder_cell`). The caller holds the entry's key, which fixes the holder's identity.
-    #[inline(always)]
-    pub(crate) fn class_cell_field(&self, granule: u32, slot: usize) -> Value {
-        self.class_slot_value(granule, slot)
-    }
-
     /// The departure edge: the ordinary object `value` names becomes a record, if it is a live class
     /// cell. Returns the record id that names the object from now on; a record's or a departed
     /// cell's id is returned unchanged. `None` for a value that is no ordinary object.

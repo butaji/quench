@@ -179,7 +179,7 @@ impl Vm {
     pub fn stable_global_read(&mut self, code: &super::ResidualProgram, atom: Atom, site: u16) -> GlobalRead {
         let globals = self.realm.globals;
         let (value, cell) = match self.global_name_read(code, atom, site) {
-            super::field_cache::GlobalNameRead::Value(value, Some(hint)) => (value, GlobalCell::Slot(u32::from(hint.slot))),
+            super::field_cache::GlobalNameRead::Value(value, Some(hint)) => (value, GlobalCell::Slot(u32::from(hint.record_slot()))),
             super::field_cache::GlobalNameRead::Value(value, None) => {
                 // A lexical binding's value, or a cached field (which names no cell of the scope).
                 let index = self.realm.global_lexical_declarations.contains(&atom)
@@ -218,17 +218,17 @@ impl Vm {
         if !self.global_name_hintable(atom) { return None; }
         let hint = if store { self.own_data_field_hint::<true>(globals, atom) } else { self.own_data_field_hint::<false>(globals, atom) }?;
         let table = self.heap.object_record_mut(globals).map(|o| o.global_values_table())?;
-        let cell = GlobalCell::Slot(u32::from(hint.slot));
+        let cell = GlobalCell::Slot(u32::from(hint.record_slot()));
         // Code that stores the slot makes it `Mutable` now (its first store would): its folded readers retire.
         while store && crate::heap::global_value_fact(table, cell).is_some() { crate::heap::note_global_write(table, cell); }
         let held = crate::heap::global_value_fact(table, cell).is_some();
         let inherited = self.heap.object(globals)?.was_used_as_prototype();
         if store && (held || inherited || self.method_caches_may_name(atom)) { return None; }
-        let ty = self.heap.slot_type(hint.receiver, usize::from(hint.slot));
+        let ty = self.heap.slot_type(hint.receiver, usize::from(hint.record_slot()));
         let dependency = (ty != Type::ANY && ty != Type::NEVER)
-            .then_some(SlotDependency { shape: hint.receiver, slot: hint.slot, ty });
+            .then_some(SlotDependency { shape: hint.receiver, slot: hint.record_slot(), ty });
         let record = self.heap.record_id(globals.direct_object_index()?)?;
-        Some(GlobalSlot { slot: hint.slot, storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
+        Some(GlobalSlot { slot: hint.record_slot(), storage_len: self.shapes.get(hint.receiver as usize)?.storage_len(), ty, dependency,
             layout: crate::heap::global_layout_fact(table)?, global: globals, record,
             realm_offset: Self::realm_globals_offset() })
     }

@@ -14,6 +14,7 @@ use super::Heap;
 use super::class_space::{ClassSpace, granule, header_class, region_capacity};
 use super::layouts;
 use super::records::RecordId;
+use crate::staged::field_cache_layout::{field_index_of, is_spilled_slot, spill_from_of};
 use crate::staged::object_encoding::{CLASS_HEADER_BYTES, DEPARTED_CLASS};
 use crate::value::Value;
 
@@ -24,6 +25,9 @@ pub(super) struct SpillSpace {
     words: Vec<Value>,
     /// The offsets of freed runs, by size class `k`.
     free: Vec<Vec<u32>>,
+    /// How many times `words` moved to a new allocation. Native code reads the arena's base (`JsStepHead::spill_base`),
+    /// so a move is a change to the record bases: it counts in `native_layout_epoch`, which makes a lane re-read them.
+    moves: u64,
 }
 
 /// The inline words of a cell and its run's words, from the cell's capacity slice `inline` under spill slot `spill`:
@@ -50,7 +54,18 @@ impl SpillSpace {
 
     /// The arena of a snapshot's `snapshot_parts`.
     pub(super) fn from_snapshot(words: Vec<Value>, free: Vec<Vec<u32>>) -> Self {
-        Self { words, free }
+        Self { words, free, moves: 0 }
+    }
+
+    /// The address of the arena's first word: the base a spilled field's run offset is added to, as native code reads
+    /// it (`JsStepHead::spill_base`). It holds until `moves` changes.
+    pub(super) fn base(&self) -> usize {
+        self.words.as_ptr() as usize
+    }
+
+    /// The number of times the arena's words have moved (`moves`).
+    pub(super) fn moves(&self) -> u64 {
+        self.moves
     }
 
     /// The size class of a run of `needed` words: the smallest `k` with `2^k >= needed`.
@@ -68,8 +83,12 @@ impl SpillSpace {
             return offset;
         }
         let start = self.words.len();
+        let before = self.words.as_ptr();
         self.words.push(Value::from_bits(u64::from(class)));
         self.words.resize(start + 1 + size, Value::DELETED);
+        if self.words.as_ptr() != before {
+            self.moves += 1;
+        }
         (start + 1) as u32
     }
 
@@ -313,6 +332,32 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn class_slot_value(&self, granule: u32, slot: usize) -> Value {
         self.class_space.word(granule, self.live_spill_from(granule), slot)
+    }
+
+    /// The field a class-keyed entry's slot word `slot` names, of live class cell `granule`. An inline slot is the
+    /// cell's word; a spilled one is the run's word (`spilled_slot`), read at the arena's offset the spill word names.
+    /// The spilled bit is a fact of the entry, so no test of the cell is made.
+    #[inline(always)]
+    pub(crate) fn class_entry_word(&self, granule: u32, slot: u32) -> Value {
+        if is_spilled_slot(slot) {
+            self.class_space.word(granule, Some(spill_from_of(slot)), field_index_of(slot) as usize)
+        } else {
+            self.class_space.word(granule, None, slot as usize)
+        }
+    }
+
+    /// A store of `value` to the field a class-keyed entry's slot word `slot` names, of live cell `granule`, in place
+    /// (`class_entry_word` reads the same word). The store barriers the cell, as `class_cell_store`.
+    #[inline(always)]
+    pub(crate) fn class_entry_store(&mut self, granule: u32, slot: u32, value: Value) {
+        self.class_cell_store(granule, field_index_of(slot) as usize, value);
+    }
+
+    /// The base of the spill arena's words (`JsStepHead::spill_base`), and the count of its moves, which
+    /// `native_layout_epoch` includes: a move makes native code's base stale, so its reader takes the base again.
+    #[inline(always)]
+    pub fn native_spill_base(&self) -> usize {
+        self.class_space.spill.base()
     }
 
     /// The fields of marked holder cell `granule` moved (a run was allocated or grown, or dropped): a held entry

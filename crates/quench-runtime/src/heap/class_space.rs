@@ -469,6 +469,11 @@ impl ClassSpace {
         with_region!(self.regions, region, |space| space.native_mark_blocks())
     }
 
+    /// The number of moves of the spill arena's words (`SpillSpace::moves`), which `native_layout_epoch` counts.
+    pub(super) fn spill_moves(&self) -> u64 {
+        self.spill.moves()
+    }
+
     /// Blocks made so far in every region, which `native_layout_epoch` counts: a new block can move
     /// the mark blocks native code caches.
     pub(super) fn block_count(&self) -> usize {

@@ -1,7 +1,7 @@
 use super::property_key::PropertyKey;
 use super::dispatch_frame::this_is_fixed;
 use super::*;
-use crate::staged::field_cache_layout::{CLASS_KEY, is_class_key};
+use crate::staged::field_cache_layout::{CLASS_KEY, field_index_of, is_class_key, is_spilled_slot, spilled_slot};
 pub(super) use super::shape_lookup::derive_shape_lookup_index;
 pub use super::field_cache::FieldCacheProbe;
 use crate::value::HeapReference;
@@ -1734,7 +1734,7 @@ impl Vm {
         // The exact shape matches only outside dictionary storage (`Object::exact_shape`); the
         // read is the staged `[GuardShape, LoadSlot]`, which the native tiers run from the same rows.
         // SAFETY: as for `cached_field_hit`; the exact match rules out a dictionary.
-        unsafe { self.heap.own_field_hit(receiver, cache.receiver, cache.slot) }
+        unsafe { self.heap.own_field_hit(receiver, cache.receiver, cache.record_slot()) }
     }
 
     /// `own_field_entry_hit` through a lane record's own-field hint (`form_hint`), whose
@@ -1742,7 +1742,7 @@ impl Vm {
     #[inline(always)]
     pub fn own_field_hint_hit<const FORM: u32>(&self, hint: FieldCache, receiver: &Object) -> Option<Value> {
         // SAFETY: as for `own_field_entry_hit`; the hint's shape is an own entry's.
-        unsafe { self.heap.own_field_hint_hit::<FORM>(receiver, hint.receiver, hint.slot) }
+        unsafe { self.heap.own_field_hint_hit::<FORM>(receiver, hint.receiver, hint.record_slot()) }
     }
 
     /// `entry`, an own entry `object` just answered, as a lane record's own-field hint: its
@@ -1797,7 +1797,7 @@ impl Vm {
             return None;
         }
         // SAFETY: as for `record_field_entry_hit`: the holder's exact shape holds the slot.
-        Some(unsafe { self.heap.holder_property_get_flat(holder, usize::from(cache.slot)) })
+        Some(unsafe { self.heap.holder_property_get_flat(holder, cache.slot as usize) })
     }
 
     /// The own-field hint (`FieldCache::own`) of `object`'s own data property `atom`: its exact
@@ -1816,7 +1816,7 @@ impl Vm {
         if attributes.accessor || (STORES && !attributes.writable) {
             return None;
         }
-        Some(FieldCache::own(shape, u16::try_from(slot).ok()?))
+        Some(FieldCache::own(shape, u32::try_from(slot).ok()?))
     }
 
     /// The field cache entry of the active program's `site`.
@@ -1835,16 +1835,18 @@ impl Vm {
     pub(super) fn native_field_load_descriptor(&self, site: u16, receiver: Option<Value>) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         let cache = self.field_cache_entry(site);
         if cache.holder != NO_FIELD_HOLDER || cache.receiver == NO_FIELD_RECEIVER { return None; }
+        // A spilled slot names a run's word, which the lane's inline read cannot address: no inline descriptor.
+        let slot = u16::try_from(cache.slot).ok()?;
         let shape = cache.receiver_shape();
         let storage_len = self.shapes.get(shape as usize)?.storage_len();
-        if usize::from(cache.slot) >= storage_len { return None; }
-        let ty = self.heap.slot_type(shape, usize::from(cache.slot));
+        if usize::from(slot) >= storage_len { return None; }
+        let ty = self.heap.slot_type(shape, usize::from(slot));
         // A class-keyed receiver is a live cell, which no record's storage describes: no plain storage.
         let storage = receiver.and_then(|receiver| self.heap.object_record(receiver))
             .filter(|object| object.exact_shape() == shape)
             .and_then(Object::plain_property_storage);
         Some(crate::vm::engine_types::NativeFieldLoad {
-            shape, holder: None, slot: cache.slot, storage_len, storage, ty,
+            shape, holder: None, slot, storage_len, storage, ty,
             inherited: None, function_shape: false, formed: None, holder_cell: None,
             class: is_class_key(cache.receiver).then_some(cache.receiver & !CLASS_KEY),
         })
@@ -1956,12 +1958,14 @@ impl Vm {
     /// one, and the slot, which the shape that holds it must cover.
     fn native_field_entry(&self, entry: FieldCache) -> Option<crate::vm::engine_types::NativeFieldLoad> {
         if entry.receiver == NO_FIELD_RECEIVER { return None; }
+        // A spilled slot names a run's word, which the lane's inline read cannot address: no inline descriptor.
+        let slot = u16::try_from(entry.slot).ok()?;
         let class = is_class_key(entry.receiver).then_some(entry.receiver & !CLASS_KEY);
         let shape = entry.receiver_shape();
         let holder = (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder);
         let storage_len = self.shapes.get(holder.unwrap_or(shape) as usize)?.storage_len();
-        if usize::from(entry.slot) >= storage_len { return None; }
-        let ty = self.heap.slot_type(holder.unwrap_or(shape), usize::from(entry.slot));
+        if usize::from(slot) >= storage_len { return None; }
+        let ty = self.heap.slot_type(holder.unwrap_or(shape), usize::from(slot));
         // A class-keyed held entry names the holder cell by granule, read live: it has no inherited
         // constant. A shape-keyed one keeps the holder's layout id where it kept one, which the plan
         // checks names the holder's shape before a read guards by it.
@@ -1969,12 +1973,12 @@ impl Vm {
             (Some(_), Some(_)) => (Some(entry.holder_cell), None),
             (Some(holder), None) => (
                 (entry.holder_cell != NO_FIELD_HOLDER_LAYOUT).then_some(entry.holder_cell),
-                self.inherited_constant(holder, entry.slot),
+                self.inherited_constant(holder, slot),
             ),
             (None, _) => (None, None),
         };
         Some(crate::vm::engine_types::NativeFieldLoad {
-            shape, holder, slot: entry.slot, storage_len, storage: None, ty,
+            shape, holder, slot, storage_len, storage: None, ty,
             inherited, function_shape: false, formed: None, holder_cell, class,
         })
     }
@@ -1994,7 +1998,7 @@ impl Vm {
     pub fn global_field_hint_hit(&self, hint: FieldCache) -> Option<Value> {
         let receiver = self.heap.object_record(self.realm.globals)?;
         // SAFETY: as for `own_field_entry_hit`; the hint is an own entry of the global object.
-        unsafe { self.heap.global_field_hit(receiver, hint.receiver, hint.slot) }
+        unsafe { self.heap.global_field_hit(receiver, hint.receiver, hint.record_slot()) }
     }
 
     /// The value the field cache entry `cache` proves for the direct object `object`: its own
@@ -2076,7 +2080,7 @@ impl Vm {
             // so an observed arena's store goes on to the flat store below.
             // SAFETY: a direct object's live record; the exact shape covers the slot.
             if cache.holder == NO_FIELD_HOLDER
-                && unsafe { crate::staged::store::concrete_own_store(&mut self.heap, record_id, cache.receiver, false, cache.slot, value) }
+                && unsafe { crate::staged::store::concrete_own_store(&mut self.heap, record_id, cache.receiver, false, cache.record_slot(), value) }
             {
                 return true;
             }
@@ -2095,14 +2099,14 @@ impl Vm {
             // A plain arena run whose slot already holds the value's class: no join, no settling.
             if receiver.plain_arena_start().is_some()
                 // SAFETY: the exact shape holds the slot; the record's values are a plain arena run; the barrier admitted the store.
-                && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.slot, value) } {
+                && unsafe { self.heap.held_arena_store(record_id, cache.receiver, cache.record_slot(), value) } {
                 return true;
             }
             // SAFETY: this exact own-data shape proves the slot outside dictionary storage; the barrier admitted the store.
-            return unsafe { self.heap.record_property_set_unlogged(record_id, usize::from(cache.slot), value, layout) };
+            return unsafe { self.heap.record_property_set_unlogged(record_id, cache.slot as usize, value, layout) };
         }
         // SAFETY: this exact own-data shape proves the slot outside dictionary storage.
-        unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, usize::from(cache.slot), value, layout) }
+        unsafe { self.heap.record_property_set_flat::<LOGS>(record_id, cache.slot as usize, value, layout) }
     }
 
     /// A monomorphic store's copied entry, with the no-log/preserve-layout admission of
@@ -2124,9 +2128,9 @@ impl Vm {
         // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
         let stored = unsafe {
             if TRACKED {
-                self.heap.hinted_tracked_store(record_id, hint.receiver, hint.slot, value)
+                self.heap.hinted_tracked_store(record_id, hint.receiver, hint.record_slot(), value)
             } else {
-                crate::staged::store::concrete_own_store(&mut self.heap, record_id, hint.receiver, true, hint.slot, value)
+                crate::staged::store::concrete_own_store(&mut self.heap, record_id, hint.receiver, true, hint.record_slot(), value)
             }
         };
         if !stored {
@@ -2149,7 +2153,7 @@ impl Vm {
             return false;
         };
         // SAFETY: a direct object Value names a live record; the hint's slot is one its shape covers.
-        unsafe { crate::staged::store::concrete_narrow_store(&mut self.heap, record_id, hint.receiver, hint.slot, value) }
+        unsafe { crate::staged::store::concrete_narrow_store(&mut self.heap, record_id, hint.receiver, hint.record_slot(), value) }
     }
 
     /// The store of `value` through the site's primary entry into the field of a live class cell whose class
@@ -2173,7 +2177,7 @@ impl Vm {
         if !open {
             return false;
         }
-        self.heap.class_cell_store(granule, usize::from(cache.slot), value);
+        self.heap.class_entry_store(granule, cache.slot, value);
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -2223,7 +2227,7 @@ impl Vm {
         self.profile.field_cache_hit(2, 0);
         #[cfg(feature = "profile-field-primitives")]
         self.profile.field_primitives.hit(crate::profile::field_primitives::Path::PolymorphicStore);
-        Some(FieldCache::own(shape, slot))
+        Some(FieldCache::own(shape, u32::from(slot)))
     }
 
     /// `polymorphic_own_field_store_hit` through the own entry a store record's hint names
@@ -2387,7 +2391,8 @@ impl Vm {
         let key = self.own_receiver_key(object, receiver.exact_shape());
         let overwrite = self.field_cache_entry(site);
         if overwrite.holder == NO_FIELD_HOLDER && overwrite.receiver == key && !self.method_caches_may_name(atom) {
-            self.heap.property_set(object, usize::from(overwrite.slot), value);
+            // The receiver may be a class cell, whose entry's slot may spill: `property_set` reads the field by index.
+            self.heap.property_set(object, field_index_of(overwrite.slot) as usize, value);
             self.profile.field_cache_hit(0, 0);
             return true;
         }
@@ -2516,7 +2521,7 @@ impl Vm {
             return None;
         }
         debug_assert_eq!(cache.receiver_shape(), self.heap.object(object)?.exact_shape());
-        let value = self.heap.live_class_field(object, cache.slot as usize)?;
+        let value = self.heap.class_entry_word(self.heap.live_class_cell(object)?, cache.slot);
         // A fixed class's absent union field is the hole: no own value, so the miss path walks the prototype.
         if value == Value::DELETED {
             return None;
@@ -2540,7 +2545,9 @@ impl Vm {
         if cache.receiver != self.heap.live_class_key(object)? || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        Some((self.receiver_layout_hint(object)?, cache.slot))
+        // A spilled slot names a run's word: the generated own read addresses inline words, so no hint.
+        let slot = u16::try_from(cache.slot).ok()?;
+        Some((self.receiver_layout_hint(object)?, slot))
     }
 
     /// The data field a live class cell's held entry names (`class_held_field_hit`): the read a
@@ -2571,7 +2578,7 @@ impl Vm {
         if cache.receiver != self.heap.live_class_key(object)? {
             return None;
         }
-        Some(self.heap.class_cell_field(cache.holder_cell, usize::from(cache.slot)))
+        Some(self.heap.class_entry_word(cache.holder_cell, cache.slot))
     }
 
     /// `primary_holder_field_hit` for a receiver any heap cell holds, such as a function whose
@@ -2978,7 +2985,7 @@ impl Vm {
         // The hint is a layout id (`form_hint`); the entries record exact shapes.
         if hint.receiver == receiver.hint_shape() {
             // SAFETY: as for `cached_field_hit`; the hint is one of the site's own entries.
-            let value = unsafe { self.heap.property_get_flat(receiver, usize::from(hint.slot)) };
+            let value = unsafe { self.heap.property_get_flat(receiver, hint.slot as usize) };
             self.profile.field_cache_hit(2, 0);
             return Some((value, PolymorphicHit::Hint));
         }
@@ -3002,7 +3009,7 @@ impl Vm {
                 && let Some(entry) = set.get(shape, NO_FIELD_HOLDER)
             {
                 // SAFETY: as for `cached_field_hit`.
-                let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
+                let value = unsafe { self.heap.property_get_flat(receiver, entry.slot as usize) };
                 self.profile.field_cache_hit(2, 0);
                 return Some((value, PolymorphicHit::Own(FieldCache::own(shape, entry.slot))));
             }
@@ -3010,7 +3017,7 @@ impl Vm {
             let entry = set.get(shape, holder.exact_shape())?;
             debug_assert!(cached_holder_matches(holder, entry.holder));
             // SAFETY: as for the inline holder entries below.
-            let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
+            let value = unsafe { self.heap.holder_property_get_flat(holder, entry.slot as usize) };
             self.profile.field_cache_hit(2, 1);
             return Some((value, PolymorphicHit::Holder(entry)));
         }
@@ -3020,7 +3027,7 @@ impl Vm {
             }
             if entry.holder == NO_FIELD_HOLDER {
                 // SAFETY: as for `cached_field_hit`.
-                let value = unsafe { self.heap.property_get_flat(receiver, usize::from(entry.slot)) };
+                let value = unsafe { self.heap.property_get_flat(receiver, entry.slot as usize) };
                 self.profile.field_cache_hit(2, 0);
                 return Some((value, PolymorphicHit::Own(FieldCache::own(shape, entry.slot))));
             }
@@ -3031,7 +3038,7 @@ impl Vm {
             }
             // SAFETY: both immutable shapes and the property slot were recorded together
             // after confirming an immediate-prototype data property.
-            let value = unsafe { self.heap.holder_property_get_flat(holder, usize::from(entry.slot)) };
+            let value = unsafe { self.heap.holder_property_get_flat(holder, entry.slot as usize) };
             self.profile.field_cache_hit(2, 1);
             return Some((value, PolymorphicHit::Holder(*entry)));
         }
@@ -3077,7 +3084,7 @@ impl Vm {
         let slot = set
             .recorded()
             .find(|entry| entry.receiver == receiver && entry.holder == NO_FIELD_HOLDER)?
-            .slot;
+            .record_slot();
         Some(slot)
     }
 
@@ -3095,7 +3102,7 @@ impl Vm {
         }
         let set = unsafe { self.megamorphic_fields.get_unchecked(table_index as usize) };
         set.overflow.as_ref()?;
-        set.get(receiver, NO_FIELD_HOLDER).map(|entry| entry.slot)
+        set.get(receiver, NO_FIELD_HOLDER).map(|entry| entry.record_slot())
     }
 
     /// `get_field_cached`'s miss path past `cached_field_hit`, which already probed the
@@ -3549,7 +3556,7 @@ impl Vm {
                     FieldCache {
                         receiver: self.own_receiver_key(prototype, receiver.shape()),
                         holder: NO_FIELD_HOLDER,
-                        slot: slot as u16,
+                        slot: slot as u32,
                         holder_cell: NO_FIELD_HOLDER_LAYOUT,
                     },
                 );
@@ -3637,7 +3644,7 @@ impl Vm {
                         layout: receiver_layout,
                         prototype,
                         holder: OWN_ACCESSOR,
-                        slot: slot as u16,
+                        slot: slot as u32,
                         slot_accessor,
                         cell,
                         next: NO_ACCESSOR_FIELD,
@@ -3688,7 +3695,7 @@ impl Vm {
                 layout: receiver_layout,
                 prototype,
                 holder,
-                slot: slot as u16,
+                slot: slot as u32,
                 slot_accessor,
                 cell,
                 next: NO_ACCESSOR_FIELD,
@@ -3870,7 +3877,7 @@ impl Vm {
                     FieldCache {
                         receiver: self.own_receiver_key(object, receiver.shape()),
                         holder: NO_FIELD_HOLDER,
-                        slot: slot as u16,
+                        slot: slot as u32,
                         holder_cell: NO_FIELD_HOLDER_LAYOUT,
                     },
                 );
@@ -3893,7 +3900,7 @@ impl Vm {
                     self.heap.note_holder_cell(proto);
                     self.record_field_cache(
                         site,
-                        FieldCache { receiver: key, holder: holder_shape, slot: slot as u16, holder_cell: granule },
+                        FieldCache { receiver: key, holder: holder_shape, slot: slot as u32, holder_cell: granule },
                     );
                 }
                 None => {
@@ -3905,7 +3912,7 @@ impl Vm {
                         FieldCache {
                             receiver: receiver.shape(),
                             holder: holder_shape,
-                            slot: slot as u16,
+                            slot: slot as u32,
                             holder_cell,
                         },
                     );
@@ -4718,7 +4725,7 @@ impl Vm {
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { self.field_caches.get_unchecked(index) };
         let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
-            Some(cache.slot)
+            Some(cache.record_slot())
         } else {
             self.inline_megamorphic_field_slot(index, shape)
                 .or_else(|| self.hashed_megamorphic_own_field_slot(index, shape))
@@ -5046,7 +5053,7 @@ impl Vm {
                         atom,
                         source_shape: key,
                         target_shape: data_shape,
-                        slot: slot as u16,
+                        slot: slot as u32,
                         layouts: Object::add_layouts(layout, data_shape),
                         ..guarded
                     },
@@ -5057,7 +5064,7 @@ impl Vm {
                 FieldCache {
                     receiver: data_shape,
                     holder: NO_FIELD_HOLDER,
-                    slot: slot as u16,
+                    slot: slot as u32,
                     holder_cell: NO_FIELD_HOLDER_LAYOUT,
                 },
             );
@@ -5075,9 +5082,7 @@ impl Vm {
     }
 
     pub(super) fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
-        if self.spills_class_add(cache) {
-            return;
-        }
+        let cache = self.spill_encoded_add(cache);
         if !self.field_cache_records(site) {
             return;
         }
@@ -5120,7 +5125,7 @@ impl Vm {
             self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);
             return true;
         }
-        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
+        debug_assert_eq!(field_index_of(slot) as usize, self.shapes[shape as usize].storage_len());
         self.add_by_transition(object, transition, value);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
@@ -5164,11 +5169,11 @@ impl Vm {
         atom: Atom,
         shape: u32,
         target_shape: u32,
-        slot: u16,
+        slot: u32,
         value: Value,
     ) {
-        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len());
-        self.heap.record_property_add_at(object, usize::from(slot), value, target_shape);
+        debug_assert_eq!(field_index_of(slot) as usize, self.shapes[shape as usize].storage_len());
+        self.heap.record_property_add_at(object, field_index_of(slot) as usize, value, target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
@@ -5221,13 +5226,13 @@ impl Vm {
             && !self.shape_is_dictionary(target_shape)
             && let Some(slot) = self.shape_slot(target_shape, atom)
             && slot == self.shapes[shape as usize].storage_len()
-            && let Ok(slot) = u16::try_from(slot)
+            && let Ok(slot) = u32::try_from(slot)
         {
             // Once per transition: the add that creates `target_shape` seeds its slot from the
             // class's declared type, once the added `value` satisfies it; later adds of the shape
             // reuse this entry and its seed.
             if let Some(ty) = declared_field_type(p, function, atom) {
-                self.heap.seed_declared_slot(target_shape, usize::from(slot), ty, value);
+                self.heap.seed_declared_slot(target_shape, slot as usize, ty, value);
             }
             self.record_field_add_cache(
                 site,
@@ -5597,31 +5602,40 @@ impl Vm {
                 .and_then(|object| self.heap.property_get_ref(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
-    /// Whether recording `cache` would give a class-keyed entry a field the cell holds in its run: a spilled slot
-    /// (`heap::spill`). Staged code addresses a class cell's field inline (`staged::entry::class`), so a spilled
-    /// slot is no entry; its access takes the heap's path (`Heap::class_slot_value`, `Heap::class_cell_store`), which
-    /// reads the run. The receiver's class and a held entry's holder cell both count.
-    fn spills_class_entry(&self, cache: FieldCache) -> bool {
-        let slot = usize::from(cache.slot);
-        let spills_at = |from: Option<u32>| from.is_some_and(|from| slot >= from as usize);
-        if !is_class_key(cache.receiver) {
-            return false;
+    /// `cache` with its slot in the spill run where the class-keyed field it names spills (`spilled_slot`): an own
+    /// entry reads its receiver's class cell, a held entry its holder cell (the class the read goes to), so the
+    /// spill slot is that class's `spill_from`. A shape-keyed or an inline field keeps its slot.
+    fn spill_encoded_entry(&self, mut cache: FieldCache) -> FieldCache {
+        if !is_class_key(cache.receiver) || is_spilled_slot(cache.slot) {
+            return cache;
         }
-        spills_at(self.heap.class_spill_from(cache.receiver & !CLASS_KEY))
-            || (cache.holder != NO_FIELD_HOLDER && spills_at(self.heap.live_spill_from(cache.holder_cell)))
+        let spill_from = if cache.holder == NO_FIELD_HOLDER {
+            self.heap.class_spill_from(cache.receiver & !CLASS_KEY)
+        } else {
+            self.heap.live_spill_from(cache.holder_cell)
+        };
+        if let Some(from) = spill_from.filter(|&from| cache.slot >= from) {
+            cache.slot = spilled_slot(from, cache.slot - from);
+        }
+        cache
     }
 
-    /// Whether recording `cache` would give a class-keyed add a transition past its cell's region: the add writes
-    /// the cell inline, so a class that spills after the add is no entry (`spills_class_entry`).
-    fn spills_class_add(&self, cache: FieldAddCache) -> bool {
-        is_class_key(cache.source_shape)
-            && self.heap.shape_spill_from(crate::heap::layouts::class_region(cache.source_shape & !CLASS_KEY), cache.target_shape).is_some()
+    /// `add` with its slot in the spill run where a class-keyed add's target field spills (`spilled_slot`): the
+    /// source class's region decides the spill slot of the target shape (`Heap::shape_spill_from`). A shape-keyed
+    /// add, or one whose target fits, keeps its slot.
+    fn spill_encoded_add(&self, mut add: FieldAddCache) -> FieldAddCache {
+        if !is_class_key(add.source_shape) || is_spilled_slot(add.slot) {
+            return add;
+        }
+        let region = crate::heap::layouts::class_region(add.source_shape & !CLASS_KEY);
+        if let Some(from) = self.heap.shape_spill_from(region, add.target_shape).filter(|&from| add.slot >= from) {
+            add.slot = spilled_slot(from, add.slot - from);
+        }
+        add
     }
 
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
-        if self.spills_class_entry(cache) {
-            return;
-        }
+        let cache = self.spill_encoded_entry(cache);
         if !self.field_cache_records(site) {
             return;
         }

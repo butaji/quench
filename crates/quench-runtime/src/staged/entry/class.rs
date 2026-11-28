@@ -1,6 +1,7 @@
 //! Class-cell field reads and stores of an IC entry, and the class checks they run.
 
 use super::*;
+use crate::staged::field_cache_layout::SPILLED_SLOT;
 
 /// The address of field `slot` of the live class cell `cell`: its flat run at `fields_offset`, the address
 /// `cell_field` reads and `class_store` writes.
@@ -69,8 +70,19 @@ pub fn class_own_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, s
 #[inline(always)]
 pub fn class_held_field<S: Stage>(stage: &mut S, object: S::Word, key: S::Word, slot: S::Word, holder: S::Word, miss: S::Miss) -> Option<S::Word> {
     class_key_cell(stage, object, key, miss)?;
+    inline_slot(stage, slot, miss)?;
     let holder = super::super::object::cell_at_granule(stage, holder);
     Some(cell_field(stage, holder, slot))
+}
+
+/// Continues where the entry's slot word `slot` names an inline field of the class cell. A spilled slot
+/// (`spilled_slot`) names a word of the cell's run, which these rows do not address: it leaves to the heap, which reads
+/// the run (`Heap::class_entry_word`, `Heap::class_entry_store`), so no row reads or writes past the cell's inline words.
+#[inline(always)]
+pub fn inline_slot<S: Stage>(stage: &mut S, slot: S::Word, miss: S::Miss) -> Option<()> {
+    let spilled = stage.and_imm(slot, u64::from(SPILLED_SLOT));
+    let inline = stage.eq_imm(spilled, 0u32);
+    stage.guard(inline, miss)
 }
 
 /// The field at `slot` of the live class cell `cell`: its fields are one flat run at `fields_offset`,
@@ -96,6 +108,7 @@ pub fn class_own_value<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, m
 /// state, not a representation test.
 #[inline(always)]
 pub fn cell_own_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word, miss: S::Miss) -> Option<S::Word> {
+    inline_slot(stage, slot, miss)?;
     let value = cell_field(stage, cell, slot);
     let hole = stage.eq_imm(value, super::super::value_encoding::TAG_DELETED);
     let present = stage.not(hole);
@@ -116,6 +129,7 @@ pub fn class_held_value<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word
     let holder_granule = stage.load_u32(Region::HeapMeta.mutable(), entry, ENTRY.holder_cell_offset as i32);
     let holder = super::super::object::cell_at_granule(stage, holder_granule);
     let slot = entry_slot(stage, entry);
+    inline_slot(stage, slot, miss)?;
     Some(cell_field(stage, holder, slot))
 }
 

@@ -78,7 +78,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
         assert_eq!(vm.get_field_cached(&program, second, second_atom, second_site).unwrap(), first);
     }
     let entry = vm.field_cache_entry(site);
-    assert_eq!(usize::from(entry.slot), SLOT);
+    assert_eq!(entry.slot as usize, SLOT);
     assert_eq!(entry.holder != super::super::NO_FIELD_HOLDER, HOLDER);
     assert_eq!(vm.record_field_entry_hit(entry, first), Some(second));
     assert_eq!(vm.record_field_entry_hit(entry, second), Some(first));
@@ -117,7 +117,7 @@ fn entry_reads_at<const HOLDER: bool, const ARENA: bool, const CASE: u8, const P
     let hint = || super::super::FieldCache {
         receiver: black_box(entry.receiver),
         holder: if HOLDER { black_box(entry.holder) } else { super::super::NO_FIELD_HOLDER },
-        slot: if FIXED { SLOT as u16 } else { black_box(entry.slot) },
+        slot: if FIXED { SLOT as u32 } else { black_box(entry.slot) },
         holder_cell: super::super::NO_FIELD_HOLDER_LAYOUT,
     };
     let mut cursor = first;
