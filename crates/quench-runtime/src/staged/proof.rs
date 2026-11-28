@@ -318,9 +318,11 @@ impl<W: Copy> Shaped<W> {
     /// A record a staged guard in this module tree just tested.
     #[inline]
     pub(super) fn of_guard(record: W) -> Self { Shaped::Record(record) }
-    /// A live class cell a class guard just tested (`guard::class`, `ic::guard_class`).
+    /// A live class cell proved by its class: a class guard just tested it (`guard::class`, `ic::guard_class`), or
+    /// the program's fact that every instance of the class is a fixed cell (`AotFacts::class_fixed_cell`) holds, with
+    /// no guard at all. The caller holds that fact; this constructor tests nothing.
     #[inline]
-    pub(super) fn of_cell(cell: W) -> Self { Shaped::Cell(cell) }
+    pub fn of_cell(cell: W) -> Self { Shaped::Cell(cell) }
     /// The proved record. A record's payload and layout reads take it; a cell's reads take `cell`.
     #[inline]
     pub fn record(self) -> W {
