@@ -6,7 +6,7 @@
 //! never a controller.
 
 use crate::bytecode::{FieldBase, FieldLookup, Function, ResidualProgram};
-use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
+use crate::compile::call_graph::CallGraph;
 pub use crate::jit_mode::Tier;
 use crate::staged::meaning::{means, Meaning};
 use crate::staged::Operation;
@@ -285,16 +285,15 @@ pub const ENTRY_IR_UJIT: u64 = 300;
 const _: () = assert!(INTERPRETER_IR_PER_OP > BJIT_IR_PER_OP && BJIT_IR_PER_OP > UJIT_IR_PER_OP);
 const _: () = assert!(BJIT_COMPILE_IR_PER_OP < UJIT_COMPILE_IR_PER_OP);
 
-/// The tier a function runs in: the argmin over the three tiers of its predicted IR. Its entries are every call of it,
-/// from a loop region (`LOOP_WEIGHT` per call) and from plain code (one per call), taken together: a run of the
+/// The tier a function runs in: the argmin over the three tiers of its predicted IR. Its entries are its static frequency
+/// (`CallGraph::frequency`), which already weighs each call site `LOOP_WEIGHT` per loop it sits in: a run of the
 /// function costs its work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in)
 /// times the tier's cost per bytecode, for each entry; each entry pays its tier's entry cost (`ENTRY_IR_*`); a compiled
 /// tier adds its one-time compile over the bytecodes, once for the body. Ties go to the tier that compiles less: the
 /// interpreter, then the b-jit. Pure: no count and no clock.
 pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32) -> PredictedTier {
     let bytecodes = program.function_get(function as usize).map_or(0, |body| body.instructions().count() as u64);
-    let plain = graph.frequency(function);
-    let entries = plain.saturating_add(plain.saturating_mul(LOOP_WEIGHT));
+    let entries = graph.frequency(function);
     let work = graph.loop_work(function);
     let run = |per_op: u64| entries.saturating_mul(work).saturating_mul(per_op);
     let compile = |per_op: u64| bytecodes.saturating_mul(per_op);
