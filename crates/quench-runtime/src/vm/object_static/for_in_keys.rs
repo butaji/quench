@@ -408,8 +408,11 @@ impl Vm {
         let keys = self.array_of(&names);
         // A slot read answers a plain named key of a shape without accessors (`enumerated_key_get`).
         let accessors = self.shape_may_have_accessors(shape);
+        // A live class cell's slot at or past its class's spill slot lives in the spill run, which the listed read
+        // (`staged::iteration`, one cell load) does not address: it lists no slot, so that key takes the keyed get.
+        let inline = self.heap.live_class_cell(chain[0].0).and_then(|granule| self.heap.live_spill_from(granule)).map_or(usize::MAX, |from| from as usize);
         let words: Vec<Value> = slots.iter().map(|&(atom, slot)| match u16::try_from(slot) {
-            Ok(slot) if !accessors && self.plain_named_key(atom) => Value::integer(i32::from(slot)),
+            Ok(slot) if !accessors && usize::from(slot) < inline && self.plain_named_key(atom) => Value::integer(i32::from(slot)),
             _ => Value::UNDEFINED,
         }).collect();
         let slot_words = self.array_of(&words);
