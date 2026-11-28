@@ -357,19 +357,12 @@ const _: () = assert!(NO_LINK != 0);
 /// where the holder holds the name as a plain data field at the key's slot. The holder is marked a
 /// prototype, so a write of its values retires the code that took the value
 /// (`ahead_images::holder_dependencies` subscribes it under the shape).
-pub(crate) fn holder_constant(image: &AotImage, vm: &mut Vm, key: u32) -> Option<(u32, u32, Value)> {
-    let slot = (key & ((1 << GUARD_ACCESS_SHIFT) - 1)) as u16;
-    let access = *GuardAccess::ALL.get(((key >> GUARD_ACCESS_SHIFT) & ((1 << GuardAccess::BITS) - 1)) as usize)?;
-    if access != GuardAccess::Holder { return None; }
-    let recipe = image.shapes.get((key >> GUARD_SLOT_BITS) as usize)?;
-    let (Some(holder), [(atom, _)]) = (recipe.prototype, &recipe.fields[..]) else { return None };
-    let holder = heap_value(image, vm, holder)?;
-    let atom = vm.intern_atom(image.atoms.get(*atom as usize)?);
-    let (shape, at) = vm.holder_data_field(holder, atom)?;
-    if at != usize::from(slot) { return None; }
-    let value = vm.own_property(holder, atom).filter(|value| !value.is_deleted())?;
-    vm.mark_prototype(holder);
-    Some((shape, quench_runtime::tier_surface::ProtoLink::of(holder).bits(), value))
+///
+/// S7f DESIGN: `Vm::holder_data_field` answered from the holder's object record, which is gone (every ordinary
+/// object is a class cell). A holder resolves to no constant, so its link is `NO_LINK` and its value `undefined`,
+/// and the code that names it asks the VM's caches. The key's encoding (`GuardAccess::Holder`) is unchanged.
+pub(crate) fn holder_constant(_image: &AotImage, _vm: &mut Vm, _key: u32) -> Option<(u32, u32, Value)> {
+    None
 }
 
 /// The bits of a guard key below its recipe (`guard_key`): the access, then the slot.
@@ -516,18 +509,11 @@ pub(crate) fn guarded_layout(image: &AotImage, vm: &mut Vm, key: u32) -> Option<
 /// The holder guard of recipe `recipe` at `slot` (`GuardAccess::Holder`): the shape the object its
 /// `prototype` names has now, where that shape holds its one field's name at `slot` as a plain
 /// data field of tagged words; `None` otherwise, so the guard resolves to `NO_SHAPE`.
-fn holder_shape(image: &AotImage, vm: &mut Vm, recipe: u32, slot: u16) -> Option<(u32, u16, quench_runtime::typed_ir::Type)> {
-    let recipe = image.shapes.get(recipe as usize)?;
-    let (Some(holder), [(atom, _)]) = (recipe.prototype, &recipe.fields[..]) else { return None };
-    let holder = heap_value(image, vm, holder)?;
-    let atom = vm.intern_atom(image.atoms.get(*atom as usize)?);
-    let found = vm.holder_data_field(holder, atom);
-    if quench_runtime::trace::Channel::AotLanes.on() {
-        eprintln!("aot-lanes: holder guard of slot {slot} finds {found:?}");
-    }
-    let (shape, at) = found?;
-    let ty = vm.tagged_slot_type(shape, slot)?;
-    (at == usize::from(slot)).then_some((shape, slot, ty))
+///
+/// S7f DESIGN: the holder's shape came from its object record (`Vm::holder_data_field`), which is gone, so the
+/// guard resolves to `NO_SHAPE` (`None`) until the holder's class cell answers it.
+fn holder_shape(_image: &AotImage, _vm: &mut Vm, _recipe: u32, _slot: u16) -> Option<(u32, u16, quench_runtime::typed_ir::Type)> {
+    None
 }
 
 /// The layout id of the instances shape recipe `key` builds (`Symbol::ClassLayout`): the header a construction of its

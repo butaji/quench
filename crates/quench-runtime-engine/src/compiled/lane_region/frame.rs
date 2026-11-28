@@ -88,9 +88,6 @@ pub(crate) struct EmitFrame<'a> {
     pub(crate) html_dda: bool,
     /// The Stable `prototype` link of the step's `instanceof` constructor.
     pub(crate) prototype: Option<u32>,
-    /// The region's entry proofs, whose object record table a prototype walk addresses where the
-    /// step carries no field facts.
-    pub(crate) table_entry: Option<&'a Entry>,
 }
 
 /// The address of the activation's local `slot` (`JsStepDispatch::native_locals`), which an
@@ -233,25 +230,11 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     fn allocate_value(&mut self, stage: &mut Emit<'_, '_>, destination: Register, allocation: quench_runtime::staged::Allocation,
         proof: EmitProof) -> Option<ir::Value> { calls::allocate_value(self, stage, destination, allocation, proof) }
 
-    /// The heap's array and object record tables and collection epoch, read from the dispatch
-    /// payload as the lane frame reads them (`LaneFrame::heap_records`). A table the dispatch holds
-    /// as zero is absent, which leaves at the miss edge; a row without one takes its call-out.
+    /// The heap's array and object record tables and collection epoch, where the frame reads live
+    /// records. S7f DESIGN: the object table is gone, so no triple is offered and a row that needs
+    /// the tables takes its call-out (the same choice `places.rs` `heap_records` makes in bjit).
     #[inline(always)]
-    fn heap_records(&mut self, stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> {
-        let (Edges::ValueGuarded { miss } | Edges::Branch { miss, .. }) = self.edges else { return None };
-        let at = regions::record_base(self.arrays_fixed);
-        let arrays = quench_runtime::staged::Stage::load_u64(stage, at, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, head.array_record_base) as i32);
-        let objects = super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, head.object_record_base));
-        let epoch = super::super::emit_js_payload_word(stage.builder, self.payload,
-            std::mem::offset_of!(super::super::JsStepDispatch, head.epoch));
-        for table in [arrays, objects] {
-            let present = stage.raw_compare_imm(quench_runtime::staged::machine::Relation::NotEqual, table, 0);
-            super::super::emit_js_guard(stage.builder, present, miss);
-        }
-        Some((arrays, objects, epoch))
-    }
+    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> { None }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {

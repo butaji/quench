@@ -32,25 +32,9 @@ pub(crate) fn owner_word(builder: &mut FunctionBuilder<'_>, registers: &mut Regi
     }
 }
 
-/// The record table of the run: the entry's checked reservation, else the dispatch payload's.
-pub(crate) fn object_table(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ObjectTable {
-    match entry.object_table {
-        Some(table) => ObjectTable::Checked(table),
-        None => ObjectTable::Unchecked(emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base))),
-    }
-}
-
-/// The object record reservation's base (`object_table`).
 /// The class space's base the dispatch head holds (`JsStepHead::class_base`), which a direct object's cell is read at.
 pub(crate) fn class_table_base(builder: &mut FunctionBuilder<'_>, payload: ir::Value) -> ir::Value {
     emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base))
-}
-
-pub(crate) fn object_table_base(builder: &mut FunctionBuilder<'_>, entry: &Entry, payload: ir::Value) -> ir::Value {
-    match object_table(builder, entry, payload) {
-        ObjectTable::Checked(table) => table.base(),
-        ObjectTable::Unchecked(base) => base,
-    }
 }
 
 /// A register whose object an object proof names holds a direct object from then on.
@@ -108,14 +92,12 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
             record.header(builder, fact)
         } else if read && !fact.is_some_and(|fact| super::tag_proofs::proves_object(fact.ty)) {
             readable = true;
-            let records = object_table_base(builder, entry, payload);
             let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
             let class_base = class_table_base(builder, payload);
-            ObjectHeader::prove_readable(builder, bits, fact, records, class_base, functions, exit)
+            ObjectHeader::prove_readable(builder, bits, fact, functions, class_base, exit)
         } else {
-            let records = object_table(builder, entry, payload);
             let class_base = class_table_base(builder, payload);
-            ObjectHeader::prove(builder, bits, records, class_base, fact, exit)
+            ObjectHeader::prove(builder, bits, class_base, fact, exit)
         };
         if kept.is_none_or(|(.., was_readable)| was_readable && !readable) {
             state.proofs.records.retain(|(word, ..)| *word != bits);

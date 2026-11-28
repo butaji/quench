@@ -26,14 +26,9 @@ impl FactTables {
                 if let Some(name) = vm.native_function_name(key.0, key.1) { tables.names.insert(key, name); }
             }
         }
-        tables.own_constants = vm.own_constants();
         tables.root_program = vm.active_program;
         tables.root_constants = root_constants(vm, function, unit);
         tables
-    }
-
-    pub(crate) fn own_constant(&self, atom: Atom) -> Option<OwnConstant> {
-        self.own_constants.get(&atom).copied()
     }
 
     pub(crate) fn instanceof(&self, constructor: Value) -> Option<quench_runtime::code_dependencies::InstanceofFact> {
