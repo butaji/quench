@@ -305,6 +305,13 @@ pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u3
 }
 
 
+/// Whether `function` runs from fixed-width instructions (`HotDecoding`), decided once at its first interpreted entry:
+/// its static frequency (`CallGraph::frequency`) is above one, or it loops, since one entry can dispatch without bound.
+/// A loop-free function entered once runs from packed code and holds no decoded copy. Pure: no count and no clock.
+pub fn decodes_wide(graph: &CallGraph, program: &ResidualProgram, function: u32) -> bool {
+    graph.frequency(function) > 1 || program.function_get(function as usize).is_some_and(Function::loops)
+}
+
 /// The predicted tier of a lane body (design decision 4.9): the u-jit in an AOT program (`aot`), whose
 /// image compiles every function, otherwise the argmin `predicted` (`predicted_tier`).
 pub fn body_tier(aot: bool, predicted: PredictedTier) -> PredictedTier {

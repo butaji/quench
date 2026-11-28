@@ -37,7 +37,12 @@ mod tests {
         let mut interpreter = Vm::new(crate::test_host::TestHost::default());
         interpreter.initialize_for_snapshot(&program).unwrap();
         let cursor = interpreter.general_cursor(ProgramId::MAIN, &program, 0, false);
-        assert!(!cursor.decoded.is_null(), "an interpreted function expands its dispatch cache on its first entry");
+        assert!(!cursor.decoded.is_null(), "a looping function expands its dispatch cache on its first entry");
+        let straight = crate::Engine::specialize("var a = 1; throw a + 1;", "straight-cursor.js").unwrap();
+        let mut once = Vm::new(crate::test_host::TestHost::default());
+        once.initialize_for_snapshot(&straight).unwrap();
+        let cursor = once.general_cursor(ProgramId::MAIN, &straight, 0, false);
+        assert!(cursor.decoded.is_null(), "a loop-free function entered once runs from packed code");
         let error = interpreter.execute(&program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::number(0.0)));
     }
@@ -184,6 +189,12 @@ impl GeneralCodeCursor {
 }
 
 impl Vm {
+    /// Whether function `function` of `program`, the program `id`, runs decoded (`tier_policy::decodes_wide`), from the
+    /// program's call graph. Asked once per function, at its first interpreted entry.
+    fn runs_decoded(&self, id: ProgramId, program: &ResidualProgram, function: u32) -> bool {
+        self.programs.call_graph(id).is_some_and(|graph| crate::vm::tier_policy::decodes_wide(&graph, program, function))
+    }
+
     /// A code cursor for `function`, with its lane view where the lane runs.
     pub(super) fn general_cursor(
         &self,
@@ -202,16 +213,16 @@ impl Vm {
         // loop reads its packed code there, without a second, expanded copy.
         let lane_runs_wasm = !view.is_null() && program.kind == crate::bytecode::ProgramKind::Wasm;
         let decoded = if interprets && !lane_runs_wasm {
-            function_code.decoded.on_entry(&function_code.code, &function_code.wide).as_ptr()
+            function_code.decoded.on_entry(&function_code.code, &function_code.wide, || self.runs_decoded(program_id, program, function))
         } else {
-            std::ptr::null()
+            None
         };
         GeneralCodeCursor {
             program: program_id,
             function,
             code: function_code.code.as_ptr(),
             wide: function_code.wide.as_ptr(),
-            decoded,
+            decoded: decoded.map_or(std::ptr::null(), <[WideInstruction]>::as_ptr),
             lane: view,
             // A JavaScript activation deferred its view; a back edge derives it where the function's predicted tier compiles it.
             back_edges: admitted && view.is_null() && program.kind != crate::bytecode::ProgramKind::Wasm && self.programs.compiled_tier(program_id, function),
@@ -502,7 +513,7 @@ impl Vm {
             decoded: if !view.is_null() && p.kind == crate::bytecode::ProgramKind::Wasm {
                 std::ptr::null()
             } else {
-                body.decoded.on_entry(&body.code, &body.wide).as_ptr()
+                body.decoded.on_entry(&body.code, &body.wide, || self.runs_decoded(self.active_program, p, id)).map_or(std::ptr::null(), <[WideInstruction]>::as_ptr)
             },
             lane: view,
             back_edges: false,
