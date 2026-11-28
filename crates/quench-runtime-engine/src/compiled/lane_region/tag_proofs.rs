@@ -23,6 +23,12 @@ pub(crate) fn proves_object(ty: Type) -> bool {
     ty.is_direct_object_family()
 }
 
+/// Whether every value of solver type `ty` is a direct object's record, `null` or `undefined`: the test
+/// `ReceiverRecovery::ObjectOrNullish` makes of a receiver, so that test is redundant for such a value.
+pub(crate) fn proves_object_or_nullish(ty: Type) -> bool {
+    ty.is_subtype(Type::DIRECT_OBJECT_FAMILY.join(Type::immediate(Value::NULL)).join(Type::immediate(Value::UNDEFINED)))
+}
+
 /// Whether every string of solver type `ty` has a length int32 holds (`StringFact::length`), so a flat string of that
 /// type needs no test that its length fits: its record's length lies in the type's range. A type with no string fact
 /// (or the full length range) proves nothing.
@@ -79,6 +85,17 @@ impl Lowering<'_, '_> {
     /// `pc`, by its solver type (the known-types law): a family or presence test on it is redundant.
     pub(crate) fn solver_object(&self, pc: usize, register: Register) -> bool {
         proves_object(self.cell_before(pc, register).ty)
+    }
+
+    /// Whether the solve proves unit register `register` passes `recovery`'s receiver test just before the unit instruction at
+    /// `pc`, by its solver type (`proves_object` for an object, `proves_object_or_nullish` for an object or nullish): the
+    /// recovery guard on it is redundant.
+    pub(crate) fn receiver_proven(&self, pc: usize, register: Register, recovery: super::register_state::ReceiverRecovery) -> bool {
+        let ty = self.cell_before(pc, register).ty;
+        match recovery {
+            super::register_state::ReceiverRecovery::Object => proves_object(ty),
+            super::register_state::ReceiverRecovery::ObjectOrNullish => proves_object_or_nullish(ty),
+        }
     }
 
     /// The settled type of field `atom` of the fixed class `owner` holds (`AotFacts::slot_domain`), where the class holds the
