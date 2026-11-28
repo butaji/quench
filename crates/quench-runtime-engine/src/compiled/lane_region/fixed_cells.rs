@@ -9,7 +9,8 @@ use super::super::object_slots::{emit, ObjectRecord};
 use quench_runtime::bytecode::{Atom, Register};
 use quench_runtime::compile::aot_facts::{AotFacts, FieldDefault, UnionField};
 use quench_runtime::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
-use quench_runtime::staged::machine::{Lane, MachineAccess, MachineScalar, Relation, Unary};
+use quench_runtime::staged::machine::{Binary, Lane, MachineAccess, MachineScalar, Relation, Unary};
+use quench_runtime::value::ValueLayout;
 use quench_runtime::Value;
 
 /// Union slot `slot` of the instances of a fixed class, as its displacement from the class cell's address.
@@ -109,13 +110,27 @@ impl Lowering<'_, '_> {
         let address = cell.offset_address(&mut self.builder, displacement);
         let property = regions::property_flags(self.field_region(pc));
         if super::number_domains::is_double(field.cell.ty) {
+            // A raw Number is no heap reference: its store needs no barrier.
             let number = self.number(state, source, exit);
             emit(&mut self.builder).raw_store(Lane::F64, property, (number, false), address, 0);
         } else {
             let value = self.tagged(state, source);
+            self.fixed_store_barrier(state, owner, source, value, exit);
             emit(&mut self.builder).raw_store(Lane::I64, property, (value, false), address, 0);
         }
         state.proofs.write_field(atom);
         true
+    }
+
+    /// The store barrier (4.7) of the tagged `value` (of register `source`) into the fixed class cell of `owner`.
+    /// The class space logs every heap reference stored into a cell (`class_cell_store`, which tests no mark), and the lane
+    /// has no mark list for the class space, so a heap reference leaves to the VM's store at `exit`. An immediate needs no
+    /// barrier, and neither does a store into a holder this unit allocated with no safepoint since (`holder_fresh`).
+    fn fixed_store_barrier(&mut self, state: &mut State, owner: Option<Register>, source: Register, value: ir::Value, exit: ir::Block) {
+        if state.values[usize::from(source)].value.ty.is_subtype(Type::IMMEDIATE) || self.holder_fresh(state, owner) { return; }
+        let tag = self.raw_binary_imm(Binary::And, value, ValueLayout::TAG_MASK as i64);
+        let heap = self.raw_compare_imm(Relation::Equal, tag, ValueLayout::HEAP_TAG as i64);
+        let plain = self.raw_compare_imm(Relation::Equal, heap, 0);
+        emit_js_guard(&mut self.builder, plain, exit);
     }
 }

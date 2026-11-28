@@ -45,8 +45,6 @@ impl From<CheckedObjectTable> for ObjectTable {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectHeader {
     pub(crate) record: ObjectRecord,
-    pub(crate) shape: ir::Value,
-    pub(crate) inline: ir::Value,
     /// The record's address, computed once for the header loads and every later read; a fixed class cell's cell.
     pub(crate) address: ir::Value,
     /// The exact shape the record holds (`None` for a fixed class cell, which holds no record shape: its class is the fact).
@@ -147,14 +145,14 @@ impl ObjectRecord {
         let address = self.address(builder);
         // A fixed class's cell holds no record: no shape or storage form is read from it, and its class is the fact.
         if let Self::FixedCell(_) = self {
-            return ObjectHeader { record: self, shape: None, inline: None, address, word: None, auxiliary: None, shape_fact: None };
+            return ObjectHeader { record: self, address, shape: None, inline: None, word: None, auxiliary: None, shape_fact: None };
         }
         let (loaded, word, inline, auxiliary) = shape_and_inline(builder, address);
         let (shape, word, shape_fact) = match known.and_then(|fact| ShapeFact::of_type(fact.ty)) {
             Some((shape, fact)) => (emit(builder).raw_const(Lane::I32, i64::from(shape)), None, Some(fact)),
             None => (loaded, Some(word), None),
         };
-        ObjectHeader { record: self, shape: Some(shape), inline: Some(inline), address, word, auxiliary: Some(auxiliary), shape_fact }
+        ObjectHeader { record: self, address, shape: Some(shape), inline: Some(inline), word, auxiliary: Some(auxiliary), shape_fact }
     }
 }
 
@@ -195,7 +193,7 @@ impl ObjectHeader {
         emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
         let (shape, word, inline, auxiliary) = shape_and_inline(builder, record);
-        Self { record: ObjectRecord::Address(record), shape: Some(shape), inline: Some(inline), address: record, word: Some(word), auxiliary: Some(auxiliary), shape_fact: None }
+        Self { record: ObjectRecord::Address(record), address: record, shape: Some(shape), inline: Some(inline), word: Some(word), auxiliary: Some(auxiliary), shape_fact: None }
     }
 }
 
