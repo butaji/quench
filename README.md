@@ -38,8 +38,8 @@ $ ./app
 ## Why Quench
 
 - **Conformant first.** Test262 passes 53,353 tests with zero failures, with the JIT off and on. The WebAssembly spec suite passes 67,124 of 67,124.
-- **Small.** With the JIT off, Quench peaks at 0.41x the memory of the smaller of Node and Bun on V8-v7 (geometric mean, 27 November 2026, commit 0505e2a326); the JIT modes use 0.26x to 0.33x.
-- **Fast without a JIT.** On V8-v7 the interpreter alone scores 1.40x the best of `node --jitless` and Bun with its JIT off (same run; four of eight benchmarks at 1.5x or more, earley-boyer at 0.38x). The goal in every mode, JIT on included, is 1.5x the score at 0.5x the memory; with the JITs on Quench is at 0.08x the score today, and a shrink-only tier-order gate tracks the fix.
+- **Small.** With the JIT off, Quench peaks at 0.43x the memory of the smaller of Node and Bun on V8-v7 (geometric mean, 28 November 2026, commit c33c6c44e3); the JIT modes use 0.26x to 0.36x.
+- **Fast without a JIT.** On V8-v7 the interpreter alone scores 1.37x the best of `node --jitless` and Bun with its JIT off (same run; three of eight benchmarks at 1.5x or more, earley-boyer at 0.44x). The goal in every mode, JIT on included, is 1.5x the score at 0.5x the memory; with the JITs on Quench is at 0.08x the score today, and a shrink-only tier-order gate tracks the fix.
 - **One semantics.** The interpreter, b-jit, u-jit and AOT derive each opcode's meaning from one shared definition, so the tiers agree about what a program means. The few hand-written exceptions left are tracked in a list that may only shrink.
 - **TypeScript types are kept.** Types are not erased before execution. A type annotation, or JSDoc in plain JavaScript, becomes a fact that is checked once and trusted by every tier, so typed code can start out specialized.
 - **Native hot module replacement.** `quench --hmr app.ts` swaps an edited module in place when it or its importers accept the update through `import.meta.hot` or `module.hot`, and restarts the process otherwise. No bundler or dev server.
@@ -50,7 +50,7 @@ $ ./app
 
 More and more agents write code and run it inside the harness instead of chaining tool calls one at a time. A busy machine can host hundreds of these agents, each running code nobody reviewed. That needs a JavaScript engine that lives inside the harness, stays small, runs without a JIT, and runs whatever the model wrote. That is the slot Quench is built for.
 
-- **The QuickJS slot, with more speed.** Today the choice is QuickJS for small scripts or V8 for heavy ones. Quench aims at QuickJS's place (small, embedded, interpreter only) with an interpreter well ahead of the ones in V8 and JavaScriptCore: with the JIT off, V8-v7 scored 1.49x to 2.57x the best of `node --jitless` and Bun JIT-off on 14 November 2026 (1.40x geometric mean on 27 November), and five of the eight benchmarks peak at 6.4 to 8.2 MB, against 43 to 50 MB for Node and 16 to 26 MB for Bun. We have not benchmarked against QuickJS yet; that comparison is next, and it will be published either way.
+- **The QuickJS slot, with more speed.** Today the choice is QuickJS for small scripts or V8 for heavy ones. Quench aims at QuickJS's place (small, embedded, interpreter only) with an interpreter well ahead of the ones in V8 and JavaScriptCore: with the JIT off, V8-v7 scored 1.49x to 2.57x the best of `node --jitless` and Bun JIT-off on 14 November 2026 (1.37x geometric mean on 28 November), and five of the eight benchmarks peak at 6.4 to 8.2 MB, against 43 to 50 MB for Node and 16 to 26 MB for Bun. We have not benchmarked against QuickJS yet; that comparison is next, and it will be published either way.
 - **Embeddable and Rust-native.** [`quench-runtime`](crates/quench-runtime) is a Rust library. The harness creates a `Runtime` with its own `Host`, exposes its tools as host functions, and can stop runaway code from another thread with an execution interrupt. Generated code runs in the harness's own process, with no subprocess and no IPC. It is not on crates.io yet and the API will still change.
 - **No JIT required.** `--no-jit`, which is also the library's default mode, runs the interpreter only (WebAssembly included), so no machine code is generated while untrusted code runs. That takes JIT compiler bugs off the attack surface and gives an attacker far less control over the machine code that executes, which Spectre-style attacks rely on. The speed above is measured with the JIT off. The engine is still not a sandbox on its own: isolation and limits come from your host.
 - **Full JavaScript and TypeScript.** Test262 passes 53,353 tests with zero failures, TypeScript runs directly with no build step, and `node:` APIs are there too. Code a model writes just runs: there is no "Lua needs a C extension for that" step, and models write JavaScript and TypeScript far better than Lua.
@@ -146,9 +146,9 @@ The Test262 runner reports every raw outcome. 53 cases fail in exactly the way N
 
 - [x] Test262 with zero unexplained failures, JIT off and on
 - [x] WebAssembly spec suite, 100%
-- [ ] Interpreter ahead of `node --jitless` and Bun JIT-off on every V8-v7 row (met 14 November 2026; earley-boyer and deltablue are behind at 0505e2a326)
+- [ ] Interpreter ahead of `node --jitless` and Bun JIT-off on every V8-v7 row (met 14 November 2026; earley-boyer and deltablue are behind at c33c6c44e3)
 - [ ] Interpreter at 1.5x the best peer's score and half its memory on every V8-v7 and JetStream 3 row
-- [ ] Each native tier faster than the one below it (a shrink-only tier-order gate: 26 violations on 27 November), with every u-jit operation at most 3x the equivalent C plus 6 instructions
+- [ ] Each native tier faster than the one below it (a shrink-only tier-order gate: 26 violations on 28 November), with every u-jit operation at most 3x the equivalent C plus 6 instructions
 - [ ] AOT executables within 5x of C on JetStream, under 1 MB, starting in 1 ms
 - [ ] 100% Node API parity
 - [ ] Packaged releases

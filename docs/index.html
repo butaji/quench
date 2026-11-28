@@ -948,7 +948,7 @@
             <div class="tile">
                 <h2>Fast and small</h2>
                 <!-- daily:perf -->
-                <p>With the JIT off, Quench scores <b>1.40x</b> the best of Node and Bun on V8 v7 at <b>0.41x</b> the memory (27 November 2026). With the JITs on, the target is the same: <b>1.5x the score at 0.5x the memory</b> of Node and Bun. Today the JIT modes use 0.33x the memory but score far below it (0.08x), and closing that gap is the current work.</p>
+                <p>With the JIT off, Quench scores <b>1.37x</b> the best of Node and Bun on V8 v7 at <b>0.43x</b> the memory (28 November 2026). With the JITs on, the target is the same: <b>1.5x the score at 0.5x the memory</b> of Node and Bun. Today the JIT modes use 0.36x the memory but score far below it (0.08x), and closing that gap is the current work.</p>
                 <!-- /daily:perf -->
                 <p class="fine"><a class="tlink" href="/benchmarks/">Benchmarks and method →</a></p>
             </div>
@@ -1084,13 +1084,13 @@
             <div class="tile">
                 <h2>Follow the build</h2>
                 <ul>
-                    <!-- daily:latest --><li><a class="tlink" href="/blog/progress-2026-11-27-tiers-decided-by-measured-time/">Daily progress, 27 November 2026: tiers decided by measured time</a></li><!-- /daily:latest -->
+                    <!-- daily:latest --><li><a class="tlink" href="/blog/progress-2026-11-28-aot-learns-the-class-of-every-object/">Daily progress, 28 November 2026: AOT learns the class of every object</a></li><!-- /daily:latest -->
                     <li><a class="tlink" href="/blog/hello-world-in-4896-bytes/">Hello world in 4,896 bytes: AOT as the JIT run at build time</a></li>
                     <li><a class="tlink" href="/blog/chasing-a-sub-megabyte-readline-binary/">Chasing a sub-megabyte readline binary</a></li>
                     <li><a class="tlink" href="/blog/where-quench-stands/">Where Quench stands: JetStream 3 with the JIT off</a></li>
                     <li><a class="tlink" href="/blog/an-instruction-budget-for-every-operation/">3 × C + 6: an instruction budget for every operation</a></li>
                                         <li><a class="tlink" href="/benchmarks/">All benchmarks, dated, with weak spots</a></li>
-                    <li><a class="tlink" href="/blog/"><!-- daily:count -->All 24 posts<!-- /daily:count --></a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
+                    <li><a class="tlink" href="/blog/"><!-- daily:count -->All 25 posts<!-- /daily:count --></a> · <a class="tlink" href="/blog/feed.xml">feed</a></li>
                 </ul>
             </div>
         </section>
@@ -1120,7 +1120,7 @@
                     </details>
                     <details>
                         <summary>How does Quench compare to Node.js and Bun?</summary>
-                        <p>With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. On V8 v7 (27 November 2026) the interpreter scores 1.40x the best of Node --jitless and Bun at 0.41x their memory; with the JITs on, Quench is at 0.08x the score of Bun at 0.33x the memory, against a target of 1.5x at 0.5x.</p>
+                        <p>With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. On V8 v7 (28 November 2026) the interpreter scores 1.37x the best of Node --jitless and Bun at 0.43x their memory; with the JITs on, Quench is at 0.08x the score of Bun at 0.36x the memory, against a target of 1.5x at 0.5x.</p>
                     </details>
                     <details>
                         <summary>Is Quench Test262 compliant?</summary>
@@ -1200,7 +1200,7 @@
       "@type": "CreativeWork",
       "url": "https://github.com/butaji/quench#quick-start"
     },
-    "dateModified": "2026-11-27"
+    "dateModified": "2026-11-28"
   },
   {
     "@context": "https://schema.org",
@@ -1265,7 +1265,7 @@
         "name": "How does Quench compare to Node.js and Bun?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. On V8 v7 (27 November 2026) the interpreter scores 1.40x the best of Node --jitless and Bun at 0.41x their memory; with the JITs on, Quench is at 0.08x the score of Bun at 0.33x the memory, against a target of 1.5x at 0.5x."
+          "text": "With JIT turned off in all three, on the 56 JetStream 3 tests that all of them finish (17 November 2026), Quench scores 34.3 against 39.7 for Node --jitless and 32.2 for Bun, and peaks at 28.5 MB of memory against 110.1 MB and 47.7 MB. On V8 v7 (28 November 2026) the interpreter scores 1.37x the best of Node --jitless and Bun at 0.43x their memory; with the JITs on, Quench is at 0.08x the score of Bun at 0.36x the memory, against a target of 1.5x at 0.5x."
         }
       },
       {
