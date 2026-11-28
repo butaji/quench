@@ -2269,10 +2269,6 @@ pub struct ConstructPlan {
     pub classes: [FieldClass; CONSTRUCT_PLAN_FIELDS],
     pub operators: [u8; CONSTRUCT_PLAN_FIELDS],
     pub fallbacks: [Value; CONSTRUCT_PLAN_FIELDS],
-    /// For a forwarding constructor's plan, where its body's reads resolved
-    /// (`forwarded_construction_in_lane`), which the plan's own proof keeps. Its fields, if any, are
-    /// those its forwarded initializer stores (`record_forwarded_fields_in_lane`).
-    pub forwarded: Option<ForwardedResolution>,
     /// The field a nested construction gives a fresh object each time (`NestedField`).
     pub nested: Option<NestedField>,
     /// For a class whose constructor only constructs its parent (`super_construction`),
@@ -2411,24 +2407,8 @@ pub enum ConstructPlanKind {
     /// (`ConstructPlan::defaulted`, `ConstructPlan::computed`), or a fixed class's cell (`ConstructPlan::fixed`),
     /// whose fields are gathered into the cell's slots.
     Defaulted,
-    /// A forwarding constructor's plan (`planned_receiver_in_lane`), which holds only with its
-    /// forwarding (`forwarded_fields_in_lane`).
+    /// A forwarding constructor's plan (`planned_receiver_in_lane`).
     Forwarding,
-}
-
-/// Where a forwarding constructor's reads of `this.<method>` and its `apply` resolved under
-/// a construct plan (`ConstructPlan::forwarded`). The plan's dependency covers the plan's
-/// prototype (the method's slot value), the method (its shape and prototype, which could
-/// shadow `apply`) and the holder of `apply`, so while the plan holds `method` is what the
-/// forwarding reads and `apply` is the intrinsic: a use reads them from here.
-#[derive(Clone, Copy)]
-pub struct ForwardedResolution {
-    pub method: Value,
-    pub apply_holder: Value,
-    /// The forwarded method's function whose initializer stores the plan's fields record
-    /// (`record_forwarded_fields_in_lane`), when it has fields: the method this resolution
-    /// reads must still be of it.
-    pub initializer: Option<(ProgramId, u32)>,
 }
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -3624,7 +3604,6 @@ pub const EMPTY_CONSTRUCT_PLAN: ConstructPlan = ConstructPlan {
     classes: [FieldClass::Passed; CONSTRUCT_PLAN_FIELDS],
     operators: [0; CONSTRUCT_PLAN_FIELDS],
     fallbacks: [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS],
-    forwarded: None,
     nested: None,
     super_parent: Value::UNDEFINED,
     recorded: false,

@@ -33,7 +33,7 @@ fn capture_value(vm: &mut Vm, env: Value, capture: u32) -> Option<Value> {
 pub(crate) fn nested_construction(vm: &mut Vm, constructor: Value, arguments: &[Value; NESTED_ARGUMENTS]) -> Option<Value> {
     let argument = |parameter: u16| arguments.get(usize::from(parameter)).copied().unwrap_or(Value::UNDEFINED);
     let class = vm.ordinary_class(constructor);
-    planned_construction(vm, constructor, class, argument).or_else(|| super::super::forwarded_fields_in_lane(vm, constructor, class, argument))
+    planned_construction(vm, constructor, class, argument)
 }
 
 /// The value `construct` gives its field, built from the constructor its capture and chain
@@ -106,7 +106,6 @@ pub(crate) fn finish_forwarded_in_lane(
         let slot = union.slot_of(atom).expect("a fixed class's store names one of its union slots");
         vm.store_fixed_cell_slot(this, slot, atom, value);
     }
-    // The fields' plan holds the cell's slots, as `initialize_stores_in_lane`'s does (`record_forwarded_fields_in_lane`).
     Some(fields.map(|fields| ConstructPlan {
         fixed: Some(quench_runtime::vm::engine_types::FixedCellPlan {
             shape: union.shape,

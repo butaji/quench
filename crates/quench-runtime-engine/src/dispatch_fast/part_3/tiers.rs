@@ -177,8 +177,8 @@ pub(in super::super) fn callee_captures_in_lane(cx: *mut LaneContext, callee: Va
     unsafe { vm(cx) }.callee_capture_slots(callee)
 }
 
-/// Records the forwarded initializer the construction at `i` ran, which a body may call by
-/// its entry (`construct_callee_in_lane`).
+/// Records the forwarded initializer the construction at `i` ran as the site's callee, which a
+/// lane body's call of the site reads back (`CalleeBinding::Forwarded`).
 pub(in super::super) fn note_construct_site(vm: &Vm, i: &LaneInstruction, constructor: Value, forwarded: &ScriptCallTarget) {
     vm.lane_stack.note_site_callee(&i.call_link, crate::compiled::CallTarget {
         callee: crate::compiled::CalleeBinding::Forwarded { through: constructor, callee: forwarded.callee },
