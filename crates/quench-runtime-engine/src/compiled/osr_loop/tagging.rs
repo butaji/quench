@@ -186,25 +186,25 @@ pub(super) struct Passes<S, F> {
 
 impl<S: Clone + PartialEq, F: FnMut(&S) -> S> quench_runtime::dataflow::Dataflow for Passes<S, F> {
     type State = S;
-    pub(super) fn blocks(&self) -> usize {
+    fn blocks(&self) -> usize {
         1
     }
-    pub(super) fn edges(&self, _block: usize) -> &[usize] {
+    fn edges(&self, _block: usize) -> &[usize] {
         &self.edge
     }
-    pub(super) fn entry_state(&self, _block: usize) -> Option<S> {
+    fn entry_state(&self, _block: usize) -> Option<S> {
         Some(self.initial.clone())
     }
     /// Takes the newer pass's state, where it differs: each pass only grows or shrinks what it
     /// reads, so the states settle.
-    pub(super) fn join(&self, into: &mut S, incoming: &S) -> bool {
+    fn join(&self, into: &mut S, incoming: &S) -> bool {
         let changed = into != incoming;
         if changed {
             into.clone_from(incoming);
         }
         changed
     }
-    pub(super) fn transfer(&mut self, _block: usize, state: &S) -> S {
+    fn transfer(&mut self, _block: usize, state: &S) -> S {
         (self.pass)(state)
     }
 }

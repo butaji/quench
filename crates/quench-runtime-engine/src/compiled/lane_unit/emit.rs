@@ -186,7 +186,7 @@ pub(crate) fn unit<'f>(
     // the planned registers, and the undefined value is the program's `undefined` constant, absent from a program that has none.
     let undefined = program.constants.iter().position(|constant| matches!(constant, Constant::Undefined)).and_then(|index| u32::try_from(index).ok());
     let tails: Vec<Option<Vec<WideInstruction>>> = match undefined {
-        Some(undefined) => (0..plan.code.len()).map(|pc| plan.calls[pc].is_empty().then(|| self_tail(function_id, function, plans,
+        Some(undefined) => (0..plan.code.len()).map(|pc| plan.calls[pc].is_empty().then(|| self_tail(program, function_id, function, plans,
             &plan.code, pc, planner.registers, undefined)).flatten()).collect(),
         None => Vec::new(),
     };

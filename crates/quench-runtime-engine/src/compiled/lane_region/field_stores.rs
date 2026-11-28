@@ -209,7 +209,7 @@ impl Lowering<'_, '_> {
                 .filter_map(|load| load.class.map(|class| StoreArm::of_class(quench_runtime::staged::field_cache_layout::CLASS_KEY | class, load.slot)));
             // An ahead image's construction is a class cell whose class the loader resolves at run time: its arm is
             // `StoreArm::of_image` where it is the site's only shape arm, else its stores take the VM's (the join).
-            let loads: Vec<&NativeFieldLoad> = own.iter().filter(|load| load.class.is_none() && load.valid()).collect();
+            let loads: Vec<&NativeFieldLoad> = own.iter().copied().filter(|load| load.class.is_none() && load.valid()).collect();
             let image_alone = matches!(loads.as_slice(), [load] if load.image_layout());
             let shapes = loads.iter().filter(|load| !load.image_layout() || image_alone)
                 .filter_map(|load| if load.image_layout() {

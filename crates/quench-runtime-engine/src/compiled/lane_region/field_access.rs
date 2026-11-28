@@ -179,7 +179,8 @@ impl Lowering<'_, '_> {
         let generic = cold_block(&mut self.builder);
         let join = self.builder.create_block();
         let length = self.builder.append_block_param(join, types::I32);
-        let native = super::emit_array_length_read(&mut self.builder, self.payload, base, self.array_access(), generic);
+        let access = self.array_access();
+        let native = super::emit_array_length_read(&mut self.builder, self.payload, base, access, generic);
         self.goto(join, &[native]);
         self.builder.switch_to_block(generic);
         let probe = cold_block(&mut self.builder);

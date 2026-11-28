@@ -20,7 +20,7 @@ use quench_runtime::compile::call_plan::{tail_site, CallPlan};
 use quench_runtime::staged::Operation;
 #[path = "lane_unit/admission.rs"] pub(crate) mod admission;
 pub(crate) use admission::{inlinable, InlineScope};
-use admission::{restartable, returns_or_keeps};
+use admission::restartable;
 use super::admission::{admit_callee, CalleeUse};
 #[cfg(test)] #[path = "lane_unit/static_hints.rs"] pub(crate) mod static_hints;
 #[cfg(test)] pub(crate) use static_hints::static_call_targets;
@@ -79,7 +79,7 @@ pub(crate) struct Unit {
 mod unit_methods;
 #[path = "lane_unit/analysis.rs"]
 mod analysis;
-pub(crate) use analysis::*;
+use analysis::*;
 #[path = "lane_unit/plan.rs"]
 mod plan;
 pub(crate) use plan::*;

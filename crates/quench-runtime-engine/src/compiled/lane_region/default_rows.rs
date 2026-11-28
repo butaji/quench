@@ -22,7 +22,7 @@ impl Lowering<'_, '_> {
             self.conform_declared_definitions(state, pc, instruction);
             return true;
         }
-        self.note_unlowered(pc, instruction);
+        self.note_unlowered(instruction);
         let record = self.stepped_record(pc, instruction, plain);
         if self.coverage.full() && record.is_none() && (self.completion.numeric()
             || !((matches!(crate::compiled::decoded(instruction), Some(quench_runtime::staged::Operation::Return { .. })) && plain) || instruction.returns_from_frame())) {
@@ -64,7 +64,7 @@ impl Lowering<'_, '_> {
     }
 
     /// The census of an instruction left unlowered: the lane's stats, the fallback site, an image's report.
-    fn note_unlowered(&self, pc: usize, instruction: WideInstruction) {
+    fn note_unlowered(&self, instruction: WideInstruction) {
         super::super::dispatch_fast::lane_body_stats::unlowered(instruction.op());
         if self.helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
             let name = instruction.op().loads_name().then(|| self.program.atoms.get(instruction.atom_index() as usize).map(|atom| format!("({atom})"))).flatten();

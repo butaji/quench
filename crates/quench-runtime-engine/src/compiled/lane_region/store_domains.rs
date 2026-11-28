@@ -11,9 +11,9 @@ use super::*;
 ///
 /// A store `proven` at its unit pc (`store_proven`, the receiver's class seeds the slot) needs no admission, so it is no domain.
 pub(crate) fn store_domains<'a>(instructions: &[WideInstruction], field: impl Fn(u16) -> Option<&'a [NativeFieldLoad]>,
-    proven: impl Fn(usize, WideInstruction, &NativeFieldLoad) -> bool) -> Vec<(u32, u16, Type)>
+    proven: impl Fn(usize, WideInstruction, &NativeFieldLoad) -> bool) -> Vec<(u32, u32, Type)>
 {
-    let mut domains: Vec<(u32, u16, Type)> = Vec::new();
+    let mut domains: Vec<(u32, u32, Type)> = Vec::new();
     for (pc, instruction) in instructions.iter().enumerate().filter(|(_, instruction)| matches!(crate::compiled::decoded(**instruction), Some(quench_runtime::staged::Operation::SetField { .. }))) {
         let Some([field]) = field(instruction.cache_site_index()) else { continue };
         // An ahead image's guessed store is admitted where its guard links (`symbols::guarded_shape`):

@@ -109,24 +109,6 @@ impl Inline {
 /// Each with the function it held and the exact shape of the prototype holding it.
 pub(crate) type Intrinsics = Vec<Option<(Value, Inline, u32)>>;
 
-/// Whether a call of `native` with `count` arguments runs inline in a loop that holds it, the lane's test
-/// of `intrinsic_calls` (`accepts`) for the region analysis.
-pub(crate) fn inlines_in_loop_call(native: Native, count: u16) -> bool {
-    Inline::of(native).is_some_and(|inline| inline.accepts(count))
-}
-
-/// Whether the call at `pc` of `decoded` is a method call of a native that `inlines_in_loop_call` runs in place:
-/// its callee is the register a field read of the realm's native method defined last before it (as
-/// `intrinsic_calls` finds it), which `Vm::method_native` answers.
-pub(crate) fn native_method_call(machine: &mut Vm, decoded: &[WideInstruction], pc: usize) -> bool {
-    let call = decoded[pc];
-    if !quench_runtime::staged::meaning::means(call, quench_runtime::staged::meaning::Meaning::Call) { return false; }
-    let callee = call.register_b();
-    let Some(definition) = (0..pc).rev().find(|at| decoded[*at].written_registers().any(|register| register == callee)) else { return false };
-    let Some(quench_runtime::vm::global_facts::GlobalRead::NativeMember { native, .. }) = machine.method_native(&decoded[definition]) else { return false };
-    inlines_in_loop_call(native, quench_runtime::bytecode::ImmediateLayout::argument_count(call.imm()))
-}
-
 /// Whether the by-name load at `pc` reads a global name held as a scalar native's slot (`GlobalRead::NativeSlot`) or folded
 /// to its value: its read is a slot, a live load that leaves at a miss, or none, and it changes nothing a loop holds.
 pub(crate) fn scalar_name_read(global_reads: &quench_runtime::vm::global_facts::GlobalReads, pc: usize) -> bool {

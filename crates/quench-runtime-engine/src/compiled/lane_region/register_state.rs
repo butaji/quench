@@ -4,7 +4,14 @@ use super::*;
 /// length, whether it was proved for stores (which also answers reads), and whether an instruction that may change a view
 /// ran since (`kept`): a kept view is the same view once the code holds views (`Lowering::typed_view_of`).
 #[derive(Clone, Copy, PartialEq)]
-pub(super) struct TypedProof { register: Register, kind: quench_runtime::tier_surface::TypedArrayKind, values: ir::Value, length: ir::Value, writable: bool, kept: bool }
+pub(super) struct TypedProof {
+    pub(super) register: Register,
+    pub(super) kind: quench_runtime::tier_surface::TypedArrayKind,
+    pub(super) values: ir::Value,
+    pub(super) length: ir::Value,
+    pub(super) writable: bool,
+    pub(super) kept: bool,
+}
 /// Semantic proof and active machine view; tagged bits may also be current.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RegisterFact {
