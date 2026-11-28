@@ -84,32 +84,24 @@ pub(super) fn root_stores(program: &crate::bytecode::ResidualProgram, world: Wor
     roots
 }
 
-/// The bindings of `flows` (`Key::Global`, `Key::Slot`) that hold a closure, and the bodies those closures are, where no root store
-/// dominates every read of the binding. Such a binding is read before its closure is stored, when it holds `undefined`, so its
-/// closure identity is no proof (`identity::proven`) and `census::single` resolves none of it. Computed over the first pass of the
-/// solve, whose census names the closures a register call may reach (`reached_by`).
+/// The frozen groups of `flows` (`FactKey::Global`, `FactKey::Slot`, and a named property's `FactKey::AnyField`) that hold a closure,
+/// and the bodies those closures are, where no root store dominates every read of the group. Such a key is read before its closure
+/// is stored, when it holds `undefined`, so its closure identity is no proof (`identity::proven`) and `census::single` resolves none
+/// of it. A named property's group is the name-wide one (`fact_group`): a read of the name off any object is a read of the group.
+/// Computed over the first pass of the solve, whose census names the closures a register call may reach (`reached_by`).
 pub(super) fn undominated_closures(program: &crate::bytecode::ResidualProgram, flows: &[FunctionFlow], facts: &AotFacts, census: &Census,
     escaped: &Escapes,
-) -> (BTreeSet<Key>, BTreeSet<u32>) {
+) -> (BTreeSet<FactKey>, BTreeSet<u32>) {
     let order = RootOrder::of(program, flows, census, escaped);
-    let mut writes: BTreeMap<Key, Vec<(u32, u32, Word)>> = BTreeMap::new();
-    let mut reads: BTreeMap<Key, Vec<(u32, u32)>> = BTreeMap::new();
-    for (function, flow) in flows.iter().enumerate() {
-        for &(pc, key, word) in &flow.writes {
-            if matches!(key, Key::Global(_) | Key::Slot { .. }) { writes.entry(key).or_default().push((function as u32, pc, word)); }
-        }
-        for &(pc, key) in &flow.key_reads {
-            if matches!(key, Key::Global(_) | Key::Slot { .. }) { reads.entry(key).or_default().push((function as u32, pc)); }
-        }
-    }
+    let (writes, reads) = fact_sites(flows);
     let mut keys = BTreeSet::new();
     let mut bodies = BTreeSet::new();
-    for (key, sites) in &writes {
+    for (&key, sites) in &writes {
         let closures: Vec<u32> = sites.iter().filter_map(|(_, _, word)| word.cell.ty.body_index()).collect();
         if closures.is_empty() { continue; }
-        let key_reads = reads.get(key).map_or(&[][..], Vec::as_slice);
-        if census.wild(*key) || dominating_store(&order, flows, facts, census, sites, key_reads).is_none() {
-            keys.insert(*key);
+        let key_reads = reads.get(&key).map_or(&[][..], Vec::as_slice);
+        if wild(census, key) || dominating_store(&order, flows, facts, census, sites, key_reads).is_none() {
+            keys.insert(key);
             bodies.extend(closures);
         }
     }

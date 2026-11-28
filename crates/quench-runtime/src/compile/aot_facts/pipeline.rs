@@ -158,14 +158,15 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
     let none = length_settle::Feedback::default();
     let first = analyze_typed(&std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), None, &none);
     let accessor_names = accessors::names_of(&first);
-    // A binding one of whose closure stores no root store dominates is no single closure (`frozen::undominated_closures`): its
-    // closure's identity is no proof either. The first pass's census names the callees the dominance check follows.
+    // A binding or a named property one of whose closure stores no root store dominates is no single closure
+    // (`frozen::undominated_closures`): its closure's identity is no proof either, so a read of it holds no closure identity.
+    // The first pass's census names the callees the dominance check follows.
     let first_census = Census::of(&first, world, classes.clone());
     let first_facts = AotFacts::unsolved(world);
     let first_escapes = escapes::escapes(&first, &first_facts, &first_census, &scope);
     let (undominated, undominated_bodies) = frozen::undominated_closures(program, &first, &first_facts, &first_census, &first_escapes);
     let mut resolved = first_census.singles();
-    resolved.retain(|key, _| !undominated.contains(key));
+    resolved.retain(|key, _| !undominated.contains(&census::fact_key(*key)));
     let flows = analyze_typed(&resolved, &accessor_names, None, &none);
     let mut census = Census::of(&flows, world, classes.clone());
     census.undominated = undominated;
