@@ -10,8 +10,9 @@
 
 #![allow(dead_code)]
 
-use super::cell::{Object, ProtoLink};
-use super::class_space::{header_class, live_header};
+use super::cell::{Object, ObjectExtras, ProtoLink};
+use super::dependencies::Watch;
+use super::class_space::{header_class, header_with_class};
 use super::Heap;
 use crate::value::Value;
 use crate::value_vec::DictionaryTable;
@@ -26,6 +27,8 @@ pub struct CellView<'a> {
     fields: &'a [Value],
     run: &'a [Value],
     table: Option<&'a DictionaryTable>,
+    /// The cell's extras (`ExtrasSpace`), where its header names some.
+    extras: Option<&'a ObjectExtras>,
 }
 
 /// A class cell's mutable view. Its class changes in place through its header word.
@@ -34,6 +37,9 @@ pub struct CellViewMut<'a> {
     fields: &'a mut [Value],
     run: &'a mut [Value],
     table: Option<&'a mut DictionaryTable>,
+    /// The cell's extras (`ExtrasSpace`), where its header names some. A write that needs extras finds them made
+    /// (`Heap::ensure_cell_extras`) before the view is taken.
+    extras: Option<&'a mut ObjectExtras>,
 }
 
 /// A shared view of an ordinary object: a class cell, or a record.
@@ -76,8 +82,20 @@ impl CellViewMut<'_> {
     #[inline(always)]
     fn edit_class(&mut self, edit: impl FnOnce(&mut Object)) {
         let mut object = Object::of_class(header_class(*self.header));
+        if let Some(extras) = self.extras.as_deref() {
+            extras.note_prototype_layout_change(object.exact_shape());
+        }
         edit(&mut object);
-        *self.header = live_header(object.layout_id());
+        *self.header = header_with_class(*self.header, object.layout_id());
+    }
+
+    /// `Object::mark_as_prototype` on the cell: its extras take the prototype mark.
+    fn mark_as_prototype(&mut self) {
+        let extras = self.extras.as_deref_mut().expect("a cell's extras are made before its prototype mark");
+        if !extras.prototype_marked() {
+            super::array_proofs::retire_array_storage_proofs();
+            extras.set_prototype_setup();
+        }
     }
 }
 
@@ -118,7 +136,7 @@ impl<'a> ObjectRef<'a> {
                 object.has_extras()
                     && (object.boxed_primitive().is_some() || object.stack_data().is_some() || object.has_error_data())
             }
-            ObjectRef::Cell(_) => false,
+            ObjectRef::Cell(cell) => cell.extras.is_some_and(ObjectExtras::holds_define_data),
         }
     }
 
@@ -131,13 +149,29 @@ impl<'a> ObjectRef<'a> {
         hint_shape -> u32;
         is_extensible -> bool;
         is_frozen -> bool;
-        was_used_as_prototype -> bool;
         has_exotic_access -> bool;
         holds_constant_mark -> bool;
         is_array -> bool;
         is_module_namespace -> bool;
-        watched_subject -> Option<u32>;
         admits_cached_add -> bool;
+    }
+
+    /// Whether the object carries a prototype mark (`Object::was_used_as_prototype`); a cell's is in its extras.
+    #[inline(always)]
+    pub fn was_used_as_prototype(&self) -> bool {
+        match self {
+            ObjectRef::Record(object) => object.was_used_as_prototype(),
+            ObjectRef::Cell(cell) => cell.extras.is_some_and(ObjectExtras::prototype_marked),
+        }
+    }
+
+    /// This prototype's watch subject (`Object::watched_subject`); a cell's is in its extras.
+    #[inline(always)]
+    pub fn watched_subject(&self) -> Option<u32> {
+        match self {
+            ObjectRef::Record(object) => object.watched_subject(),
+            ObjectRef::Cell(cell) => cell.extras.and_then(ObjectExtras::watched_subject),
+        }
     }
 }
 
@@ -163,7 +197,13 @@ impl<'a> ObjectMut<'a> {
     pub fn as_shared(&self) -> ObjectRef<'_> {
         match self {
             ObjectMut::Record(object) => ObjectRef::Record(&**object),
-            ObjectMut::Cell(cell) => ObjectRef::Cell(CellView { header: &*cell.header, fields: &*cell.fields, run: &*cell.run, table: cell.table.as_deref() }),
+            ObjectMut::Cell(cell) => ObjectRef::Cell(CellView {
+                header: &*cell.header,
+                fields: &*cell.fields,
+                run: &*cell.run,
+                table: cell.table.as_deref(),
+                extras: cell.extras.as_deref(),
+            }),
         }
     }
 
@@ -236,14 +276,45 @@ impl<'a> ObjectMut<'a> {
         self.as_shared().is_module_namespace()
     }
 
+    /// Marks the object as a prototype (`Object::mark_as_prototype`): a cell's extras take the mark.
+    #[inline(always)]
+    pub fn mark_as_prototype(&mut self) {
+        match self {
+            ObjectMut::Record(object) => object.mark_as_prototype(),
+            ObjectMut::Cell(cell) => cell.mark_as_prototype(),
+        }
+    }
+
+    /// Readies a marked prototype's lookup (`Object::prepare_prototype_lookup`). A cell with no extras has no mark.
+    #[inline(always)]
+    pub fn prepare_prototype_lookup(&mut self) {
+        match self {
+            ObjectMut::Record(object) => object.prepare_prototype_lookup(),
+            ObjectMut::Cell(cell) => {
+                if let Some(extras) = cell.extras.as_deref_mut() {
+                    extras.prepare_prototype();
+                }
+            }
+        }
+    }
+
+    /// Gives the prototype its watch subject (`Object::watch_as`); a cell's is in its extras.
+    #[inline(always)]
+    pub fn watch_as(&mut self, watch: Watch) {
+        match self {
+            ObjectMut::Record(object) => object.watch_as(watch),
+            ObjectMut::Cell(cell) => cell.extras.as_deref_mut().expect("a cell's extras are made before its watch").set_watch(watch),
+        }
+    }
+
     /// The class edge (R4-C4): makes `class` the object's class, its header word. A cell's header
-    /// holds the class id (`live_header`); a record takes it through `Object::set_class`. The caller
+    /// holds the class id in its low half (`header_with_class`); a record takes it through `Object::set_class`. The caller
     /// retires the readers of the old class (`Heap::set_class`).
     #[inline(always)]
     pub fn set_class(&mut self, class: u32) {
         match self {
             ObjectMut::Record(object) => object.set_class(class),
-            ObjectMut::Cell(cell) => *cell.header = live_header(class),
+            ObjectMut::Cell(cell) => *cell.header = header_with_class(*cell.header, class),
         }
     }
 
@@ -296,7 +367,8 @@ impl Heap {
     pub(crate) fn live_cell(&self, granule: u32) -> ObjectRef<'_> {
         let (fields, run) = self.class_space.cell_words(granule, self.live_spill_from(granule));
         let table = self.cell_dictionary(granule);
-        ObjectRef::Cell(CellView { header: self.class_space.cell_header(granule), fields, run, table })
+        let extras = self.extras.get(self.class_space.extras_id(granule));
+        ObjectRef::Cell(CellView { header: self.class_space.cell_header(granule), fields, run, table, extras })
     }
 
     /// The exclusive view of live class cell `granule`, whose header and fields it edits in place. A dictionary
@@ -305,10 +377,12 @@ impl Heap {
     pub(crate) fn live_cell_mut(&mut self, granule: u32) -> ObjectMut<'_> {
         let spill = self.live_spill_from(granule);
         let dictionary = self.dictionary_id_of_cell(granule);
+        let extras_id = self.class_space.extras_id(granule);
+        let extras = self.extras.get_mut(extras_id);
         let properties = &mut self.properties;
         let (header, fields, run) = self.class_space.cell_parts_mut(granule, spill);
         let table = dictionary.map(|id| properties.dictionary_mut(id));
-        ObjectMut::Cell(CellViewMut { header, fields, run, table })
+        ObjectMut::Cell(CellViewMut { header, fields, run, table, extras })
     }
 
     /// The value of `slot` on `object`, as `property_get` reads it: a class cell's field, or a record's

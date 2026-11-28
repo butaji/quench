@@ -11,7 +11,8 @@
 //! slot: `Heap::live_spill_from` of the live cell.
 
 use super::Heap;
-use super::class_space::{ClassSpace, granule, header_class, region_capacity};
+use super::class_space::{ClassSpace, granule, header_class, header_extras, region_capacity};
+use super::extras_space::{ExtrasSpace, NO_EXTRAS};
 use super::dictionary_cell::dictionary_id_of;
 use super::layouts;
 use super::records::RecordId;
@@ -135,6 +136,7 @@ impl SpillSpace {
 pub(super) fn dispose_dead_runs<'a, T, F: Fn(&ValueArena, u32) -> Option<u32>>(
     arena: &'a mut SpillSpace,
     values: &'a mut ValueArena,
+    extras: &'a mut ExtrasSpace,
     base: usize,
     region: u32,
     spill_of: &'a F,
@@ -143,8 +145,14 @@ pub(super) fn dispose_dead_runs<'a, T, F: Fn(&ValueArena, u32) -> Option<u32>>(
         let g = granule(region, local);
         let cell = (base + g as usize * CLASS_HEADER_BYTES) as *const u64;
         // SAFETY: a dead cell of the reserved space keeps its header and fields until its record is forgotten here.
-        let class = header_class(unsafe { *cell });
+        let header = unsafe { *cell };
+        let class = header_class(header);
         if class != DEPARTED_CLASS {
+            // A dead live cell's extras die with it (`ExtrasSpace::release`).
+            let extras_id = header_extras(header);
+            if extras_id != NO_EXTRAS {
+                extras.release(extras_id);
+            }
             if layouts::class_is_dictionary(class) {
                 // SAFETY: a dictionary cell's slot 0 is the one word after its header, the dictionary word.
                 let word = unsafe { *cell.add(1) };

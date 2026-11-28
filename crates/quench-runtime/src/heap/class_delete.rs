@@ -3,7 +3,7 @@
 //! (`Heap::cell_to_dictionary`), so no delete departs a cell.
 
 use super::Heap;
-use super::class_space::{header_class, live_header};
+use super::class_space::header_class;
 use super::layouts;
 use crate::value::Value;
 
@@ -16,6 +16,7 @@ impl Heap {
     pub(crate) fn class_cell_drop_last(&mut self, granule: u32, parent: u32) {
         // A constant mark clears on any write, the delete included, before the class is read.
         self.note_cell_write(granule);
+        self.note_cell_layout_change(granule);
         let before = header_class(self.class_space.header(granule));
         debug_assert!(!layouts::class_is_dictionary(before), "a dictionary cell drops no key in place");
         let kept = self.properties.shape_length(parent);
@@ -26,7 +27,7 @@ impl Heap {
             self.class_space.fold_run(granule, spill);
         }
         let next = layouts::intern_class(parent, layouts::class_link(before), layouts::class_flags(before), region);
-        self.class_space.write_header(granule, live_header(next));
+        self.class_space.write_class(granule, next);
         self.set_class(layouts::class_shape(before), parent);
         self.holder_fields_moved(granule);
     }

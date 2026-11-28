@@ -298,7 +298,7 @@ impl Vm {
                             // The prototype-lookup flag is record data.
                             if self.proxy_parts(current).is_some() || data.record_only().is_some_and(|record| record.prototype_lookup_ready()) { break; }
                             let next = data.proto();
-                            self.heap.object_record_mut(current).expect("lookup object").prepare_prototype_lookup();
+                            self.heap.object_mut(current).expect("lookup object").prepare_prototype_lookup();
                             current = next;
                         }
                     }

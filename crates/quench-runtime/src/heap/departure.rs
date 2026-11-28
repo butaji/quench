@@ -14,7 +14,8 @@
 //! dictionary shape lives in the VM's shape table. The record's class is the cell's class until then.
 
 use super::cell::Object;
-use super::class_space::{header_class, header_record, is_cell_granule, live_header, region_capacity};
+use super::extras_space::NO_EXTRAS;
+use super::class_space::{header_class, header_record, is_cell_granule, region_capacity};
 use super::{Heap, OrdinaryRecord, layouts};
 use crate::staged::field_cache_layout::CLASS_KEY;
 use crate::staged::object_encoding::{DEPARTED_CLASS, DICTIONARY_STORAGE, departed_header};
@@ -39,9 +40,9 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn live_class_header(&self, value: Value) -> Option<u64> {
         let granule = self.live_class_cell(value)?;
-        let header = self.class_space.header(granule);
-        let class = header_class(header);
-        (layouts::class_region(class) == 1 && !layouts::class_is_dictionary(class)).then_some(header)
+        // The class alone: the cell's extras id (its header's high half) is its own, and a claim takes none.
+        let class = header_class(self.class_space.header(granule));
+        (layouts::class_region(class) == 1 && !layouts::class_is_dictionary(class)).then_some(u64::from(class))
     }
 
     /// The receiver key of a field entry for `value` when it is a live class cell outside dictionary
@@ -100,6 +101,11 @@ impl Heap {
         );
         // The class's flags and prototype link; the storage form is the record's own.
         object.set_class(class);
+        // The cell's extras move into the record with its object, which holds them from now on (`ExtrasSpace`).
+        let extras_id = self.class_space.extras_id(granule);
+        if extras_id != NO_EXTRAS {
+            object.install_extras(self.extras.release(extras_id));
+        }
         self.admit_object_contents(&object);
         let Some(record_id) = self.object_records.bump_id(&mut self.allocated) else {
             panic!("object records exhausted: the object space holds 2^30 records");
@@ -171,7 +177,7 @@ impl Heap {
         let mut object = Object::of_class(class);
         object.note_constant_write();
         if object.layout_id() != class {
-            self.class_space.write_header(granule, live_header(object.layout_id()));
+            self.class_space.write_class(granule, object.layout_id());
         }
     }
 
@@ -208,6 +214,7 @@ impl Heap {
         if let Some(id) = self.dictionary_id_of_cell(granule) {
             return self.dictionary_cell_initialize(granule, id, shape, &words);
         }
+        self.note_cell_layout_change(granule);
         if words.iter().any(|word| word.heap_index().is_some()) {
             self.class_space.barrier(granule);
         }
@@ -218,7 +225,7 @@ impl Heap {
         }
         let class = header_class(self.class_space.header(granule));
         let next = layouts::intern_class(shape, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
-        self.class_space.write_header(granule, live_header(next));
+        self.class_space.write_class(granule, next);
     }
 
     /// The add of `value` as field `slot` along the class edge from class `before`'s shape to shape `after`, in place
@@ -230,6 +237,7 @@ impl Heap {
         }
         // The add observes its value under the after-shape, the shape the add's slot belongs to, before the
         // field's word is taken: a widening rewrites the words already held, then this one is converted.
+        self.note_cell_layout_change(granule);
         self.properties.note_shape_value(after, slot, value);
         self.rewrite_widened_numbers();
         let word = self.properties.stored_word(after, slot, value);
@@ -241,7 +249,7 @@ impl Heap {
         debug_assert_eq!(layouts::class_shape(class), before, "an add's cell holds its transition's before-shape");
         // The cell never moves, so its region is the one the class it leaves names.
         let next = layouts::intern_class(after, layouts::class_link(class), layouts::class_flags(class), layouts::class_region(class));
-        self.class_space.write_header(granule, live_header(next));
+        self.class_space.write_class(granule, next);
         self.set_class(before, after);
     }
 }

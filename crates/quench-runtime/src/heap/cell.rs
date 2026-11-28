@@ -18,6 +18,7 @@ mod modes;
 mod prototype_values;
 mod shape_id;
 mod snapshot;
+pub(crate) use snapshot::{read_extras, write_extras};
 mod typed_array_kind;
 mod wasm_fields;
 mod array_object;
@@ -33,7 +34,9 @@ mod native_kinds;
 mod object_layout;
 #[cfg(test)]
 mod object_payload_tests;
+mod extras_api;
 mod object_state;
+pub(crate) use object_state::trace_extras;
 mod object_storage;
 pub use await_state::{AwaitKind, AwaitRole, AwaitState};
 pub use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
@@ -1301,7 +1304,7 @@ enum PrototypeLookupState {
 /// forwards its fields, so `extras.arena_start` and the rest read as before.
 #[derive(Clone, Debug, Default)]
 #[repr(C)]
-struct ObjectExtras {
+pub(crate) struct ObjectExtras {
     head: ObjectExtrasHead<DisplacedInline, super::ArrayElements>,
     prototype_lookup: PrototypeLookupState,
     /// What has been recorded about the object's properties beside its shape; bits are set

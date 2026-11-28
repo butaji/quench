@@ -5,6 +5,8 @@
 
 use super::*;
 use super::class_space::{ClassCell0, ClassCell1, ClassCell2, ClassCell3, ClassCell4, ClassCell5, ClassSpace};
+use super::extras_space::ExtrasSpace;
+use super::cell::{ObjectExtras, read_extras, write_extras};
 use crate::snapshot::{read_list, Reader, SnapshotError, SnapshotResult, Writer};
 use crate::value::Value;
 
@@ -30,6 +32,7 @@ impl Heap {
         write_records(writer, &self.class_space.regions.0, |writer, cell: &ClassCell0| Ok(writer.u64(cell.header)))?;
         // The class cells (regions 1..) follow, each with its header and fields, so a Value naming one restores unchanged.
         write_class_cells(writer, &self.class_space)?;
+        write_extras_space(writer, &self.extras)?;
         write_records(writer, &self.array_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.function_records, |writer, record| record.write_snapshot(writer))?;
         write_records(writer, &self.promise_records, |writer, record| record.write_snapshot(writer))?;
@@ -109,6 +112,7 @@ impl Heap {
         read_records(reader, &mut heap.object_records, OrdinaryRecord::read_snapshot)?;
         read_stubs(reader, &mut heap)?;
         read_class_cells(reader, &mut heap)?;
+        read_extras_space(reader, &mut heap)?;
         read_records(reader, &mut heap.array_records, ArrayObject::read_snapshot)?;
         read_records(reader, &mut heap.function_records, FunctionRecord::read_snapshot)?;
         read_records(reader, &mut heap.promise_records, PromiseCell::read_snapshot)?;
@@ -245,6 +249,26 @@ fn write_class_cells(writer: &mut Writer, space: &ClassSpace) -> SnapshotResult<
     write_records(writer, &regions.3, |writer, cell: &ClassCell3| Ok(write_cell(writer, cell.header, &cell.fields)))?;
     write_records(writer, &regions.4, |writer, cell: &ClassCell4| Ok(write_cell(writer, cell.header, &cell.fields)))?;
     write_records(writer, &regions.5, |writer, cell: &ClassCell5| Ok(write_cell(writer, cell.header, &cell.fields)))
+}
+
+/// Writes the cell extras (`read_extras_space`): the entries, each as `write_extras` writes one, then the free ids.
+fn write_extras_space(writer: &mut Writer, space: &ExtrasSpace) -> SnapshotResult<()> {
+    let (entries, free) = space.snapshot_parts();
+    writer.len(entries.len());
+    for extras in entries {
+        write_extras(writer, extras)?;
+    }
+    writer.u32s(free);
+    Ok(())
+}
+
+/// Reads the cell extras `write_extras_space` wrote, entry 0 (`NO_EXTRAS`) first, so the cells' ids name them again.
+fn read_extras_space(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<()> {
+    let count = reader.len()?;
+    let entries = (0..count).map(|_| read_extras(reader)).collect::<SnapshotResult<Vec<ObjectExtras>>>()?;
+    let free = reader.u32s()?;
+    heap.extras = ExtrasSpace::from_snapshot(entries, free);
+    Ok(())
 }
 
 /// A class cell's header, then each of its fields, as the snapshot keeps them.

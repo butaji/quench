@@ -98,6 +98,9 @@ macro_rules! with_region_mut {
 // The collector's view of the cell regions (`marks`) comes after the region macros it uses.
 mod marks;
 pub(super) use marks::ClassCellMarks;
+// The extras half of a live cell's header (`write_class`, `extras_id`, `set_extras_id`).
+mod extras;
+pub(super) use extras::extras_id_at;
 
 // A cell region's records are its cells: local id `id` of region `k` is the cell at `granule(k, id)`.
 macro_rules! cell_record_values {
@@ -474,4 +477,18 @@ pub(super) const fn header_class(header: u64) -> u32 {
 
 pub(super) const fn header_record(header: u64) -> u32 {
     (header >> CLASS_RECORD_SHIFT) as u32
+}
+
+/// Where a live cell's header holds its extras id (`ExtrasSpace`), above the class half. A departed header
+/// holds its record id there instead (`departed_header`), so a cell's high half is read by its state.
+pub(super) const EXTRAS_SHIFT: u32 = u32::BITS;
+
+/// The extras id of a live cell's header: `NO_EXTRAS` where the cell has none.
+pub(super) const fn header_extras(header: u64) -> u32 {
+    (header >> EXTRAS_SHIFT) as u32
+}
+
+/// `header` with its class half set to `class` and its high half kept, so a class edit keeps the cell's extras.
+pub(super) const fn header_with_class(header: u64, class: u32) -> u64 {
+    (header & !(u32::MAX as u64)) | class as u64
 }

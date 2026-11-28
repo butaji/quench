@@ -165,7 +165,7 @@ fn read_object(reader: &mut Reader<'_>) -> SnapshotResult<Object> {
     Ok(Object::from_header(meta, auxiliary, payload))
 }
 
-fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
+pub(crate) fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()> {
     let ObjectExtras {
         head: ObjectExtrasHead {
             inline_properties,
@@ -232,7 +232,7 @@ fn write_extras(writer: &mut Writer, extras: &ObjectExtras) -> SnapshotResult<()
     Ok(())
 }
 
-fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
+pub(crate) fn read_extras(reader: &mut Reader<'_>) -> SnapshotResult<ObjectExtras> {
     let prototype_lookup = prototype_lookup::read(reader)?;
     let inline = reader.values()?;
     let inline_properties = DisplacedInline(

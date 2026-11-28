@@ -1,10 +1,12 @@
-//! Whether the instances of a class keep their shape in the closed world (`AotFacts::class_fixed_cell`, `class_writable_cell`). An instance
-//! departs its shape where a change reaches it that its union layout (`class_layout::unions_of`) does not name: a delete
-//! or a store under a name the analysis cannot list (`Change::Any`), a builtin that defines properties on its arguments
-//! (`Change::Define`), a store through a wild holder that may be one of its instances (`Census::wild`), or a builtin that
-//! makes a property non-writable or an object non-extensible, sealed or frozen (`Scope::changes_descriptors`) handed one.
-//! A named store of an instance is no departure: the union layout names it. The union layout itself is required, so the
-//! fact is taken only in a closed world.
+//! Whether the instances of a class keep their union's slots in the closed world (`AotFacts::class_fixed_cell`,
+//! `class_writable_cell`). Every ordinary object is a class cell for its whole life (departure-free cells); a change its
+//! union layout (`class_layout::unions_of`) does not name changes the class: a delete (back to the parent class, or a
+//! dictionary class) or a store under a name the analysis cannot list (`Change::Any`), a builtin that defines properties on
+//! its arguments (`Change::Define`), or a store through a wild holder that may be one of its instances (`Census::wild`). Those
+//! move or rename slots, so they keep a class from being fixed. A builtin that makes a property non-writable or an object
+//! non-extensible, sealed or frozen (`Scope::changes_descriptors`) is a flag transition: it keeps the slots, so it only keeps
+//! the class from being writable. A named store of an instance changes nothing: the union layout names it. The union layout
+//! itself is required, so the facts are taken only in a closed world.
 
 use super::census::Census;
 use super::escapes::Escapes;

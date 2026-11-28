@@ -1359,7 +1359,6 @@ file-lines crates/quench-runtime/src/profile.rs 953
 file-lines crates/quench-runtime/src/snapshot.rs 892
 file-lines crates/quench-runtime/src/subset_tests.rs 1661
 file-lines crates/quench-runtime/src/value.rs 935
-file-lines crates/quench-runtime/src/value_vec.rs 1322
 file-lines crates/quench-runtime/src/vm.rs 3655
 file-lines crates/quench-runtime/src/vm/array.rs 1177
 file-lines crates/quench-runtime/src/vm/array_buffer.rs 999
@@ -4667,7 +4666,7 @@ magic crates/quench-runtime/src/shared_backing.rs::SharedBacking::wait_async 2
 magic crates/quench-runtime/src/shared_backing.rs::SharedBacking::wait_inner 2
 magic crates/quench-runtime/src/snapshot.rs::Writer::new 1
 magic crates/quench-runtime/src/typed_ir/slot_type.rs::SlotType::join 2
-magic crates/quench-runtime/src/value_vec.rs::ValueArena::bucket 1
+magic crates/quench-runtime/src/value_vec/allocate.rs::ValueArena::bucket 1
 magic crates/quench-runtime/src/value_vec.rs::capacity_class 2
 magic crates/quench-runtime/src/vm.rs::DictionaryTrigger::index 2
 magic crates/quench-runtime/src/vm.rs::Vm<H>::initialize_shared 2
