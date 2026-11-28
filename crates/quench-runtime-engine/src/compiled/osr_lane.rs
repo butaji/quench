@@ -51,7 +51,7 @@ pub(crate) unsafe fn bind_captures(
 ) {
     // Every region binds a view, even one whose own instructions name no capture: its window's captures word is
     // otherwise whatever the activation's push left there (an interpreter push writes none), and a base region's
-    // rows may read it all the same (richards under `--b-jit` read capture 34 through a deleted marker). One that
+    // rows may read it all the same (richards under the b-jit tier read capture 34 through a deleted marker). One that
     // calls may also test a captured callee's identity at its entry (`CAPTURE_IDENTITY_ROW`).
     // A region that calls reads its captures live too where the lane has them: a callee may
     // store one, which a copy would not see. Where it has none, the copy as before.

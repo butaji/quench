@@ -373,7 +373,7 @@ impl<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>
         // The payload names the limit's cell (`LaneStack::plain_depth_limit`), which Rust zeroes when it changes the frames
         // under a bound run or the run's window is a leaf's (`refuse_direct_calls_in_leaf`): the helper row calls then.
         // Comparing against the cell's address instead admitted every call, so a body entered as a leaf pushed its callee
-        // over the leaf's pending activation (crypto's and deltablue's `--b-jit` failures).
+        // over the leaf's pending activation (crypto's and deltablue's failures under the b-jit tier alone).
         if depth + frames > word_at(word_at(payload, PLAIN_DEPTH_LIMIT) as usize, 0) {
             return None;
         }

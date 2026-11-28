@@ -1,0 +1,4 @@
+# Ops over their per-op budget (op_budgets.txt) under AOT, net of `empty` (quench-gate step `ir-budget`).
+# A shrink-only debt list: an unlisted overrun fails the step, and an entry that no longer overruns
+# must be removed (`QUENCH_DEBT_WRITE=1` on a full run removes it). Never add an entry by hand.
+# Seeded by `QUENCH_DEBT_WRITE=1` on a full run: the list starts empty, the AOT overruns of that run are its entries.

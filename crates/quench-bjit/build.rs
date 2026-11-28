@@ -301,7 +301,7 @@ fn main() {
 /// One macro invocation per generated row, the unit `shards::split` distributes, with its
 /// compile weight (`shards::NUMBER_WEIGHT` and the weights beside it).
 /// The base tier's numeric, heap and supernode rows are x86-64's only; every other target builds the Wasm rows alone,
-/// and its base tier falls back as a `--b-jit` without one does.
+/// and its base tier falls back as the b-jit tier alone does without one.
 fn instances(listed: &supernodes::Listed, arch: Arch) -> Vec<(String, usize, Family)> {
     // The base tier's rows are built for both hosted targets (an AOT image stencils them).
     let base: Vec<(String, usize)> = if matches!(arch, Arch::X86_64 | Arch::Aarch64) {

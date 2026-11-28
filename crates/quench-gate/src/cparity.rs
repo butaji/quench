@@ -1,5 +1,6 @@
 //! Step 5: the C-parity gate. Each kernel (`crates/quench-tier-corpus/cparity/js`, with its C
-//! reference in `.../c`) runs on every JIT tier with the compiled regions dumped. The hottest
+//! reference in `.../c`) runs in the default mode with the compiled regions dumped (AOT output
+//! carries no such dumps; the aot step measures AOT). The hottest
 //! loop's machine code is measured per iteration (`classes`): instruction count and the residual
 //! classes C would not spend. The measurement is compared with the ratchet table
 //! (`crates/quench-tier-corpus/cparity.txt`): growth fails, improvement lowers the ceiling,
@@ -125,9 +126,8 @@ fn hottest(directory: &Path, stderr: &str, hot: Option<Hot>) -> Result<Measured,
     Ok(scalar_call(directory, &dumps)?.map_or(Measured::Nothing, Measured::Code))
 }
 
-/// Runs one kernel in each compiling mode Quench ships (b-jit only, and the default with every
-/// tier on; user, 2026-11-22) and settles each measurement against the ratchet. A forced `--u-jit`
-/// is not a shipped mode, so it does not decide the gate (TOD-2068 flaw 9).
+/// Runs one kernel in the default mode (every tier on; user, 2026-11-22) and settles the
+/// measurement against the ratchet. The interpreter is the reference, not measured here.
 fn measure(config: &Config, host: &Path, kernel: &Path, table: &mut Table, tally: &mut Tally) -> Result<(), String> {
     let name = kernel.file_stem().and_then(|stem| stem.to_str()).ok_or("a kernel has no name")?;
     let expected = node(config, host, kernel, Some(INTERPRETER), None)?.stdout;

@@ -1,4 +1,4 @@
-//! A function's BaseJIT body (`--b-jit`): the whole function stitched from stencils
+//! A function's BaseJIT body (the b-jit tier): the whole function stitched from stencils
 //! (`base_region::function`) and published as a lane body, so the tier prologue enters it and
 //! its leaves resume the interpreter as a Cranelift body's do (`body_entry_in_lane`,
 //! `LaneExit`). A call site that recorded a stable callee calls its entry cell (the direct row,
@@ -216,7 +216,7 @@ impl Vm {
         { let (mut facts, programs) = self.fact_watch(); programs.publish_lane_method(method, &mut facts) }.map_or(LaneBodyOutcome::Declined, LaneBodyOutcome::Published)
     }
 
-    /// `function`'s body for lane activations under `--b-jit`: what `parameters` (the entry's)
+    /// `function`'s body for lane activations under the b-jit tier: what `parameters` (the entry's)
     /// showed and the places a predecessor left at (`generic`) specialize its rows, and `direct`
     /// (the callees each call site reached) its calls. Declined where the function has no row to
     /// run first.

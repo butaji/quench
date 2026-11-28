@@ -1,5 +1,5 @@
 # Per-op instruction budgets (quench-gate step `ir-budget`, `crates/quench-gate/src/op_budget.rs`).
-# Every tier (--no-jit, --b-jit, --u-jit) is held to them. An op's count is net of the `empty` op,
+# Every mode (--no-jit, default, aot) is held to them. An op's count is net of the `empty` op,
 # the loop's own step, so the budget is what the op's body may cost per iteration.
 # `@unit count` is a unit budget; `op terms` sums units (`unit*k` counts k of one unit).
 # Units (Vitaly, 2026-11-21): `a.x` <= 5, `i + 1` <= 3, a call <= 20.
