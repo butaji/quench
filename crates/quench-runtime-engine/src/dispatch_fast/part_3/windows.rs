@@ -5,7 +5,7 @@ use super::*;
 /// stack through it rather than through the context again after the window's writes.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
-pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTLES: bool, const COUNTED: bool>(
+pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTLES: bool>(
     cx: *mut LaneContext,
     vm: &mut Vm,
     r: Registers,
@@ -50,20 +50,9 @@ pub(in super::super) fn enter_window_of_in_lane<const GENERAL: bool, const SETTL
     if cross {
         enter_program_in_lane(cx, target.body.program());
     }
-    // A proved plain call (`PLAIN_LINK`) skips this per-call count (`COUNTED`); under the tier's
-    // diagnostics `enter_plain_window` counts it instead.
-    if COUNTED { vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function); }
     // A construction runs its body from the first record; the tier enters plain calls.
     let start = if constructs { base } else { unsafe { (*target.body.view).start() } };
     (callee_registers, start)
-}
-
-/// Counts a proved call's entry, which only the tier's diagnostics make (`enter_plain_window`).
-#[cold]
-#[inline(never)]
-pub(in super::super) fn count_proved_entry_in_lane(vm: &mut Vm, target: &ScriptCallTarget) {
-    let (program, function) = (target.body.program(), target.body.function);
-    vm.programs.record_js_jit_lane_entry(program, function);
 }
 
 /// `enter_window_of_in_lane` of a proved plain call (`plain_call_activation` past `PLAIN_LINK`):
@@ -72,7 +61,6 @@ pub(in super::super) fn count_proved_entry_in_lane(vm: &mut Vm, target: &ScriptC
 /// window), so its header goes below the window straight from the call's words
 /// (`protocol::push_plain_at`), with no `Activation` value and no `LaneStack::header_flags`
 /// test. `depth` is the plain depth `LaneStack::plain_room` admitted it at.
-/// The tier's entry count (`record_js_jit_lane_entry`) is made here only under diagnostics.
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn enter_plain_window(
@@ -113,9 +101,6 @@ pub(in super::super) fn enter_plain_window(
         &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.expose_provenance() as u64,
         this.to_bits(), target.closure.env.to_bits(), target.closure.capture.expose_provenance() as u64,
     );
-    // A proved call skips the tier entry count (`enter_window_of_in_lane`'s `COUNTED`) unless the
-    // tier's diagnostics count entries: then this cold branch does, so they observe the same path.
-    if crate::compiled::admission::diagnosing(vm) { count_proved_entry_in_lane(vm, target); }
     (callee_registers, unsafe { (*target.body.view).start() })
 }
 

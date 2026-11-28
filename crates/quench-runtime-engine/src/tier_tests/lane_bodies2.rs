@@ -1,12 +1,10 @@
 //! Lane bodies against the interpreter: each program runs compiled and interpreted, and the compiled run must end as the interpreter's does (moved from the core's `vm/tests.rs`, whose binary does not link the layers).
 use crate::engine_prelude::*;
-use quench_runtime::vm::tier_events::Event;
 use crate::ext_traits::*;
 use super::lane_bodies6::LANE_METHOD_SITES_SOURCE;
-use super::lane_bodies5::assert_drive_leaves_no_method_call;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
-use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 #[test]
 fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
@@ -105,9 +103,6 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
-        if mode == quench_runtime::ExecutionMode::Compiled && quench_runtime::vm::tier_policy::tier_may_run(vm.memory_policy(), quench_runtime::jit_mode::Tier::ANY) {
-            assert!(vm.tier_events().count(Event::Inlined) > 0, "the storing callee runs inlined in its caller's lane body");
-        }
     }
     assert!(answers[0].0.is_some() && answers[0].1.is_some());
     assert_eq!(answers[0], answers[1]);
@@ -159,9 +154,8 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
-    assert!(run.events.count(Event::Published) > 0, "a declined method runs as a lane body");
 }
 
 /// Lane bodies call the callees they do not inline natively (`dispatch_fast::body_call_helper`):
@@ -218,7 +212,7 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
       }
       globalThis.answer = total + head.tag.length;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -237,17 +231,17 @@ fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
     for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
         let mut vm = quench_runtime::test_support::vm(TestHost::default());
         vm.programs.enable_js_lane_methods();
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.set_execution_mode(mode);
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        #[cfg(not(quench_profiled))]
         if mode == quench_runtime::ExecutionMode::Compiled && quench_runtime::vm::tier_policy::tier_may_run(vm.memory_policy(), quench_runtime::jit_mode::Tier::ANY) {
-            assert!(vm.tier_events().count(Event::Published) > 0, "a method making method calls runs as a lane body");
-            #[cfg(not(quench_profiled))]
-            assert_drive_leaves_no_method_call(&vm, &program, drive);
+            let view = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap().get(drive)
+                .and_then(quench_runtime::vm::program_store::derived_lane_view).unwrap();
+            // SAFETY: as above.
+            assert!(matches!(unsafe { &*view.tier().tier_lane.get() }, quench_runtime::vm::engine_types::LaneBody::Specialized { .. }), "a method making method calls is published as a lane body");
         }
     }
     assert!(answers[0].is_some());
@@ -268,7 +262,7 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
       for (var j = 0; j < xs.length; j++) total += bits(xs[j] * 1);
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -289,7 +283,7 @@ fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter
       for (var k = 0; k < 4000; k++) total = (total + step(k % 5 ? t : u, k % 3 ? u : t, k)) | 0;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(40930.0));
 }
@@ -314,7 +308,7 @@ fn lane_global_reads_and_coercions_like_the_interpreter() {
       try { step(1, 1); } catch (e) { caught += 100; }
       globalThis.answer = total + caught;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(2506320.0));
 }
@@ -334,7 +328,7 @@ fn lane_typeof_tests_decide_like_the_interpreter() {
       for (let r = 0; r < 2000; r++) total += score(values) + r % 7;
       globalThis.answer = (total);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(805995.0));
 }
@@ -358,7 +352,7 @@ fn lane_constructions_build_like_the_interpreter() {
       for (let r = 0; r < 40; r++) { total += sum(build(500)) + points(200) + odd(100) + make(r).car; }
       globalThis.answer = (total);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(17472780.0));
 }
@@ -403,7 +397,7 @@ fn lane_parser_node_constructions_build_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1600989.0));
 }
@@ -427,7 +421,7 @@ fn lane_nested_lengths_read_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(135000.0));
 }

@@ -149,7 +149,6 @@ fn link_header(cx: *mut LaneContext, window: Registers, index: usize) {
     side.native = index;
     // SAFETY: the sides are written through `&mut self`'s stack, and no walk runs during a link.
     unsafe { (*stack.sides.get()).push(side) };
-    vm.programs.record_js_jit_lane_entry(callee.target.program(), callee.target.function);
 }
 
 /// Links the native frame at `depth`: the `Script` activation its call would have made. Its
@@ -194,7 +193,6 @@ pub(crate) fn link_on_observe(cx: *mut LaneContext, depth: usize) {
     window.set_this(Value::from_bits(this));
     window.set_env(env);
     window.set_capture(capture);
-    vm.programs.record_js_jit_lane_entry(callee.target.program(), callee.target.function);
 }
 
 /// Runs `helper`, which pushes activations or runs guest code, with the context of the

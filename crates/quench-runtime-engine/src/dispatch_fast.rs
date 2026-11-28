@@ -122,7 +122,6 @@ macro_rules! returning_operator_row_of {
 
 
 use quench_runtime::staged::compare::{IN_OPERATOR, INSTANCEOF_OPERATOR};
-use quench_runtime::vm::tier_events::Event;
 use crate::compiled::{CALLEE_ACTIVATION_PENDING, NO_PENDING_ACTIVATIONS};
 use quench_runtime::vm::dispatch_frame::PendingGeneralCall;
 use quench_runtime::vm::iterators::InPlaceStep;
@@ -1238,11 +1237,11 @@ impl Admission {
     }
 
     /// Whether `self` was made in the lane's current generation and program, whatever the lane's
-    /// conditions and diagnostics: what a plan built now may rely on (`direct_arm_in_lane`).
-    /// Diagnostics only observe; `UNPROVEN` only gates the plain call, never a direct one (via the cell).
+    /// conditions: what a plan built now may rely on (`direct_arm_in_lane`).
+    /// `UNPROVEN` only gates the plain call, never a direct one (via the cell).
     #[inline(always)]
     fn current(self, lane: Admission) -> bool {
-        (self.0 ^ lane.0) & !(Self::CONDITIONS | Self::DIAGNOSED | Self::UNPROVEN) == 0
+        (self.0 ^ lane.0) & !(Self::CONDITIONS | Self::UNPROVEN) == 0
     }
 
     /// Whether an entry made under `self` admits a call under the lane's `lane`, proved or
@@ -1619,10 +1618,7 @@ impl LaneStack {
     fn function_target(&self, program: ProgramId, function: u32, cross: bool) -> Option<FunctionTarget> {
         let targets = if cross { &self.cross_function_targets } else { &self.function_targets };
         let known = targets[function as usize & (FUNCTION_TARGETS - 1)];
-        // A target made under other diagnostics (`Admission::DIAGNOSED`) is admitted by no link
-        // test (`Admission::admits`): resolving it again would loop, so it is made anew.
-        (known.generation() == self.generation && known.program() == program && known.function == function
-            && (known.admission.0 ^ self.admission.0) & Admission::DIAGNOSED == 0)
+        (known.generation() == self.generation && known.program() == program && known.function == function)
             .then_some(known)
     }
 
@@ -1778,26 +1774,16 @@ impl LaneStack {
     /// Whether the lane admits activating a script callee of `program` with no link to prove
     /// it (a getter, a native's callback, a body's call): script calls allowed, no construction
     /// pending and `program` the active one, in one compare of the admission word, the same
-    /// word every link's admission is compared with; the diagnostics bit (`Admission::DIAGNOSED`) refuses only proved links.
+    /// word every link's admission is compared with.
     #[inline(always)]
     pub(crate) fn admits_program(&self, program: ProgramId) -> bool {
-        (self.admission.0 & !Admission::DIAGNOSED) >> Admission::PROGRAM_SHIFT == program.raw() as u64
+        self.admission.0 >> Admission::PROGRAM_SHIFT == program.raw() as u64
     }
 
     /// Whether any condition refuses every unlinked activation (`Admission::CONDITIONS`).
     #[inline(always)]
     fn refuses_any(&self) -> bool {
         self.refused & Admission::CONDITIONS != 0
-    }
-
-    /// Notes whether the tier's diagnostics count every entry (`Admission::DIAGNOSED`), which
-    /// every lane run's start mirrors (`Vm::drive_lane`): while they do, no proved plain call
-    /// runs. Changes nothing where it is already so.
-    #[inline(always)]
-    pub(crate) fn set_diagnosed(&mut self, diagnosed: bool) {
-        if (self.refused & Admission::DIAGNOSED != 0) != diagnosed {
-            self.set_condition(Admission::DIAGNOSED, diagnosed);
-        }
     }
 
     /// Takes the proof (`Admission::UNPROVEN`) from every script call entry of `view`, whose
@@ -1814,12 +1800,10 @@ impl LaneStack {
         self.refused & Admission::REFUSED != 0
     }
 
-    /// The admission a script call target of `program` made now holds: this generation's, with
-    /// the lane's diagnostics (`Admission::DIAGNOSED`), which every link test compares whole
-    /// (`Admission::admits`); without them no link would hold under `QUENCH_TRACE=js-jit`.
+    /// The admission a script call target of `program` made now holds: this generation's.
     #[inline(always)]
     fn target_admission(&self, program: ProgramId) -> Admission {
-        Admission(Admission::new(self.generation, program).0 | self.refused & Admission::DIAGNOSED)
+        Admission::new(self.generation, program)
     }
 
 }
@@ -3295,10 +3279,6 @@ script_handler! {
     /// the loop's lane body once the jump is hot and the body is ready (`loop_body::enter_loop_body`).
     fn loop_jump_miss<>(cx, r, ip, i, view) {
         let site = i.loop_site();
-        if site.diagnostics {
-            site.lane_backedge_count
-                .set(site.lane_backedge_count.get().saturating_add(1));
-        }
         // SAFETY: the site records the distance to a validated jump target.
         let header = unsafe { ip.byte_offset(site.jump) };
         if script_fuel_out(cx) {
@@ -4317,7 +4297,7 @@ impl Vm {
                 let facts = self.programs.aot_facts(id);
                 let planned = self.programs.planned_call_sites(id, function, planned_calls::planned_arm_admits);
                 let plan = self.programs.plan_lane_view(id, function, |code, constants, kind, live, sites| {
-                    derive_lane_view(id, function, code, constants, &*self, kind, live, sites, crate::compiled::admission::record_plan(false), false,
+                    derive_lane_view(id, function, code, constants, &*self, kind, live, sites, crate::compiled::admission::record_plan(false),
                         facts.as_deref(), planned)
                 });
                 let Some((fresh, settled)) = plan else { continue };

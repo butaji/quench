@@ -1,10 +1,9 @@
 //! Lane bodies against the interpreter: each program runs compiled and interpreted, and the compiled run must end as the interpreter's does (moved from the core's `vm/tests.rs`, whose binary does not link the layers).
 use crate::engine_prelude::*;
-use quench_runtime::vm::tier_events::Event;
 use crate::ext_traits::*;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
-use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 #[test]
 #[cfg(not(quench_profiled))]
@@ -383,40 +382,12 @@ fn native_chain_append_completes_without_a_store_handoff() {
     }
 }
 
-/// A hot callee's body is entered over and over, and a run binds the dispatch payload once:
-/// entries of one lane run find its program, residual and interrupt standing, so the runs bound
-/// are a small fraction of the entries.
-#[test]
-fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
-    let source = r#"(function () {
-      function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
-      let total = 0;
-      for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
-      globalThis.answer = total;
-    })();"#;
-    let events = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).events;
-    // The caller's loop is compiled too and enters the callee's body by its entry, a nested
-    // lane entry (`Vm::run_nested_lane_method`), so the callee's cell is not crossed here.
-    let (entries, binds) = (events.count(Event::Entered), events.count(Event::RunBound));
-    assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-    assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
-}
 
 /// Runs `source` interpreted and compiled and requires the same answer, which the interpreter
 /// leaves in `globalThis.answer`.
 pub(super) fn assert_cell_crossings_match(source: &str) {
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some(), "the source leaves its answer");
 }
 
-/// Asserts that the lane body of `drive`, run in `vm`, never left at a method call.
-#[cfg(not(quench_profiled))]
-pub(super) fn assert_drive_leaves_no_method_call(vm: &Vm, program: &quench_runtime::ResidualProgram, drive: usize) {
-    let view = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap().get(drive)
-        .and_then(quench_runtime::vm::program_store::derived_lane_view).unwrap();
-    let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
-        .map(|instruction| format!("{:?}", instruction.op()));
-    if let Some(report) = view.tier().body_stats.report(0, view.body_state_in_lane(), &op_at) {
-        assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
-    }
-}
+

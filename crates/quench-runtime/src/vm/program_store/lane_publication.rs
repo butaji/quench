@@ -4,7 +4,6 @@
 use super::*;
 use crate::code_dependencies::PublishedCode;
 use crate::vm::engine_types::{CompiledOsrRegion, LaneMethod, PublishedLaneMethod};
-use crate::vm::tier_events::Event;
 
 /// Code that names callees by identity: a published body, or a body's plan whose code still
 /// compiles (`PendingLaneMethod`), whose `watch` the poll reads. Both hold their callees
@@ -92,8 +91,6 @@ impl ProgramStore {
             return None;
         }
         if calls { self.native_call_bindings.borrow_mut().push(NativeCallBinding::Published(Rc::downgrade(&published))); }
-        self.tier_events.record(Event::Published);
-        self.tier_events.add(Event::Inlined, method.inlined.len());
         Some(published)
     }
 

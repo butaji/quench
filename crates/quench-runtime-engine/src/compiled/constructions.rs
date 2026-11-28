@@ -64,11 +64,6 @@ unsafe fn construct_with(vm: u64, residual: u64, payload: u64, callee: Value, cl
     let built = constructs.then(|| unsafe {
         build(vm, residual, callee, class, arguments as *const Value, argc as u16)
     }).flatten();
-    if built.is_none() {
-        use crate::dispatch_fast::lane_body_stats::{miss, Miss};
-        miss(vm, if !constructs { Miss::HelperConstructContext } else if vm.construct_target.is_some() || vm.collection_due() { Miss::Busy } else { Miss::NoPlan });
-    }
-
     dispatch.refresh_object_bases(vm);
     built.unwrap_or(Value::DELETED).to_bits()
 }

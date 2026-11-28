@@ -79,7 +79,7 @@ pub(crate) struct Kind<const K: u8>;
 /// The staged Number operation over the row's places: its word, `None` where it left.
 #[inline(always)]
 fn staged<const KIND: u8>(frame: &mut Places, operation: NumberOperation, _: Kind<KIND>) -> Option<u64> {
-    match numeric::step_of::<KIND, _, _>(&mut Concrete::from_hole(0), frame, operation) {
+    match numeric::step_of::<KIND, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), frame, operation) {
         Step::Value(word) => Some(word),
         _ => None,
     }
@@ -140,7 +140,7 @@ fn compare_row<const K: u8, const D: u8, const A: u8, const B: u8, const SPEC: b
 #[inline(always)]
 fn compare_jump(mut frame: Places, comparison: Comparison) -> Out {
     let operation = Operation::CompareJump { comparison, left: Operand::register(LEFT), right: Operand::register(RIGHT), negate: true };
-    branched(step_generic_of::<{ op_kind::COMPARE_JUMP }, _, _>(&mut Concrete::from_hole(0), &mut frame, operation), frame)
+    branched(step_generic_of::<{ op_kind::COMPARE_JUMP }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, operation), frame)
 }
 
 /// `if (a & b)`: the staged bitwise test of the two operands' ToInt32 (`Comparison::Bitwise`).
@@ -173,7 +173,7 @@ fn bitwise_row<const K: u8, const D: u8, const A: u8>(mut frame: Places) -> Out 
     if done || holds_int(D) || operation != NumberBitwise::ShiftRightUnsigned {
         return finish(frame, done);
     }
-    let mut stage = Concrete::from_hole(0);
+    let mut stage = Concrete::from_hole(0, payload(&frame.s));
     let (Some(x), Some(y)) = (frame.int32_operand(&mut stage, left, ()).map(Int32::word), frame.int32_operand(&mut stage, right, ()).map(Int32::word)) else {
         return Out::Exit(frame.s);
     };
@@ -193,7 +193,7 @@ fn bitwise_row<const K: u8, const D: u8, const A: u8>(mut frame: Places) -> Out 
 /// (`Operation::Move`).
 #[inline(always)]
 fn copy_row(mut frame: Places) -> Out {
-    let copied = step_flow_of::<{ op_kind::MOVE }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::Move { destination: DEST, source: LEFT });
+    let copied = step_flow_of::<{ op_kind::MOVE }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, Operation::Move { destination: DEST, source: LEFT });
     finish(frame, matches!(copied, Step::Value(_)))
 }
 
@@ -202,7 +202,7 @@ fn copy_row(mut frame: Places) -> Out {
 /// for an int word, any other destination for a Number.
 #[inline(always)]
 fn guard_row<const D: u8>(mut frame: Places) -> Out {
-    let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
+    let (mut stage, operand) = (Concrete::from_hole(0, payload(&frame.s)), Operand::register(LEFT));
     let proved = match D {
         PIN..=LAST_INT_PIN => frame.int_operand(&mut stage, operand, ()).map(|word| (word.word(), Representation::Int32)),
         MEMINT => frame.int_operand(&mut stage, operand, ()).map(|_| (0, Representation::Tagged)),
@@ -223,7 +223,7 @@ fn guard_row<const D: u8>(mut frame: Places) -> Out {
 fn unbox_row(mut frame: Places) -> Out {
     let word = read_place::<MEM, { LEFT as u8 }>(&frame.s);
     let value = if is_int(word) { widen(word) } else { word };
-    frame.write(&mut Concrete::from_hole(0), DEST, value, Representation::Float64);
+    frame.write(&mut Concrete::from_hole(0, payload(&frame.s)), DEST, value, Representation::Float64);
     Out::Next(frame.s)
 }
 
@@ -232,7 +232,7 @@ fn unbox_row(mut frame: Places) -> Out {
 #[inline(always)]
 fn unbox_int_row(mut frame: Places) -> Out {
     let word = read_place::<MEM, { LEFT as u8 }>(&frame.s);
-    frame.write(&mut Concrete::from_hole(0), DEST, word as u32 as u64, Representation::Int32);
+    frame.write(&mut Concrete::from_hole(0, payload(&frame.s)), DEST, word as u32 as u64, Representation::Int32);
     Out::Next(frame.s)
 }
 
@@ -242,19 +242,19 @@ fn unbox_int_row(mut frame: Places) -> Out {
 /// the staged `Operation::Safepoint`.
 #[inline(always)]
 pub(crate) fn interrupted(s: &S) -> bool {
-    crate::staged::poll::gated_poll(&mut Concrete::from_hole(0), hole64::<HOLE_FOURTH>(), (s.ctx + hole::<0>()) as u64, ()).is_none()
+    crate::staged::poll::gated_poll(&mut Concrete::from_hole(0, payload(s)), hole64::<HOLE_FOURTH>(), (s.ctx + hole::<0>()) as u64, ()).is_none()
 }
 
 /// The staged `Operation::Safepoint` over the row's places: whether the row may continue.
 #[inline(always)]
 fn poll_step(frame: &mut Places) -> bool {
-    matches!(step_of::<{ op_kind::SAFEPOINT }, _, _>(&mut Concrete::from_hole(0), frame, Operation::Safepoint { proof: () }), Step::Value(_))
+    matches!(step_of::<{ op_kind::SAFEPOINT }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), frame, Operation::Safepoint { proof: () }), Step::Value(_))
 }
 
 /// The staged `Operation::BackEdge` over the row's places: polls the interrupt flag, then counts the taken edge.
 #[inline(always)]
 fn back_edge_step(frame: &mut Places) -> bool {
-    matches!(step_of::<{ op_kind::BACK_EDGE }, _, _>(&mut Concrete::from_hole(0), frame, Operation::BackEdge { proof: () }), Step::Value(_))
+    matches!(step_of::<{ op_kind::BACK_EDGE }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), frame, Operation::BackEdge { proof: () }), Step::Value(_))
 }
 
 /// A jump (`Operation::Jump`) that polls the interrupt flag first where `WATCHED`, and counts a
@@ -269,7 +269,7 @@ fn jump_row<const WATCHED: bool, const COUNT: bool>(mut frame: Places) -> Out {
     if !proceed {
         return Out::Exit(frame.s);
     }
-    match step_flow_of::<{ op_kind::JUMP }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::Jump) {
+    match step_flow_of::<{ op_kind::JUMP }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, Operation::Jump) {
         Step::Control(()) => Out::Taken(frame.s),
         _ => Out::Exit(frame.s),
     }
@@ -297,7 +297,7 @@ fn control_row<const K: u8, const D: u8, const A: u8, const B: u8>(frame: Places
 /// successor where it is `WHEN`; a value whose heap cell decides it leaves.
 #[inline(always)]
 fn truth_row<const WHEN: bool>(mut frame: Places) -> Out {
-    let jumped = step_flow_of::<{ op_kind::JUMP_IF }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::JumpIf { register: LEFT, taken: WHEN });
+    let jumped = step_flow_of::<{ op_kind::JUMP_IF }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, Operation::JumpIf { register: LEFT, taken: WHEN });
     branched(jumped, frame)
 }
 
@@ -305,7 +305,7 @@ fn truth_row<const WHEN: bool>(mut frame: Places) -> Out {
 /// (`Operation::LogicalNot`).
 #[inline(always)]
 fn not_row(mut frame: Places) -> Out {
-    let negated = step_arith_of::<{ op_kind::LOGICAL_NOT }, _, _>(&mut Concrete::from_hole(0), &mut frame, Operation::LogicalNot { destination: DEST, source: LEFT });
+    let negated = step_arith_of::<{ op_kind::LOGICAL_NOT }, _, _>(&mut Concrete::from_hole(0, payload(&frame.s)), &mut frame, Operation::LogicalNot { destination: DEST, source: LEFT });
     finish(frame, matches!(negated, Step::Value(_)))
 }
 
@@ -407,7 +407,7 @@ fn power_row(mut frame: Places) -> Out {
 /// starts from) takes that. Any other word leaves with nothing written, for the interpreter's own conversion.
 #[inline(always)]
 fn clz32_row(mut frame: Places) -> Out {
-    let (mut stage, operand) = (Concrete::from_hole(0), Operand::register(LEFT));
+    let (mut stage, operand) = (Concrete::from_hole(0, payload(&frame.s)), Operand::register(LEFT));
     let uint32 = match frame.int_operand(&mut stage, operand, ()).map(Int32::word) {
         Some(word) => Some(word as u32),
         None => frame.number_operand(&mut stage, operand, ()).and_then(|bits| crate::value::exact_uint32(f64::from_bits(bits.word()))),

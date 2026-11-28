@@ -4948,46 +4948,6 @@ impl Vm {
         super::shape_layouts(&self.shapes)
     }
 
-    /// The field sites' polymorphism, for a diagnostics run (`QUENCH_TRACE=js-jit`): the
-    /// polymorphic sites by how many receiver shapes they recorded, how many name only own
-    /// fields and of those how many find the field at one slot in every shape (a layout whose
-    /// subclasses share their parent's prefix reads them at a fixed offset), and how many name
-    /// prototype-held fields.
-    pub(super) fn field_site_report(&self) -> String {
-        let (mut sizes, mut own, mut one_slot, mut holders, mut overflowed) = ([0_usize; 4], 0, 0, 0, 0);
-        for set in &self.megamorphic_fields {
-            let entries: Vec<FieldCache> = match &set.overflow {
-                Some(overflow) => { overflowed += 1; overflow.values().copied().collect() }
-                None => set.recorded().copied().collect(),
-            };
-            let bucket = match entries.len() { 0..=2 => 0, 3..=4 => 1, 5..=16 => 2, _ => 3 };
-            sizes[bucket] += 1;
-            if entries.iter().all(|entry| entry.holder == NO_FIELD_HOLDER) {
-                own += 1;
-                if entries.windows(2).all(|pair| pair[0].slot == pair[1].slot) { one_slot += 1; }
-            } else {
-                holders += 1;
-            }
-        }
-        // The representation each own field a cache entry names holds across the live objects
-        // of its shape, the join of their values' classes (`SlotType`).
-        use crate::typed_ir::SlotType;
-        let classes: std::collections::HashMap<(u32, u32), SlotType> = std::collections::HashMap::new();
-        // A class cell holds no record, so the census reads no field type from one.
-        let mut reps = [0_usize; SlotType::ALL.len()];
-        let own_entries = (0..self.field_caches.len()).map(|index| self.field_caches.get(index)).chain(self.megamorphic_fields.iter().flat_map(|set| set.recorded().copied().collect::<Vec<_>>()))
-            .filter(|cache| cache.receiver != NO_FIELD_RECEIVER && cache.holder == NO_FIELD_HOLDER);
-        for cache in own_entries {
-            reps[classes.get(&(cache.receiver, cache.slot)).copied().unwrap_or(SlotType::None) as usize] += 1;
-        }
-        let classes = SlotType::ALL.iter().map(|class|
-            format!("\"{}\":{}", class.label(), reps[*class as usize])).collect::<Vec<_>>().join(",");
-        let reps = format!("QUENCH_FIELD_REPS {{{classes}}}");
-        reps + "\n" + &format!(
-            "QUENCH_FIELD_SITES {{\"polymorphic\":{},\"shapes_2\":{},\"shapes_3_4\":{},\"shapes_5_16\":{},\"shapes_17_plus\":{},\"overflowed\":{overflowed},\"own_only\":{own},\"own_one_slot\":{one_slot},\"with_holders\":{holders}}}",
-            self.megamorphic_fields.len(), sizes[0], sizes[1], sizes[2], sizes[3],
-        )
-    }
 }
 
 /// The slot type seed of `atom`, added to an instance of the class whose constructor is `function`

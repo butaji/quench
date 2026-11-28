@@ -173,38 +173,8 @@ struct Totals {
 
 static TOTALS: Mutex<Totals> = Mutex::new(Totals { regions: 0, ops: 0, bytes: 0, rejected: 0, bodies: 0, covered: 0, exits: 0, direct_calls: 0, helper_calls: 0 });
 static REJECTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
-static LEAVES: Mutex<BTreeMap<(u32, u32), (quench_runtime::bytecode::Op, u64)>> = Mutex::new(BTreeMap::new());
 static REPORT: std::sync::Once = std::sync::Once::new();
 
-/// What a loop site did in the lane, counted under `QUENCH_TRACE=js-jit` (printed with the totals): the
-/// cost of the tier machinery around the regions, which the b-jit tier pays whether or not a region exists.
-#[derive(Clone, Copy)]
-pub(crate) enum Event {
-    /// A loop site's run entered published code.
-    Entered,
-    /// A run left its code at an exit (the interpreter resumed mid-loop).
-    Left,
-    /// A run did not start code: the site is waiting for code, or the entry declined it.
-    Declined,
-    /// A compilation of a loop region started (`loop_compile_in_lane`).
-    Compiled,
-    /// A lane body compile started (a Cranelift function tier; none under the b-jit tier).
-    BodyCompile,
-    /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
-    BodyPlanned,
-    /// What an attempt came to (`LaneBodyOutcome`): published, still compiling, refused for
-    /// its cost (unpaid), for its length (short), declined, outrun by a lifecycle edge (stale),
-    /// or deferred.
-    BodyPublished,
-    BodyCompiling,
-    BodyUnpaid,
-    BodyDeclined,
-    BodyStale,
-    BodyDeferred,
-}
-
-/// How many `Event`s there are.
-const EVENT_COUNT: usize = Event::BodyDeferred as usize + 1;
 
 #[cfg(test)]
 thread_local! {
@@ -238,49 +208,12 @@ pub(crate) fn inlined_sites() -> u64 {
     INLINED_SITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-static EVENTS: [std::sync::atomic::AtomicU64; EVENT_COUNT] = [const { std::sync::atomic::AtomicU64::new(0) }; EVENT_COUNT];
-
-/// The most frequent leave sites a run reports.
-const TOP_LEAVES: usize = 40;
-
-/// Counts a region run leaving at `pc` of `function` (an instruction of operation `op`), where the trace channel is on.
-pub(crate) fn leave(function: u32, pc: u32, op: quench_runtime::bytecode::Op) {
-    if !quench_runtime::trace::Channel::BjitLeave.on() {
-        return;
-    }
-    REPORT.call_once(|| {
-        // SAFETY: `report` is an `extern "C" fn()` that touches only statics.
-        unsafe { libc::atexit(report) };
-    });
-    if let Ok(mut leaves) = LEAVES.lock() {
-        leaves.entry((function, pc)).or_insert((op, 0)).1 += 1;
-    }
-}
 
 /// Whether regions and events are counted: a report that reads them is on (`report`, `census`).
 fn counted() -> bool {
     static COUNTED: std::sync::LazyLock<bool> =
         std::sync::LazyLock::new(|| quench_runtime::trace::Channel::JsJit.on() || quench_runtime::trace::Channel::Census.on());
     *COUNTED
-}
-
-/// What regions did, for the tier census: regions built, the instructions they cover, and runs that
-/// entered published code. All zero unless a report is on.
-pub(crate) fn census() -> (u64, u64, u64) {
-    let regions = TOTALS.lock().map_or((0, 0), |totals| (totals.regions, totals.ops));
-    (regions.0, regions.1, EVENTS[Event::Entered as usize].load(std::sync::atomic::Ordering::Relaxed))
-}
-
-/// Counts `event` where a report is on.
-pub(crate) fn count(event: Event) {
-    if !counted() {
-        return;
-    }
-    REPORT.call_once(|| {
-        // SAFETY: `report` is an `extern "C" fn()` that touches only statics.
-        unsafe { libc::atexit(report) };
-    });
-    EVENTS[event as usize].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 extern "C" fn report() {
@@ -295,17 +228,8 @@ extern "C" fn report() {
     );
     let rows = (totals.covered + totals.exits).max(1);
     eprintln!("bjit-bodies bodies={} covered={} exits={} covered_share={:.1}% direct_calls={} helper_calls={}", totals.bodies, totals.covered, totals.exits, 100.0 * totals.covered as f64 / rows as f64, totals.direct_calls, totals.helper_calls);
-    let [entered, left, declined, compiled, bodies, planned, published, compiling, unpaid, body_declined, stale, deferred] =
-        std::array::from_fn::<u64, EVENT_COUNT, _>(|i| EVENTS[i].load(std::sync::atomic::Ordering::Relaxed));
-    eprintln!("bjit-loops entered={entered} left={left} declined={declined} compiles={compiled} lane_body_compiles={bodies} inlined_sites={}", inlined_sites());
-    eprintln!("lane-body-attempts started={bodies} planned={planned} published={published} compiling={compiling} unpaid={unpaid} declined={body_declined} stale={stale} deferred={deferred}");
-    if let Ok(leaves) = LEAVES.lock() {
-        let mut ranked: Vec<_> = leaves.iter().collect();
-        ranked.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(b.0)));
-        for ((function, pc), (op, count)) in ranked.into_iter().take(TOP_LEAVES) {
-            eprintln!("bjit-leave {function}:{pc} {op:?} {count}");
-        }
-    }
+    eprintln!("bjit-inlined sites={}", inlined_sites());
+    eprintln!("{}", crate::dispatch_fast::lane_body_stats::unlowered_report());
     let mut ranked: Vec<_> = rejects.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
     for (name, count) in ranked {

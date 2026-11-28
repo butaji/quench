@@ -271,8 +271,6 @@ fn capture_entry_preserves_distinct_environments_and_mutations() {
         for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
             let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
             vm.set_execution_mode(mode);
-            #[cfg(not(quench_profiled))]
-            vm.programs.enable_js_jit_diagnostics();
             vm.programs.enable_js_lane_methods();
             let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
             assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");
@@ -401,8 +399,6 @@ fn a_masked_index_reads_the_element_it_names_whatever_the_array_length() {
     for mode in [quench_runtime::ExecutionMode::Interpreted, quench_runtime::ExecutionMode::Compiled] {
         let mut vm = quench_runtime::test_support::vm(quench_runtime::test_host::TestHost::default());
         vm.set_execution_mode(mode);
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.programs.enable_js_lane_methods();
         let error = quench_runtime::test_support::execute(&mut vm, &program).unwrap_err();
         assert_eq!(error.thrown_value(), Some(Value::integer(42)), "{mode:?}: {error}");

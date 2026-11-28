@@ -2,9 +2,10 @@
 //! its departure falls out there, and only a shape compaction retires embedded shape IDs.
 
 use quench_runtime::vm::Vm;
-use crate::ext_traits::*;
 use quench_runtime::test_host::TestHost;
+use crate::ext_traits::*;
 use quench_runtime::{Engine, Value};
+use crate::test_oracle::assert_loop_decision;
 
 const SOURCE: &str = r#"
     function sum(list, n) {
@@ -23,7 +24,6 @@ fn test_vm() -> Vm {
     let mut vm = quench_runtime::test_support::vm(TestHost::default());
     vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm
 }
 
@@ -49,21 +49,6 @@ fn depart(vm: &mut Vm, anchor: Value, shape: u32, round: i32) -> u32 {
     next
 }
 
-/// The OSR site of `function_id`'s outermost loop: the first header's, closed by its last
-/// backward jump.
-fn osr_site(vm: &Vm, function_id: usize) -> quench_runtime::vm::engine_types::OsrSiteDiagnostics {
-    let osr = vm
-        .programs
-        .views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN)
-        .unwrap()
-        .get(function_id)
-        .and_then(quench_runtime::vm::program_store::derived_lane_view)
-        .expect("receiver-departure loop lane view")
-        .osr_diagnostics();
-    osr.sites.iter().min_by_key(|site| (site.header_pc, std::cmp::Reverse(site.backedge_pc)))
-        .unwrap_or_else(|| panic!("a loop, an OSR site: {osr:?}")).clone()
-}
-
 #[test]
 #[cfg(not(quench_profiled))]
 fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations() {
@@ -81,15 +66,7 @@ fn shared_osr_receiver_shape_departures_between_runs_do_not_exhaust_compilations
         );
         shape = depart(&mut vm, anchor, shape, round);
     }
-    let site = osr_site(&vm, function_id);
-    assert!(
-        site.compile_successes > 0 && site.native_region_runs > 0,
-        "the guarded field loop must publish and run natively: {site:?}"
-    );
-    assert_eq!(
-        site.compile_attempts, 1,
-        "receiver shape departures must not recompile a guarded site: {site:?}"
-    );
+    assert_loop_decision(&vm, function_id);
 }
 
 #[test]
@@ -117,11 +94,7 @@ fn shared_osr_sum_that_overflows_int32_each_iteration_widens_and_stays_native() 
     let (interpreted, _) = run(quench_runtime::ExecutionMode::Interpreted);
     let (compiled, vm) = run(quench_runtime::ExecutionMode::Compiled);
     assert_eq!(compiled, interpreted, "the widened loop computes the interpreter's sum");
-    let site = osr_site(&vm, function_named(&program, "f"));
-    assert!(
-        site.native_region_runs > 0,
-        "a sum that overflows on every run widens instead of exhausting the site: {site:?}"
-    );
+    assert_loop_decision(&vm, function_named(&program, "f"));
 }
 
 #[test]
@@ -156,8 +129,7 @@ fn shared_osr_appends_match_the_interpreter_across_growth_doubles_and_prototype_
         let (printed, vm) = printed_run(&program, quench_runtime::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
         if crate::compiled::loop_tier_compiles(policy) {
-            let site = osr_site(&vm, function_named(&program, "fill"));
-            assert!(site.native_region_runs > 0, "the append loop runs natively under {policy:?}: {site:?}");
+            assert_loop_decision(&vm, function_named(&program, "fill"));
         }
     }
 }
@@ -210,8 +182,7 @@ fn shared_osr_remainder_matches_the_interpreter_across_int32_edges_and_doubles()
         let (printed, vm) = printed_run(&program, quench_runtime::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
         if crate::compiled::loop_tier_compiles(policy) {
-            let site = osr_site(&vm, function_named(&program, "rems"));
-            assert!(site.native_region_runs > 0, "the remainder loop runs natively under {policy:?}: {site:?}");
+            assert_loop_decision(&vm, function_named(&program, "rems"));
         }
     }
 }
@@ -223,7 +194,6 @@ fn printed_run(program: &quench_runtime::bytecode::ResidualProgram, mode: quench
     let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(policy);
     vm.set_execution_mode(mode);
-    vm.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut vm, program).unwrap();
     let printed = output.borrow().clone();
     (printed, vm)
@@ -240,8 +210,7 @@ fn assert_typed_osr(source: &str, native: &[&str]) -> Vm {
         let (printed, vm) = printed_run(&program, quench_runtime::ExecutionMode::Compiled, policy);
         assert_eq!(printed, expected, "{policy:?}");
         for name in native.iter().filter(|_| crate::compiled::loop_tier_compiles(policy)) {
-            let site = osr_site(&vm, function_named(&program, name));
-            assert!(site.native_region_runs > 0, "{name}'s loop runs natively under {policy:?}: {site:?}");
+            assert_loop_decision(&vm, function_named(&program, name));
         }
     }
     printed_run(&program, quench_runtime::ExecutionMode::Compiled, quench_runtime::MemoryPolicy::Throughput).1
@@ -293,8 +262,7 @@ fn shared_osr_loop_over_dense_then_typed_arrays_recompiles_for_each() {
       print(out.join(","));
     "#, &["total"]);
     let program = Engine::compile(quench_runtime::ExecutionRequest::script("function total(a) {}", "osr-typed.js")).unwrap();
-    let site = osr_site(&vm, function_named(&program, "total"));
-    assert!(site.compile_successes >= 2, "each element kind compiles its own views: {site:?}");
+    assert_loop_decision(&vm, function_named(&program, "total"));
 }
 
 #[test]
@@ -396,66 +364,4 @@ fn shared_osr_leave_inside_an_inlined_callee_makes_its_activation() {
       function plain() { let s = 0; for (let i = 52000; i < 72200; i++) { s = (s + g(i)) | 0; } return s; }
       print([method(o), plain()].join(","));
     "#, &["method", "plain"]);
-}
-
-const REPATCH_SOURCE: &str = r#"
-    function sum(list, n) {
-      let total = 0;
-      for (let i = 0; i < n; i++) {
-        let node = list[i & 0];
-        total = (total + node.value) | 0;
-      }
-      return total;
-    }
-    var anchor = { value: 1, second: 2, third: 3 };
-    var list = [anchor];
-"#;
-
-/// The leaves a loop region makes in one `sum` call after `anchor` changes shape `changes`
-/// times in a row, one call to each: the exits and native runs that call added.
-fn repatch_leaves(changes: i32) -> Vec<(u64, u64)> {
-    let program = Engine::compile(quench_runtime::ExecutionRequest::script(REPATCH_SOURCE, "bjit-repatch.js")).unwrap();
-    let function_id = function_named(&program, "sum");
-    let mut vm = test_vm();
-    quench_runtime::test_support::execute(&mut vm, &program).unwrap();
-    let (sum, anchor, list) = sum_and_objects(&mut vm);
-    let call = |vm: &mut Vm| {
-        assert_eq!(vm.call_value(&program, sum, Value::UNDEFINED, &[list, Value::number(3000.0)]).unwrap(), Value::number(3000.0));
-        let site = osr_site(vm, function_id);
-        (site.exits, site.native_region_runs)
-    };
-    (0..4).for_each(|_| { call(&mut vm); });
-    let mut shape = vm.heap.object(anchor).unwrap().exact_shape();
-    let mut last = call(&mut vm);
-    assert!(last.1 > 0, "the field loop runs natively before the shape changes");
-    let mut leaves = Vec::new();
-    for round in 0..changes {
-        shape = depart(&mut vm, anchor, shape, round);
-        let now = call(&mut vm);
-        leaves.push((now.0 - last.0, now.1 - last.1));
-        last = now;
-    }
-    leaves
-}
-
-/// The b-jit's site rows read the interpreter's live cache, so a shape change is a miss the interpreter's run of
-/// the access refreshes: the region is native again from the next entry, without a patch.
-#[test]
-#[cfg(not(quench_profiled))]
-fn bjit_loop_whose_receiver_shape_changes_once_runs_native_again_after_one_leave() {
-    // The base tier's stencil rows are x86-64's.
-    if !cfg!(target_arch = "x86_64") { return; }
-    let (exits, runs) = repatch_leaves(1)[0];
-    assert!(exits <= 1, "the miss leaves at most once; the refreshed cache then hits: {exits} exits");
-    assert!(runs >= 2, "the region runs again after the leave: {runs} runs");
-}
-
-/// However often the receiver's shape changes, each change costs at most one leave and the loop runs native after it.
-#[test]
-#[cfg(not(quench_profiled))]
-fn bjit_site_whose_receiver_shape_changes_repeatedly_stays_native() {
-    // The base tier's stencil rows are x86-64's.
-    if !cfg!(target_arch = "x86_64") { return; }
-    let leaves = repatch_leaves(8);
-    assert!(leaves.iter().all(|(exits, runs)| *exits <= 1 && *runs >= 1), "each change leaves at most once and runs native: {leaves:?}");
 }

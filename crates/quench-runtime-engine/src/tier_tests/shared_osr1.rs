@@ -1,10 +1,10 @@
 //! Shared OSR: a hot loop enters its compiled region mid-run, and the run must end as the interpreter's does (moved from the core's `vm/tests.rs`, whose binary does not link the layers).
 use crate::engine_prelude::*;
-use super::shared_osr2::main_osr;
+use crate::test_oracle::assert_loop_decision;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
 use std::cell::RefCell;
-use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 #[test]
 fn default_osr_integer_bound_admission_preserves_fractional_and_effectful_comparisons() {
@@ -24,7 +24,7 @@ fn default_osr_integer_bound_admission_preserves_fractional_and_effectful_compar
         }
         print(comparisons);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["0", "0", "1", "1", "2", "2001", "0", "2001", "2000", "2001", "2002"]);
 }
 
@@ -64,12 +64,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), ["4999500000"], "{policy:?}");
-        let osr = main_osr(&compiled, function_id);
-        // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = quench_runtime::vm::tier_policy::tier_may_run(policy, quench_runtime::jit_mode::Tier::ANY);
-        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
-        let compiles = crate::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -104,12 +99,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), ["1201100"], "{policy:?}");
-        let osr = main_osr(&compiled, function_id);
-        // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = quench_runtime::vm::tier_policy::tier_may_run(policy, quench_runtime::jit_mode::Tier::ANY);
-        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
-        let compiles = crate::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -148,17 +138,13 @@ fn shared_osr_appends_and_fills_holes_in_place() {
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(output.borrow().as_slice(), ["6003994 2000 2000 | 6003934 2000 2000 22"], "{policy:?}");
         if !crate::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let osr = main_osr(&compiled, function_id);
-        assert!(osr.native_region_runs > 0, "no native run under {policy:?}: {osr:?}");
-        // A store leaves only where the backing is full, once per capacity growth.
-        assert!(osr.exits < osr.native_region_runs, "appends left native code under {policy:?}: {osr:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -217,14 +203,12 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
         assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
         if !crate::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let osr = main_osr(&compiled, function_id);
-        assert!(osr.native_region_runs > 0, "no native sweep under {policy:?}: {osr:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -270,14 +254,12 @@ fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
         assert_eq!(*output.borrow(), expected, "{policy:?}");
         if !crate::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let osr = main_osr(&compiled, function_id);
-        assert!(osr.native_region_runs > 0, "no native walk under {policy:?}: {osr:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -311,17 +293,12 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
         assert_eq!(*output.borrow(), expected, "{policy:?}");
         if !crate::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let osr = main_osr(&compiled, function_id);
-        // The lane path enters the loop once per call and leaves only where a reserve or
-        // collection debt needs the VM; the old lowering re-entered at each capacity growth.
-        assert!(osr.native_region_runs > 0, "fill left native code under {policy:?}: {osr:?}");
-        assert!(osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -352,22 +329,12 @@ fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["-4498"], "{policy:?}");
         if !crate::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let views = compiled.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .expect("hot cmp lane view")
-            .osr_diagnostics();
-        // The lane path runs the loop natively once per call and completes at the Return;
-        // the old lowering re-entered at each loop continuation.
-        assert!(osr.native_region_runs > 0, "{policy:?}: {osr:?}");
-        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -406,11 +373,6 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), ["804092460 34 110"], "{policy:?}");
-        let osr = main_osr(&compiled, function_id);
-        // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
-        let analyzes = quench_runtime::vm::tier_policy::tier_may_run(policy, quench_runtime::jit_mode::Tier::ANY);
-        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
-        let compiles = crate::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }

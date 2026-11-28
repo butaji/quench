@@ -80,7 +80,7 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     };
     let outcome = vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
     *body = LoopBody::after(outcome);
-    if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
+    if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm); }
     }
 }
 
@@ -118,12 +118,10 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     let (program, code, receiver) = unsafe { ((*cx).program, &*(*cx).code, this_in_lane(cx, r).unwrap_or(Value::DELETED)) };
     let captures = unsafe { (*cx).registers }.capture();
     let exit = vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast());
-    unsafe { (*cx).callee_warming = false };
     // A failed entry contract resumes at the loop's header, not at the function's first record.
     let resume = if exit.entered_nothing() { LaneExit::At(site.header as usize) } else { exit };
     let resumed = body_left_in_lane(cx, r, own, &method, resume);
     drop(method);
-    if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
     Some(loop_attempt(cx, ip, resumed))
 }
 

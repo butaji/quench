@@ -1,6 +1,6 @@
 //! Shared OSR: a hot loop enters its compiled region mid-run, and the run must end as the interpreter's does (moved from the core's `vm/tests.rs`, whose binary does not link the layers).
 use crate::engine_prelude::*;
-use super::shared_osr2::main_osr;
+use crate::test_oracle::{assert_loop_decision, main_loops};
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
 use std::cell::RefCell;
@@ -84,16 +84,11 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    let diagnostics = main_osr(&vm, function_id);
-    assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
-    assert!(
-        diagnostics.native_region_runs > 0,
-        "changing receiver loop never entered native code: {diagnostics:?}"
-    );
+    assert!(assert_loop_decision(&vm, function_id), "the loop's function is predicted compiled");
+    assert_eq!(main_loops(&vm, function_id).len(), 1, "the load installs the one loop's site");
 }
 
 #[test]
@@ -134,15 +129,8 @@ fn shared_osr_float_unary_uses_shared_number_denotation() {
                 .is_some_and(|name| &program.atoms[name as usize] == "negate")
         })
         .unwrap();
-    let osr = main_osr(&vm, function_id);
-    assert_eq!(
-        osr.admitted_sites, 1,
-        "OSR analysis rejected the unary loop ({} rejection sites)",
-        osr.analysis_rejections.len()
-    );
-    assert_eq!(
-        osr.currently_compiled_sites, 1,
-        "unary loop did not compile natively (admitted: {})",
-        osr.admitted_sites
-    );
+    assert!(assert_loop_decision(&vm, function_id), "the loop's function is predicted compiled");
+    let loops = main_loops(&vm, function_id);
+    assert_eq!(loops.len(), 1, "the load installs the one loop's site");
+    assert!(loops[0].analysis_failure.is_none() && !loops[0].promotion_only, "OSR analysis admitted the unary loop");
 }

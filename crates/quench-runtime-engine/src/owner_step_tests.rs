@@ -2,7 +2,7 @@
 //! native callee's activation (`dispatch_fast::vm_steps::owner_step_in`, `Vm::running_owner`)
 //! are made over the activation's window: a chain of compiled callees whose innermost ones make
 //! them leaves none of its runs, and prints what the interpreter prints.
-use crate::catch_tests::{bodies_match_interpreter, BodyRuns};
+use crate::catch_tests::bodies_match_interpreter;
 use crate::test_oracle::Tier;
 
 /// Ten chained functions: `c9` reads and writes names (a `typeof` of an unbound name too), `c8` reads
@@ -37,22 +37,7 @@ const CHAIN: &str = r#"
     print(total + "," + G);
 "#;
 
-const NAMES: [&str; 10] = ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "c9"];
-
-/// The body runs of the chain under `tier`, whose outcome equals the interpreter's (`bodies_match_interpreter`).
-fn chain_runs(tier: Tier) -> Vec<BodyRuns> {
-    bodies_match_interpreter(CHAIN, tier, &NAMES)
-}
-
-/// Every body ran natively to its end (`ended`) and none left for the general path.
-fn all_native_and_none_left(runs: &[BodyRuns]) {
-    for (name, (ended, left)) in NAMES.iter().zip(runs) {
-        assert!(*ended > 0, "{name} was never entered natively");
-        assert_eq!(*left, 0, "a run of {name} left for the general path");
-    }
-}
-
 #[test]
 fn a_chain_of_name_local_and_with_steps_runs_natively_without_leaving() {
-    all_native_and_none_left(&chain_runs(Tier::Full));
+    bodies_match_interpreter(CHAIN, Tier::Full);
 }

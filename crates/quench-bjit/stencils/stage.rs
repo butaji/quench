@@ -46,28 +46,31 @@ pub(crate) struct StencilStage {
 }
 
 impl StencilStage {
-    /// A stage whose first `site` is hole `first`.
+    /// A stage whose first `site` is hole `first`, of the activation whose dispatch payload is `payload`
+    /// (`heap_rows::payload`): every row has one, and its operations read the per-heap tables through it
+    /// (`Table::ClassSpace`, `Table::SpillBase`), so no row can build a stage that reads them at address zero.
     #[inline(always)]
-    pub(crate) fn from_hole(first: u8) -> Self {
-        Self { sites: first, values: 0, payload: 0 }
+    pub(crate) fn from_hole(first: u8, payload: usize) -> Self {
+        Self { sites: first, values: 0, payload: payload as u64 }
     }
 
-    /// As `from_hole`, for a row whose operations address a process table through `payload`.
+    /// A stage for value-word tests and number conversions alone: no site hole, no table. A row's operations
+    /// over the heap take `from_hole` with the row's payload.
     #[inline(always)]
-    pub(crate) fn with_payload(first: u8, payload: u64) -> Self {
-        Self { sites: first, values: 0, payload }
+    pub(crate) fn words() -> Self {
+        Self { sites: 0, values: 0, payload: 0 }
     }
 
     /// As `from_hole`, with the property arena's value base (`Table::PropertyValues`).
     #[inline(always)]
-    pub(crate) fn with_values(first: u8, values: u64) -> Self {
-        Self { sites: first, values, payload: 0 }
+    pub(crate) fn with_values(first: u8, values: u64, payload: usize) -> Self {
+        Self { sites: first, values, payload: payload as u64 }
     }
 
     /// As `with_values`, for a row that stores through the dispatch payload at `payload`.
     #[inline(always)]
     pub(crate) fn storing(first: u8, values: u64, payload: usize) -> Self {
-        Self { sites: first, values, payload: payload as u64 }
+        Self::with_values(first, values, payload)
     }
 
     /// The `T` at `base + offset`, which need not be aligned (a typed array's bytes).

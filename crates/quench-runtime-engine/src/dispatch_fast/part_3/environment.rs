@@ -150,6 +150,5 @@ pub(in super::super) fn activate_environment_in_lane(
     if cross {
         enter_program_in_lane(cx, target.body.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
     Ok((callee_registers, base))
 }

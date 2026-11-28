@@ -144,7 +144,7 @@ pub(crate) struct Lowering<'a, 'f> {
     /// Guard failure blocks to fill once the region is lowered (`guard_exit`).
     // Recovery boxes register values; object/layout proofs authorize forward execution
     // only and must not be retained in every guard's snapshot. With the lowering line that
-    // made each guard, which a diagnostics build records.
+    // made each guard.
     pub(super) pending: Vec<GuardExit>,
     /// Whether the unit makes native calls (`Lowering::call`): a callee may change `this`,
     /// so no read or store folds the receiver facts its entry proved.

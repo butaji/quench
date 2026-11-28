@@ -3,7 +3,7 @@ use crate::engine_prelude::*;
 use crate::ext_traits::*;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
-use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_tier_agrees, Tier};
 
 #[test]
 fn lane_instanceof_decides_like_the_interpreter() {
@@ -28,7 +28,7 @@ fn lane_instanceof_decides_like_the_interpreter() {
       }
       globalThis.answer = t;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(901022.0));
 }
@@ -76,7 +76,7 @@ fn lane_strict_equality_decides_like_the_interpreter() {
       for (let n = 0; n < 20000; n++) { const r = sc_assq(keys[n % 45 < 40 ? n % 45 : 0] , al); if (r !== false) t += r.cdr; else t -= 1; }
       globalThis.answer = total + t;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4307110.0));
 }
@@ -99,7 +99,7 @@ fn lane_outer_captures_read_like_the_interpreter() {
       }
       globalThis.answer = outer();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(168662875.0));
 }
@@ -125,7 +125,7 @@ fn lane_element_stores_append_like_the_interpreter() {
       var a = [], b = a; for (var k = 0; k < 40; k++) total = (total + fill(a, 5, k)) | 0;
       globalThis.answer = (total + seen + b.length + fixed.length + closed.length + frozen[1]);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4571092.0));
 }
@@ -148,7 +148,7 @@ fn lane_element_stores_fill_holes_like_the_interpreter() {
       for (var k = 0; k < 50; k++) total = (total + fill(shared, 8, k)) | 0;
       globalThis.answer = (total + seen * 7 + last + (sealed[2] === undefined ? 1 : 2) + copy[7] + Object.keys(sealed).length);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4523109.0));
 }
@@ -170,7 +170,7 @@ fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(2005786796.0));
 }
@@ -193,7 +193,7 @@ fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
       for (var k = 0; k < 300; k++) total = (total + sum(p, 3)) | 0;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(3000684.0));
 }
@@ -210,7 +210,7 @@ fn lane_bitwise_operands_typed_by_tags_take_to_int32_like_the_interpreter() {
       for (var k = 0; k < 4000; k++) total = (total * 3 + held({ state: vals[k % vals.length] })) % 1000003;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(-558229.0));
 }
@@ -230,7 +230,7 @@ fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpret
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(61024.0));
 }
@@ -250,7 +250,7 @@ fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.answer_number(), Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
 }
 

@@ -4918,7 +4918,6 @@ native_form SuperConstArrayObject2 1
 native_form Yield 1
 native_form YieldStar 1
 native_ir crates/quench-runtime/src/vm/compiled/lane_region/polls.rs 4
-native_refusals 25
 inline_always_count total 4285
 inline_always_lines crates/quench-bjit/stencils/call_rows.rs::enter 50
 inline_always_lines crates/quench-bjit/stencils/heap_rows.rs::run 41

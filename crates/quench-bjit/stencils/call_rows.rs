@@ -110,7 +110,7 @@ fn leaving(s: &S, status: u32, word: u64) -> S {
 /// in the payload for the lane to unwind from (`LANE_BODY_THREW`).
 #[inline(always)]
 unsafe fn raising(s: &S, payload: usize, pc: u64) -> S {
-    protocol::record_raised_pc(&mut StencilStage::from_hole(0), payload as u64, pc);
+    protocol::record_raised_pc(&mut StencilStage::from_hole(0, payload), payload as u64, pc);
     leaving(s, LaneStatus::Threw as u32, 0)
 }
 
@@ -220,7 +220,7 @@ macro_rules! numeric_leaf_row {
             unsafe {
                 let s = S { frame, ctx, p: [p0, p1, p2, p3], f: [f0, f1, f2, f3, f4, f5, f6, f7] };
                 let mut places = Places::new::<{ MEM }, { $left }, { $right }>(s);
-                let mut stage = Concrete::from_hole(0);
+                let mut stage = Concrete::from_hole(0, payload(&places.s));
                 let operands = (places.number_operand(&mut stage, Operand::register(LEFT), ()), places.number_operand(&mut stage, Operand::register(RIGHT), ()));
                 let (base, exponent) = match operands {
                     (Some(base), Some(exponent)) => (base, exponent),
@@ -271,7 +271,7 @@ numeric_leaf_row!(call_numeric_leaf_imm_imm, IMM, IMM);
 #[inline(always)]
 unsafe fn enter<const ARGC: usize, const MODE: u8, const CHECKED: bool, const PLACED: bool>(s: &S) -> Ended {
     let record = hole64::<{ DirectHole::Record as u8 }>() as usize;
-    let mut stage = StencilStage::from_hole(0);
+    let mut stage = StencilStage::from_hole(0, payload(s));
     let mut places = crate::places::Places::new::<0, 0, 0>(*s);
     let mut frame = DirectFrame::<ARGC, MODE, CHECKED, PLACED>::new(&mut places, record);
     let site = frame.site();
@@ -321,7 +321,7 @@ pub unsafe extern "rust-preserve-none" fn exit_here(frame: usize, ctx: usize, p0
 #[inline(always)]
 unsafe fn reload<const P: u8>(s: S) -> S {
     let mut s = s;
-    let mut stage = StencilStage::from_hole(0);
+    let mut stage = StencilStage::from_hole(0, payload(&s));
     let at = stage.site(0); // the spill's frame slot (first value hole), holding the word the spill wrote
     let word = stage.load_site(Region::Frame.mutable(), s.frame as u64, at);
     let int = value::is_int(&mut stage, word);

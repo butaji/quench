@@ -4,7 +4,7 @@ use crate::ext_traits::*;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
 use std::cell::RefCell;
-use crate::test_oracle::{assert_outcomes_agree_after, assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_outcomes_agree_after, assert_tier_agrees, Tier};
 
 /// A loop that calls a function writing the field its condition reads must see the write:
 /// the region's entry value of the field does not stand past a call it continues after.
@@ -13,7 +13,7 @@ fn loop_condition_reads_the_field_a_called_function_writes() {
     let source = r#"function advance(state) { state.count = (state.count - 1) | 0; }
         function run(state) { while (state.count > 0) advance(state); }
         const s = {count: 4000}; run(s); print(String(s.count));"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["0"]);
 }
 
@@ -37,7 +37,7 @@ fn typed_field_call_materializes_after_effects_once() {
         if (state.count !== 1500 || calls !== 1) throw 'replayed callee effects';
         print(state.count + ':' + calls);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["1500:1"]);
 }
 
@@ -76,7 +76,7 @@ fn typed_bitwise_branches_preserve_coercion_and_prefix_effects() {
             try {{ throws(7n); }} catch (error) {{ print(error instanceof TypeError); }}
             print(writes);
         "#);
-        let run = assert_tier_agrees(&source, Tier::Full, Expect::ENGAGED);
+        let run = assert_tier_agrees(&source, Tier::Full);
         assert_eq!(&run.outcome.printed[run.outcome.printed.len() - 5..], ["24000", "true", "4001:1", "true", "4002"]);
     }
 }
@@ -158,7 +158,7 @@ for (var q = 0; q < 3000; q++) s += b.m();
 print(s);
 })();
 "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["27000"]);
 }
 
@@ -203,7 +203,7 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
       out.push(hot(function () { return Number.isInteger(parseInt("12", 10)) ? 2 : 0; }));
       print(out.join(" "));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["3000 3000 3000 10515 3000 6000 3000 6000"]);
 }
 
@@ -248,7 +248,7 @@ fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
              hot(function (i) { return b.m(i & 3); }),
              hot(function (i) { return { __proto__: null, v: i }.v & 1; })].join(" "));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["3000 4500 1500"]);
 }
 

@@ -1,6 +1,6 @@
 //! Shared OSR: a hot loop enters its compiled region mid-run, and the run must end as the interpreter's does (moved from the core's `vm/tests.rs`, whose binary does not link the layers).
 use crate::engine_prelude::*;
-use super::shared_osr2::main_osr;
+use crate::test_oracle::{assert_loop_decision, main_loops};
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
 use std::cell::RefCell;
@@ -63,7 +63,6 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
     let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(compiled_output.clone()).with_test262());
     compiled.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
     assert_eq!(
         compiled_output.borrow().as_slice(),
@@ -71,44 +70,25 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
     );
     assert_eq!(compiled_output.borrow().as_slice(), ["40 5050 true"]);
 
-    let osr = main_osr(&compiled, function_id);
-    assert_eq!(
-        osr.sites.len(),
-        5,
-        "all five source loops need distinct OSR PCs: {osr:?}"
-    );
-    assert_eq!(osr.admitted_sites, 5, "all five call-prefix regions are admitted: {osr:?}");
-    for site in &osr.sites {
-        assert!(
-            site.admitted && site.deferred_call,
-            "dynamic callback should defer region compilation: {site:?}"
-        );
-        assert!(site.tier_threshold_reached);
-        assert_eq!(site.analysis_rejection, None);
+    assert!(assert_loop_decision(&compiled, function_id), "the loops' function is predicted compiled");
+    let loops = main_loops(&compiled, function_id);
+    assert_eq!(loops.len(), 5, "all five source loops need distinct OSR PCs");
+    for site in loops {
         let body = program.function_get(function_id).unwrap();
         let call_pcs = body
             .code
             .iter()
             .enumerate()
             .filter_map(|(pc, packed)| {
-                (site.header_pc as usize <= pc
-                    && pc <= site.backedge_pc as usize
+                (site.header as usize <= pc
+                    && pc <= site.backedge as usize
                     && body.widened(*packed).op()
                         == quench_runtime::bytecode::Op::Call)
                     .then_some(pc as u32)
             })
             .collect::<Vec<_>>();
-        assert_eq!(call_pcs, site.call_boundary_pcs, "call boundary attribution: {site:?}");
-        assert_eq!(call_pcs.len(), 1, "one deferred callback per loop: {site:?}");
-        assert!(
-            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0,
-            "the loop runs natively and its callback is a step in place, not a leave: {site:?}"
-        );
+        assert_eq!(call_pcs.len(), 1, "one deferred callback per loop: {}..{}", site.header, site.backedge);
     }
-    compiled.programs.record_js_jit_lane_entry(
-        quench_runtime::vm::program_store::ProgramId::MAIN,
-        function_id as u32,
-    );
 }
 
 #[test]
@@ -182,16 +162,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
 
     assert_eq!(output.borrow().as_slice(), ["1200", "2", "ok"]);
-    let diagnostics = main_osr(&vm, function_id);
-    assert_eq!(
-        diagnostics.currently_compiled_sites,
-        1,
-        "truthiness loop did not retain native code"
-    );
-    if quench_runtime::trace::Channel::JsJit.on() {
-        assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
-        assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
-    }
+    assert_loop_decision(&vm, function_id);
 }
 
 #[test]
@@ -248,25 +219,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["3200", "2", "2"]);
 
-    let diagnostics = main_osr(&vm, function_id);
-    assert_eq!(
-        diagnostics.currently_compiled_sites,
-        1,
-        "OSR diagnostics: plain={}, admitted={}, attempts={}, successes={}, native={}, rejects={:?}",
-        diagnostics.plain_backward_jump_sites,
-        diagnostics.admitted_sites,
-        diagnostics.compile_attempts,
-        diagnostics.compile_successes,
-        diagnostics.native_region_runs,
-        diagnostics.analysis_rejections,
-    );
-    if quench_runtime::trace::Channel::JsJit.on() {
-        assert!(
-            diagnostics.native_region_runs > 0,
-            "native OSR region never ran; diagnostics: {:?}",
-            diagnostics.analysis_rejections
-        );
-    }
+    assert_loop_decision(&vm, function_id);
 }
 
 #[test]
@@ -316,13 +269,10 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    let diagnostics = main_osr(&vm, function_id);
-    assert!(diagnostics.compile_successes > 0, "strict inequality loop did not compile: {diagnostics:?}");
-    assert!(diagnostics.native_region_runs > 0, "strict inequality loop did not run natively: {diagnostics:?}");
+    assert_loop_decision(&vm, function_id);
 }
 
 #[test]
@@ -389,16 +339,11 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
     let compiled_output = Rc::new(RefCell::new(Vec::new()));
     let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(compiled_output.clone()));
     compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
-    let diagnostics = main_osr(&compiled, function_id);
-    assert!(diagnostics.compile_successes > 0, "call boundary did not admit a native prefix: {diagnostics:?}");
-    assert!(diagnostics.native_region_runs > 0, "native prefix never ran: {diagnostics:?}");
-    assert!(diagnostics.sites.iter().any(|site| {
-        site.backedge_pc > site.header_pc
-            && site.native_region_runs > 0
-            && site.call_boundary_pcs.contains(&call_pc)
-    }), "OSR diagnostics should report the native loop's call boundary at its exact PC: {diagnostics:?}");
+    assert!(assert_loop_decision(&compiled, function_id), "the loop's function is predicted compiled");
+    assert!(main_loops(&compiled, function_id).iter().any(|site| {
+        site.backedge > site.header && site.call_boundary_pcs.contains(&call_pc)
+    }), "the load's loop site names the loop's call boundary at its exact PC");
 }

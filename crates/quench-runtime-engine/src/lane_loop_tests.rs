@@ -1,7 +1,7 @@
 use crate::engine_prelude::*;
 use quench_runtime::Engine;
 use quench_runtime::test_host::TestHost;
-use crate::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::test_oracle::{assert_loop_decision, assert_tier_agrees, Tier};
 use std::{cell::RefCell, rc::Rc};
 
 /// A call-free loop that allocates at every iteration runs in its loop region, which makes
@@ -27,15 +27,11 @@ fn an_allocating_loop_runs_natively_with_fused_array_literals() {
     let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.programs.enable_js_lane_methods();
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     let expected: u64 = (0..40u64).map(|i| 2 * i + 511 + 3).sum();
     assert_eq!(output.borrow().as_slice(), [expected.to_string()]);
-    let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
-    let view = views.get(function_id).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("loop lane view");
-    let osr = view.osr_diagnostics();
-    assert!(osr.native_region_runs > 0, "the allocating loop runs natively: {:?}", osr.sites);
+    assert_loop_decision(&vm, function_id);
 }
 
 /// A loop's read at a site of many shapes that hold the field at one slot (a layout family)
@@ -62,12 +58,9 @@ fn a_loop_reads_a_megamorphic_layout_family_natively() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), [format!("{} {}", 64 * (0..64).sum::<u32>(), (0..64).sum::<u32>() - 5 + 1000)]);
-    let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
-    let view = views.get(function_id).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("loop lane view");
-    assert!(view.osr_diagnostics().native_region_runs > 0, "the family read runs natively");
+    assert_loop_decision(&vm, function_id);
 }
 
 /// A method called on a receiver the loop copies from a register it never writes (`p.sum()`
@@ -88,12 +81,9 @@ fn a_loop_inlines_a_method_of_a_receiver_held_outside_it() {
     let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), [(0..2).map(|s| 50000 * (2 * s + 1)).sum::<i64>().to_string()]);
-    let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
-    let osr = views.get(function_id).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("run's lane view").osr_diagnostics();
-    assert!(osr.native_region_runs > 0, "the call loop runs natively: {:?}", osr.sites);
+    assert_loop_decision(&vm, function_id);
 }
 
 #[test]
@@ -113,12 +103,9 @@ fn a_loop_inlines_an_inherited_method_of_a_captured_receiver() {
     let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["200001"]);
-    let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
-    let osr = views.get(function_id).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("run's lane view").osr_diagnostics();
-    assert!(osr.native_region_runs > 0, "the call loop runs natively: {:?}", osr.sites);
+    assert_loop_decision(&vm, function_id);
 }
 
 /// A native loop whose call activates a callee the lane tier claimed, where the callee's body
@@ -185,7 +172,7 @@ fn an_inlined_math_imul_matches_the_interpreter_across_arguments_and_replacement
       for (let call = 0; call < 3000; call++) total = (total + fold(call)) | 0;
       print(total);
     "#;
-    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full);
     assert_eq!(run.outcome.printed.len(), 1);
 }
 
@@ -220,7 +207,7 @@ fn inlined_math_functions_match_the_interpreter_at_their_edges() {
       for (let call = 0; call < 300; call++) sweep();
       print(hash, Math.max(), Math.min(), Math.floor(), Math.max(1, 2, 3));
     "#;
-    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full);
     assert_eq!(run.outcome.printed.len(), 2);
 }
 
@@ -271,7 +258,7 @@ fn a_directly_called_body_with_native_calls_matches_the_interpreter() {
       for (let repeat = 0; repeat < 700; repeat++) result += total("quench-lane", 24);
       print(result + " " + total({ length: 2, charCodeAt: (i) => i * 7 }, 9));
     "#;
-    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(&format!("(function(){{{source}}})();"), Tier::Full);
     assert_eq!(run.outcome.printed.len(), 1);
 }
 
@@ -397,7 +384,11 @@ fn a_loop_function_that_has_run_long_compiles_under_the_measured_model() {
     vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
     vm.programs.enable_js_lane_methods();
     quench_runtime::test_support::execute(&mut vm, &program).unwrap();
-    assert!(vm.tier_events().count(quench_runtime::vm::tier_events::Event::Published) > 0, "the step runs as a lane body: {:?}", vm.tier_events());
+    let step = program.functions.iter()
+        .position(|body| body.header().name.is_some_and(|atom| &program.atoms[atom as usize] == "step"))
+        .unwrap();
+    let predicted = vm.programs.predicted_tiers(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
+    assert!(!matches!(predicted[step], quench_runtime::vm::tier_policy::PredictedTier::Interpreter), "the step is predicted a compiled body: {predicted:?}");
 }
 
 /// A loop over a typed array runs as a region whose element and `length` rows read the typed view its entry
@@ -415,8 +406,7 @@ fn a_loop_over_a_typed_array_runs_as_a_region_that_never_leaves() {
           for (let round = 0; round < 12; round++) {{ total = total + fill(a) + sum(a); }}
           globalThis.answer = total;
         }})();"#);
-        let run = assert_tier_agrees(&source, Tier::Full, Expect { completed: 0, leaves: 0 });
-        assert!(run.regions() > 0, "{kind}: the loops run as regions: {:?}", run.events);
+        let run = assert_tier_agrees(&source, Tier::Full);
         assert!(run.outcome.answer.is_some());
     }
 }

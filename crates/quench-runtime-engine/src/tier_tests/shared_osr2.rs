@@ -2,6 +2,7 @@
 use crate::engine_prelude::*;
 use quench_runtime::test_host::TestHost;
 use quench_runtime::Engine;
+use crate::test_oracle::assert_loop_decision;
 use std::cell::RefCell;
 
 #[test]
@@ -52,14 +53,10 @@ print(t + " " + w.array[5] + " " + w.array[77]);
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
-        let osr = main_osr(&compiled, function_id);
-        let compiles = crate::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
-        assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -110,17 +107,10 @@ print(total + " " + w.arr.slice(35, 50).join(","));
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
-        let osr = main_osr(&compiled, function_id);
-        let compiles = crate::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
-        assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
-        if compiles {
-            assert!(osr.exits > 0, "no exit left an inlined callee under {policy:?}");
-        }
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -184,24 +174,14 @@ print(t);
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
         if !crate::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let osr = |function: usize| main_osr(&compiled, function);
-        let (callee, caller) = (osr(am3), osr(reduce));
-        assert!(caller.native_region_runs > 0, "no native caller run under {policy:?}: {caller:?}");
-        // Out of line, am3's loop would run once per call, 2000 reductions of 30 calls; the
-        // caller enters native code at its first backward jump, so a reduction's first
-        // call still runs out of line.
-        let calls = 2000 * 30;
-        assert!(
-            callee.native_region_runs * 40 < calls,
-            "am3 ran out of line under {policy:?}: {callee:?} against {caller:?}"
-        );
+        assert_loop_decision(&compiled, am3);
+        assert_loop_decision(&compiled, reduce);
     }
 }
 
@@ -231,22 +211,13 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
         if !crate::compiled::loop_tier_compiles(policy) {
             continue;
         }
-        let views = compiled
-            .programs
-            .views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN)
-            .expect("main program lane views");
-        let osr = views.get(function_id).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("hot sum loop lane view").osr_diagnostics();
-        // The lane path reads the field dynamically, so a double needs no entry widening;
-        // the verified lowering instead recompiled with the field held as an f64.
-        assert!(osr.native_region_runs > 0, "the double field left native code under {policy:?}: {osr:?}");
-        assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
+        assert_loop_decision(&compiled, function_id);
     }
 }
 
@@ -278,45 +249,29 @@ print(result);
         let mut vm = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         vm.set_memory_policy(policy);
         vm.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut vm, &program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["200"], "{policy:?}");
         if crate::compiled::loop_tier_compiles(policy) {
-            let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).unwrap();
-            let diagnostics = quench_runtime::vm::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
-            assert!(diagnostics.native_region_runs > 0, "{policy:?}: {diagnostics:?}");
+            assert_loop_decision(&vm, function_id);
         }
     }
 }
 
-/// The osr diagnostics of function `name` after `source` runs compiled under every memory
-/// policy that compiles loops, with the printed output each policy must give.
-pub(super) fn compiled_loop_diagnostics(source: &str, file: &str, name: &str, expected: &[&str])
-    -> Vec<(quench_runtime::MemoryPolicy, quench_runtime::vm::engine_types::OsrDiagnostics)> {
+/// Runs `source` compiled under every memory policy that compiles loops, holding the printed
+/// output each policy gives to `expected`, and asserts the load's loop decision for function `name`.
+pub(super) fn compiled_loop_decisions(source: &str, file: &str, name: &str, expected: &[&str]) {
     let program = Engine::specialize(source, file).unwrap();
     let function_id = program.functions.iter()
         .position(|function| function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)).unwrap();
-    let mut diagnostics = Vec::new();
     for policy in quench_runtime::MemoryPolicy::ALL.into_iter().filter(|policy| crate::compiled::loop_tier_compiles(*policy)) {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
         assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
-        let views = compiled.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).expect("main program lane views");
-        diagnostics.push((policy, views.get(function_id).and_then(quench_runtime::vm::program_store::derived_lane_view)
-            .expect("the function's lane view").osr_diagnostics()));
+        assert_loop_decision(&compiled, function_id);
     }
-    diagnostics
-}
-
-#[cfg(not(quench_profiled))]
-/// The OSR diagnostics of the lane view of function `function` of `vm`'s main program.
-pub(super) fn main_osr(vm: &Vm, function: usize) -> quench_runtime::vm::engine_types::OsrDiagnostics {
-    let views = vm.programs.views_in_lane(quench_runtime::vm::program_store::ProgramId::MAIN).expect("main program lane views");
-    views.get(function).and_then(quench_runtime::vm::program_store::derived_lane_view).expect("hot caller loop lane view").osr_diagnostics()
 }
 
 #[test]
@@ -379,14 +334,11 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
     let mut compiled = quench_runtime::test_support::vm(TestHost::writing_to(compiled_output.clone()));
     compiled.set_memory_policy(quench_runtime::MemoryPolicy::Throughput);
     compiled.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     quench_runtime::test_support::execute(&mut compiled, &program).unwrap();
 
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
     assert_eq!(compiled_output.borrow().as_slice(), ["162010 10 10 true 10 5 3"]);
-    let osr = main_osr(&compiled, function_id);
-    assert!(osr.currently_compiled_sites > 0, "field-store loop did not compile: {osr:?}");
-    assert!(osr.native_region_runs > 0, "field-store loop never ran natively: {osr:?}");
+    assert_loop_decision(&compiled, function_id);
     let reference_id = program
         .functions
         .iter()
@@ -397,7 +349,5 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
                 .is_some_and(|atom| &program.atoms[atom as usize] == "fillReference")
         })
         .unwrap();
-    let reference_osr = main_osr(&compiled, reference_id);
-    assert!(reference_osr.currently_compiled_sites > 0, "reference field-store loop did not compile: {reference_osr:?}");
-    assert!(reference_osr.native_region_runs > 0, "reference field-store loop never ran natively: {reference_osr:?}");
+    assert_loop_decision(&compiled, reference_id);
 }

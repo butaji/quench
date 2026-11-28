@@ -267,6 +267,5 @@ pub(in super::super) fn reuse_frame_in_lane(cx: *mut LaneContext, r: Registers, 
     r.set_this(this);
     r.set_env(target.closure.env);
     r.set_capture(target.closure.capture);
-    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
     (r, unsafe { (*target.body.view).start() })
 }

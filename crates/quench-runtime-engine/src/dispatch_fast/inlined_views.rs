@@ -93,6 +93,7 @@ pub(crate) fn inlined_of(original: *const LaneView) -> Option<*const LaneView> {
 /// derived as the function's second record array, its call markers made `inlined_call_marker`
 /// records. The view and its unit's register count; `None`, registering nothing, where it inlines
 /// no call or the function is one N7a leaves (handlers, generators, async, dynamic scopes).
+#[cfg(feature = "jit")]
 pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, original: *const LaneView) -> Option<(*const LaneView, u16)> {
     // SAFETY: the running lane's context; its program outlives the run.
     let (vm, code, program) = unsafe { (super::vm(cx), &*(*cx).code, (*cx).program) };
@@ -132,7 +133,7 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
     let view = vm.programs.store_extra_lane_view(program, function, |_, constants, kind, sites| {
         // The unit's pcs are not the function's, so the solve's cells at a pc do not describe these records.
         Some(super::derive_lane_view(program, function, &synthetic, constants, &*vm, kind, &|| masks.as_ref(), sites,
-            crate::compiled::admission::record_plan(false), false, None, Vec::new()))
+            crate::compiled::admission::record_plan(false), None, Vec::new()))
     })?;
     // SAFETY: the program store keeps the view alive with its program.
     let derived = unsafe { &*view };
@@ -161,6 +162,7 @@ pub(crate) fn make_inlined_view(cx: *mut super::LaneContext, function: u32, orig
 /// through `Function.prototype.call`, always leaves at its marker. A callee bound by its function
 /// (`CalleeBinding::Function`, the planned target of a call plan's arm) is admitted by that function
 /// (`inlined_function_call_marker`); an identity-bound one by its identity (`inlined_call_marker`).
+#[cfg(feature = "jit")]
 fn mark_call(record: &mut quench_runtime::vm::engine_types::LaneInstruction, frame: &InlinedCall, code: &quench_runtime::ResidualProgram) {
     let leave = || leave_inlined as Handler as *const ();
     let Some(callee) = code.function_get(frame.target.function as usize) else { return record.handler = leave() };
@@ -294,6 +296,7 @@ pub(crate) fn leave_at_exit(cx: *mut super::LaneContext, ip: Ip) -> Ip {
 /// call's link is proved (`script_call_leaf_prove_miss`), with every site linked so far, once per
 /// function. The interpreter only (no compiled tier claims the view's PCs), and
 /// only from the function's own records.
+#[cfg(feature = "jit")]
 #[cold]
 pub(crate) fn note_leaf_site(cx: *mut super::LaneContext, ip: Ip) {
     // SAFETY: the running lane's context.
@@ -314,6 +317,7 @@ pub(crate) fn note_leaf_site(cx: *mut super::LaneContext, ip: Ip) {
 
 /// Points every cached call target of `function` at its inlined `view` of `registers` registers: the
 /// calls made from now on activate in it; running activations keep their records.
+#[cfg(feature = "jit")]
 fn install(cx: *mut super::LaneContext, function: u32, original: *const LaneView, view: *const LaneView, registers: u16) {
     let ours = |candidate: *const LaneView| std::ptr::eq(candidate, original)
         || INLINED.with(|views| views.borrow().iter().any(|inlined| std::ptr::eq(inlined.view, candidate) && std::ptr::eq(inlined.original, original)));

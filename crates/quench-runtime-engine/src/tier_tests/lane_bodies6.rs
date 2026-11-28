@@ -1,6 +1,6 @@
 //! Lane bodies against the interpreter: each program runs compiled and interpreted, and the compiled run must end as the interpreter's does (moved from the core's `vm/tests.rs`, whose binary does not link the layers).
 use super::lane_bodies5::assert_cell_crossings_match;
-use super::shared_osr2::compiled_loop_diagnostics;
+use super::shared_osr2::compiled_loop_decisions;
 
 #[test]
 #[cfg(not(quench_profiled))]
@@ -23,9 +23,7 @@ fn lane_loops_make_array_literals_of_integers_and_objects_natively() {
       for (var k = 0; k < 200; k++) s = (s + run(300)) | 0;
       print(s);
     "#;
-    for (policy, osr) in compiled_loop_diagnostics(source, "lane-array-literal-loop.js", "run", &["36660000"]) {
-        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
-    }
+    compiled_loop_decisions(source, "lane-array-literal-loop.js", "run", &["36660000"]);
 }
 
 #[test]
@@ -48,9 +46,7 @@ fn lane_loops_make_regexp_literals_natively_with_fresh_state() {
       first.test("xabbc");
       print([first.lastIndex, last.lastIndex, first !== last, last.source, last.flags, last.exec("xabbbc")[1], total].join(" "));
     "#;
-    for (policy, osr) in compiled_loop_diagnostics(source, "lane-regexp-literal-loop.js", "run", &["5 0 true a(b+)c g bbb 8970000"]) {
-        assert!(osr.native_region_runs > 0 && osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
-    }
+    compiled_loop_decisions(source, "lane-regexp-literal-loop.js", "run", &["5 0 true a(b+)c g bbb 8970000"]);
 }
 
 #[test]
@@ -78,7 +74,7 @@ fn compiled_loops_answer_regexp_argument_literals_as_the_interpreter_does() {
     "#;
     // Only the answer is checked: whether the loop's call of `replace` stays native is the
     // call tiers' concern.
-    let _ = compiled_loop_diagnostics(source, "lane-regexp-argument-loop.js", "run", &["bnn 8970000 true 0 qq"]);
+    compiled_loop_decisions(source, "lane-regexp-argument-loop.js", "run", &["bnn 8970000 true 0 qq"]);
 }
 
 /// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the

@@ -199,41 +199,10 @@ pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: 
     u64::from(stored)
 }
 
-/// Whether a body's run that ended at `exit` counts toward its retirement and
-/// reoptimization: a leave into a callee that only lacked a body while warming toward one
-/// (`LaneContext::callee_warming`) does not, as the next run may find the callee's body. Only
-/// a `Callee` leave reads the flag: the callee's own code may run nested bodies before the
-/// leave resolves, whose other ends must not take it.
-pub(in super::super) fn leave_counts_in_lane(cx: *mut LaneContext, exit: crate::compiled::LaneExit) -> bool {
-    // SAFETY: the running lane's context, read and reset by the run that left into the callee.
-    exit != crate::compiled::LaneExit::Callee || !unsafe { std::mem::take(&mut (*cx).callee_warming) }
-}
-
-/// With diagnostics, counts a leave of `own`'s body into a warming callee, which
-/// `leave_counts_in_lane` keeps out of the body's leave counts, in the view's report.
-pub(in super::super) fn note_warming_leave_in_lane(cx: *mut LaneContext, own: &LaneView) {
-    if crate::compiled::admission::diagnosing(unsafe { vm(cx) }) {
-        own.tier().body_stats.warming_leaves.set(own.tier().body_stats.warming_leaves.get() + 1);
-    }
-}
-
-/// Records a run of `own`'s body that ended at `exit` in the diagnostics leave table.
+/// Records a run of a lane body that ended at `exit`.
 #[inline(always)]
-pub(in super::super) fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &crate::compiled::LaneMethod, exit: crate::compiled::LaneExit) {
+pub(in super::super) fn record_end_in_lane(cx: *mut LaneContext, exit: crate::compiled::LaneExit) {
     crate::compiled::body_leave::body_ended(cx, exit);
-    if crate::compiled::admission::diagnosing(unsafe { vm(cx) }) {
-        own.tier().body_stats.ended(exit, &method.exits, &method.inlined, crate::compiled::take_lane_exit_line());
-    }
-}
-
-/// Counts an entry whose body the lane could not leave inside of (`body_admits_in_lane`): in the VM's
-/// tier events and, with diagnostics, the view's report.
-#[cold]
-pub(in super::super) fn body_refused_in_lane(vm: &Vm, own: &LaneView) {
-    vm.programs.tier_events().record(Event::Refused);
-    if crate::compiled::admission::diagnosing(vm) {
-        own.tier().body_stats.refused.set(own.tier().body_stats.refused.get() + 1);
-    }
 }
 
 pub(in super::super) fn body_left_in_lane(
@@ -243,7 +212,7 @@ pub(in super::super) fn body_left_in_lane(
     method: &crate::compiled::LaneMethod,
     exit: crate::compiled::LaneExit,
 ) -> LaneBodyLeft {
-    record_end_in_lane(cx, own, method, exit);
+    record_end_in_lane(cx, exit);
     if exit == crate::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
         // native frames instead of materializing stale homes for guest execution.

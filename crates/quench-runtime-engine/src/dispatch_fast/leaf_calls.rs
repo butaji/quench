@@ -51,6 +51,7 @@ script_handler! {
             debug_assert!(entry.body.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         }
         // A proved leaf site is one its function's inlined view may splice in (N7a).
+        #[cfg(feature = "jit")]
         super::inlined_views::note_leaf_site(cx, ip);
         // Only a leaf reading its receiver binds it here; any other binds it if it
         // materializes (`materialize_leaf_in_lane`), which a binding past the receiver's own
@@ -71,7 +72,6 @@ script_handler! {
         if !admits_window_in_lane(vm, target, ARGC) {
             sibling!(script_call_full_miss, r, ip, Carried::script(cx))
         }
-        vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
         // SAFETY: the target is the running program's admitted leaf of form `LEAF`, whose
         // parameters take `ARGC` values and whose window the stack holds.
         let (registers, base) = unsafe { lane_run_leaf::<LEAF, ARGC>(cx, r, ip, i, target, this) };

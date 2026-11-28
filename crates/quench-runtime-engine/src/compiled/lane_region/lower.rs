@@ -441,7 +441,7 @@ pub(crate) fn lower(
         }
     }
     if reachable {
-        lowering.exit(&mut state, coverage.exit_pc(instructions.len()) as u32);
+        lowering.leave_at(&mut state, coverage.exit_pc(instructions.len()) as u32);
     }
     for (header, latch) in std::mem::take(&mut lowering.poll_latches).iter() {
         if let Some(latch) = latch {
@@ -460,7 +460,6 @@ pub(crate) fn lower(
             eprintln!("aot-lanes: function {function_id}: a leave at {pc} (lowering line {line})");
         }
         let mut leaving = State { values, proofs: LocalProofs { homed, ..LocalProofs::default() }, refinements: smallvec::SmallVec::new(), virtuals, virtual_arrays };
-        lowering.record_line(line);
         lowering.leave_at(&mut leaving, pc);
     }
     if let Some(census) = census.as_mut() { let now = emitted(&lowering); census.part(clif_census::Part::Leaves, now - mark); mark = now; }

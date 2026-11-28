@@ -1,17 +1,6 @@
 use super::*;
 
 impl<'a, 'f> Lowering<'a, 'f> {
-    /// `leave` naming the lowering line that decided the leave, which a diagnostics run reports
-    /// (`JsStepDispatch::exit_line`).
-    #[track_caller]
-    pub(super) fn exit(&mut self, state: &mut State, pc: u32) {
-        if self.vm.diagnostics && !self.completion.numeric() {
-            let line = self.raw_const(Lane::I64, i64::from(std::panic::Location::caller().line()));
-            self.store_word(regions::dispatch(), line, self.payload, std::mem::offset_of!(JsStepDispatch, exit_line) as i32);
-        }
-        self.leave_at(state, pc);
-    }
-
     /// Leave at `pc` with the interpreter's state: every written register back in the lane's file, but those it already holds.
     pub(super) fn leave_at(&mut self, state: &mut State, pc: u32) {
         if self.completion.numeric() {
@@ -51,7 +40,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
     pub(super) fn continue_at(&mut self, state: &mut State, pc: usize) {
         if !self.coverage.lowered(pc) {
             self.decline_kept(state, pc);
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return;
         }
         // A block before this one that no edge entered was not lowered.
@@ -70,7 +59,7 @@ impl<'a, 'f> Lowering<'a, 'f> {
             }
             None => {
                 self.decline_kept(state, pc);
-                self.exit(state, pc as u32);
+                self.leave_at(state, pc as u32);
             }
         }
     }
