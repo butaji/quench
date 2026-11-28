@@ -121,40 +121,11 @@ setting! {
 setting! {
     /// One temporary development experiment, named in `QUENCH_DEV`; none is on by default.
     "QUENCH_DEV", Dev {
-        /// The memory-first heap policy in place of the default.
-        MemoryFirst = "memory-first",
         /// `memory-mix=young+full+aging+external+pages+alloc+trim`: memory-first's named
-        /// components on top of the throughput policy (`heap::pacing::memory_mix_has`).
+        /// components on top of the throughput policy (`vm::tier_policy::memory_mix_has`).
         MemoryMix = "memory-mix",
-        /// Array backings never take the double element kind (`heap::array_elements::DOUBLE_LEN`),
-        /// which they otherwise take on their first Number that is no int32.
-        NoDoubleElements = "no-double-elements",
         /// A requested compile runs on the requesting thread and installs at once, as in tests:
         /// instruction counts then see the code a run installs.
         SyncCompile = "sync-compile",
-        /// Every tier controller reads the floor rows (`tier_policy::TierRows::Floor`), as the
-        /// tier oracle's tests do, so a failure they show reproduces in a process.
-        FloorRows = "floor-rows",
-        /// Every JavaScript JIT compile at `CompileLevel::Quick` (no mid-end optimization,
-        /// one-pass register allocation), to measure the level's cost and code quality.
-        QuickCompile = "quick-compile",
-        /// An image lane body's leaves continue in its base body at the same PC (`AheadLeaves`);
-        /// off because the join's store layout gives the base body the previous activation's
-        /// values (`fbits9`), so leaves return their exit word and the lane runs the record.
-        AheadJoins = "ahead-joins",
-        /// An ahead image's lane bodies install on a VM whose runtime lane-body compiles are off
-        /// (AArch64). Off: with them raytrace runs 7524 ms against 7260, deltablue 4470 against
-        /// 4379, richards 6097 against 6089 (image bodies, 2026-11-22).
-        AheadBodies = "ahead-bodies",
-        /// Number loop regions build from BaseJIT stencils (`quench-bjit`) where every
-        /// instruction has a row, instead of Cranelift IR.
-        Bjit = "bjit",
-        /// Functions of a direct eval's source compile on first call.
-        DirectEvalStubs = "direct-eval-stubs",
-        /// Every loop-free function that never suspends runs its unlowered record for good
-        /// (`bytecode::tier0`), the differential that checks tier 0's semantics.
-        Tier0Always = "tier0-always",
-        /// No function runs unlowered: each lowers at its first read.
-        Tier0Off = "tier0-off",
     }
 }

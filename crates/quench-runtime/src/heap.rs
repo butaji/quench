@@ -292,7 +292,7 @@ const SPARSE_ENTRY_SLOTS: usize = size_of::<(usize, Value)>() / size_of::<Value>
 fn dense_storage_fits(present: usize, length: usize) -> bool {
     present.saturating_mul(SPARSE_ENTRY_SLOTS) >= length
 }
-pub use pacing::{MemoryPolicy, memory_mix_has};
+pub use pacing::MemoryPolicy;
 pub(crate) use pacing::PromotionAge;
 /// The prototypes `Heap::mark_prototype` remembers: an ordinary object's and an array's,
 /// whose allocations alternate (array literals and objects in one request handler), so one
