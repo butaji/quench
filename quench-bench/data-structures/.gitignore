@@ -1,5 +1,4 @@
 suite/
 results/
 rss_exec
-suite/*/node/driver.ir.mjs
 __pycache__/
