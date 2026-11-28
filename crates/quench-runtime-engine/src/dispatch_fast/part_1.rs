@@ -1348,7 +1348,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
         // A stencil pick stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         crate::compiled::admission::LaneRoute::Base => {
             let crate::compiled::LaneBodyWork::Start { .. } = &work else { unreachable!("a stencil body never compiles in the background") };
-            let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
+            let unit = match vm.base_unit_or_outcome(code, function, parameters) { Ok(unit) => unit, Err(outcome) => return outcome };
             return vm.base_body_work(unit, code, function, parameters, own, &direct);
         }
         crate::compiled::admission::LaneRoute::Deferred => return crate::compiled::LaneBodyOutcome::Deferred,

@@ -621,14 +621,10 @@ impl LaneView {
         self.entry.body.get() != 0
     }
 
-    /// Whether a lane call of it enters its published body (`enter_cell_body_in_lane`): one whose entry pays for
-    /// itself (`LaneMethod::amortizes`). A body that does not serves native callers only (`LaneView::specialized`):
-    /// the lane's call runs the callee in records, which costs a tiny method less than the body's entry.
+    /// Whether a lane call of it enters its published body (`enter_cell_body_in_lane`): a published cell's body.
     #[inline(always)]
     fn enters_cell_body(&self) -> bool {
-        let body = self.entry.body.get();
-        // SAFETY: a published cell's body word names a live body (`EntryCell::publish`), zeroed when it retires.
-        body != 0 && unsafe { (*(body as *const crate::compiled::LaneMethod)).amortizes }
+        self.entry.body.get() != 0
     }
 
     /// The address of its entry cell, which native callers name (`compiled::DirectCallee::cell`).

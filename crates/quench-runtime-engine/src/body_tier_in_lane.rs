@@ -26,7 +26,7 @@ impl LaneView {
         let history = self.tier().history.get();
         // SAFETY: as `lane_body`; no lane body runs while a compile plans.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        if history.short && !history.demanded && matches!(body, LaneBody::Declined) {
+        if history.unpaid && !history.demanded && matches!(body, LaneBody::Declined) {
             self.tier().history.set(LaneBodyHistory { demanded: true, ..history });
             *body = LaneBody::Unspecialized;
             self.reclaim_for_tier();
@@ -46,7 +46,7 @@ impl LaneView {
             #[allow(unreachable_patterns)]
             _ => "other".into(),
         };
-        format!("{state} short={} unpaid={} demanded={} declined={:?}", h.short, h.unpaid, h.demanded, self.tier().body_stats.declined.get())
+        format!("{state} unpaid={} demanded={} declined={:?}", h.unpaid, h.demanded, self.tier().body_stats.declined.get())
     }
 
     /// Native code (a loop region or a body) called this function, which has no body to enter: the
@@ -60,7 +60,7 @@ impl LaneView {
         self.tier().history.set(LaneBodyHistory { demanded: true, region_called: true, ..history });
         // SAFETY: as `demand_body`; the lane runs no body of this view here (it has none).
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        if (history.short || history.unpaid) && matches!(body, LaneBody::Declined) {
+        if history.unpaid && matches!(body, LaneBody::Declined) {
             *body = LaneBody::Unspecialized;
             self.reclaim_for_tier();
         }
@@ -82,16 +82,8 @@ impl LaneView {
 
     /// The body a just published method makes of this view.
     pub(crate) fn specialized(&self, entry: Handler, method: std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>, tier: quench_runtime::vm::tier_policy::Tier) -> LaneBody {
-        // A body whose entry would not pay for itself serves native callers only
-        // (`body_call_helper`, direct calls); the lane's own entries keep the records, and it
-        // has no trial to run.
-        let tier_prologue = if method.lease().expect("a body just published is live").amortizes_entry() {
-            // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
-            unsafe { std::mem::replace(&mut (*self.prologue.get()).handler, entry as *const ()) }
-        } else {
-            self.release_from_tier();
-            unsafe { (*self.prologue.get()).handler }
-        };
+        // SAFETY: as `claim_for_tier`; no handler reads the prologue now.
+        let tier_prologue = unsafe { std::mem::replace(&mut (*self.prologue.get()).handler, entry as *const ()) };
         // Native callers enter a closed body through the view's cell, and leave inside it
         // through the view's pin.
         if let Some(body) = method.lease().filter(|body| body.calls_only_natively()) {

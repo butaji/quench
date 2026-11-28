@@ -15,7 +15,6 @@ use crate::staged::Operation;
 pub struct Tiers {
     pub lane_body: LaneBody,
     pub stitch: Stitch,
-    pub priors: Priors,
     /// Whether every eligible compile is admitted and every JavaScript compilation arm is on, so a
     /// run checks each tier against the interpreter (`Tiers::admits_all`).
     pub(crate) stress: bool,
@@ -23,12 +22,6 @@ pub struct Tiers {
     pub admits_all: bool,
 }
 
-/// The priors the model tests pin their arithmetic to.
-#[cfg(any(test, feature = "test-support"))]
-pub const TEST_PRIORS: Priors = Priors {
-    interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 3000, compile_wall_permille: 1000,
-    region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500,
-};
 
 /// The runs a loop-free function makes unlowered before a later call lowers it
 /// (`bytecode::tier0`): the runs a lane view waits for (`LANE_VIEW_DEFERRED_RUNS`), so the
@@ -54,40 +47,6 @@ pub struct Stitch {
     pub max_depth: usize,
 }
 
-/// Parts per thousand, the unit of a prior's share.
-pub const PER_MILLE: u64 = 1000;
-
-/// The priors the tier model starts from, each a statement about the world until the engine's own
-/// measurements replace it (`tier-decision-rule-v1`): nothing here is fitted to a benchmark row.
-pub struct Priors {
-    /// Nanoseconds an interpreted lane bytecode takes.
-    pub interpreter_ns: u64,
-    /// A u-jit body's per-bytecode time as a share of the interpreter's, in thousandths: bodies
-    /// run 2 to 5 times faster per entry than the interpreter once entered (inclusive timing).
-    pub body_share: u64,
-    /// Nanoseconds the code generator takes to compile one IR instruction: a fixed price on the
-    /// compile's work (the running ratio it replaced settled at 1.3-2.2 us on JS3 rows).
-    pub compile_ns_per_ir: u64,
-    /// The part per thousand of a compile's time that waits on the running program: compiles run
-    /// on the code generator's thread, so most of their time overlaps it (two cores).
-    pub compile_wall_permille: u64,
-    /// Nanoseconds entering a loop region from the lane costs per call, and a body's entry
-    /// (measured about 300 ns: some 1,100 instructions at 0.3 ns).
-    pub region_entry_ns: u64,
-    pub body_entry_ns: u64,
-    /// A b-jit body's per-bytecode time as a share of the interpreter's: stencil code runs about
-    /// half of it (values stay in the frame). Its entry is `body_entry_ns`, as a u-jit body's: both
-    /// publish a `LaneMethod` the one entry driver runs (`lane_body_entry`, `Vm::run_lane_body`),
-    /// whose binding of the lane frame is the crossing's cost, not the code the body enters.
-    pub base_body_share: u64,
-    /// The divisor of the entries and the interpreter time so far that gives the credible lower
-    /// bound of those to come, where the decision (a compile) is irreversible.
-    pub remaining_divisor: u64,
-    /// Nanoseconds the plan of a lane body (inlining, proofs, lowering to IR) takes per IR
-    /// instruction on the program's own thread (measured 1.46 us on Box2D): a fixed price on its
-    /// work, none of which overlaps the program as a compile on the code generator's thread does.
-    pub plan_ns_per_ir: u64,
-}
 
 /// The frameless lane-body tier (`LaneView::tier_lane`).
 pub struct LaneBody {
@@ -164,35 +123,11 @@ impl crate::vm::Vm {
 const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { compile_poll_interval: 0, ..MEASURED.lane_body },
     stitch: MEASURED.stitch,
-    priors: MEASURED.priors,
     stress: true,
     admits_all: true,
 };
 
-impl Tiers {
-    /// The length a body without loops or calls needs for one entry to pay in the lane body
-    /// `tier` compiles: none where every eligible compile is admitted (`Tiers::admits_all`), so
-    /// a fixture too short to repay one still gets its body. Each tier asks the entry's crossing
-    /// (`body_entry_ns`, the one entry driver's) over the interpretation its code saves per
-    /// bytecode (`Priors::repaying_length`): a stencil body keeps `base_body_share` of it, a
-    /// Cranelift body `body_share`.
-    pub fn amortizing_instructions(&self, tier: Tier) -> usize {
-        if self.admits_all { return 0; }
-        match tier {
-            Tier::Base => self.priors.repaying_length(self.priors.base_body_share),
-            Tier::Quick | Tier::Ultra | Tier::Ahead => self.priors.repaying_length(self.priors.body_share),
-        }
-    }
-}
 
-impl Priors {
-    /// The fewest straight-line bytecodes whose interpretation, less the `share` per mille code
-    /// still takes of it, covers a body's entry (`body_entry_ns`): shorter, no entry repays itself.
-    pub(crate) fn repaying_length(&self, share: u64) -> usize {
-        let saved = (self.interpreter_ns * (PER_MILLE - share)).max(1);
-        (self.body_entry_ns * PER_MILLE).div_ceil(saved) as usize
-    }
-}
 
 /// The tier a lane body of a function with predicted tier `pick` runs in, or `None` where the interpreter runs it
 /// (design decision 4.9). The pick is the one input; the mode only names a compiled tier the mode allows, where it
@@ -221,7 +156,6 @@ const MEASURED: Tiers = Tiers {
         window_registers: 32,
         max_depth: 3,
     },
-    priors: Priors { interpreter_ns: 10, body_share: 300, compile_ns_per_ir: 2000, compile_wall_permille: 100, region_entry_ns: 140, body_entry_ns: 330, base_body_share: 500, remaining_divisor: 4, plan_ns_per_ir: 1500 },
     stress: false,
     admits_all: false,
 };
@@ -524,12 +458,9 @@ pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u3
     }
 }
 
-/// The compiled tier of every lane body of an AOT image: the AOT mode's u-jit, over every function (an image is built
-/// once, for every function a run may enter). Read only here: the mode decides the tier, never its callers.
-pub const AOT_LANE_TIER: Tier = Tier::Ultra;
 
-/// The predicted tier of a lane body (design decision 4.9): the AOT mode's `AOT_LANE_TIER` for an AOT program (`aot`),
-/// otherwise the argmin `predicted` (`predicted_tier`).
+/// The predicted tier of a lane body (design decision 4.9): the u-jit in an AOT program (`aot`), whose
+/// image compiles every function, otherwise the argmin `predicted` (`predicted_tier`).
 pub fn body_tier(aot: bool, predicted: PredictedTier) -> PredictedTier {
     if aot { PredictedTier::Ultra } else { predicted }
 }
@@ -678,21 +609,6 @@ pub const JS_COMPILED_MAX_CODE_BYTES: usize = 64 * 1024;
 mod tests {
     use super::*;
 
-    /// A body pays for the one entry both tiers' bodies cross in the bytecodes whose saved
-    /// interpretation covers it: a stencil body needs more than a Cranelift body, which saves more
-    /// per bytecode behind the same entry.
-    #[test]
-    fn each_lane_body_tier_has_its_own_amortizing_length() {
-        let tiers = TierRows::PROCESS.table();
-        if tiers.admits_all { return; }
-        let (base, ultra) = (tiers.amortizing_instructions(Tier::Base), tiers.amortizing_instructions(Tier::Ultra));
-        let priors = &tiers.priors;
-        let saves = |share: u64, length: usize| length as u64 * priors.interpreter_ns * (PER_MILLE - share) / PER_MILLE;
-        assert!(saves(priors.base_body_share, base) >= priors.body_entry_ns && saves(priors.base_body_share, base - 1) < priors.body_entry_ns, "{base}");
-        assert!(saves(priors.body_share, ultra) >= priors.body_entry_ns && saves(priors.body_share, ultra - 1) < priors.body_entry_ns, "{ultra}");
-        assert!(ultra <= base, "{base} and {ultra}");
-        assert_eq!(ultra, tiers.amortizing_instructions(Tier::Quick));
-    }
 
     #[test]
     fn the_tier_table_is_consistent() {

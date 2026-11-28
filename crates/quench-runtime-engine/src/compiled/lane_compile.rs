@@ -7,7 +7,6 @@
 use crate::ext_traits::*;
 use super::*;
 use quench_runtime::vm::program_store::lane_publication::LaneKey;
-use quench_runtime::vm::tier_policy::Tier;
 
 type LaneCode = Result<image::LaneImage, super::jit_backend::NativeCompileRejection>;
 pub(crate) use super::lane_method::{finish_lane_method, LaneMethodFacts};
@@ -24,10 +23,6 @@ pub(crate) struct LanePlan {
     pub(crate) function: u32,
     /// The word its publication sets when one of its Stable facts changes.
     pub(crate) invalidation: quench_runtime::code_dependencies::Invalidation,
-    /// The thresholds of the VM that planned it, which its publication reads (`amortizes_entry`).
-    pub(crate) tiers: &'static Tiers,
-    /// The tier the body was picked for (`lane_body_tier`), which its amortization reads.
-    pub(crate) tier: Tier,
 }
 
 /// The VM's facts a lane body's lowering may ask (`OnlineFacts`), answered when it is planned for
@@ -270,9 +265,8 @@ enum LaneCompile {
 
 /// What a function's lane body asks of the VM at an entry past its warm-up.
 pub(crate) enum LaneBodyWork<'a> {
-    /// Plan the body of the function and start compiling its code: `called` is whether a body calls the
-    /// function, and `caller` is the view whose body it is.
-    Start { called: bool, caller: &'a crate::dispatch_fast::LaneView },
+    /// Plan the body of the function and start compiling its code, for `caller`, the view whose body it is.
+    Start { caller: &'a crate::dispatch_fast::LaneView },
     /// Look for the code of the body compiling.
     Poll(Box<dyn std::any::Any>),
 }
@@ -290,8 +284,6 @@ enum Unstarted {
     Installed(Rc<PublishedLaneMethod>),
     /// Not yet worth compiling.
     Unpaid,
-    /// Too short for its entries to amortize (`amortizes_entry`), and no body calls it.
-    Short,
     Declined,
 }
 
@@ -310,9 +302,6 @@ pub(crate) enum LaneBodyOutcome {
     Deferred,
     /// The predicted tier is the interpreter (`lane_facts::body_pick`): the interpreter runs the function.
     Unpaid,
-    /// Its unit is too short to amortize an entry and no body calls it: declined until a caller's
-    /// compile meets a call to it (`LaneView::demand_body`).
-    Short,
     Declined,
 }
 
@@ -321,7 +310,7 @@ use crate::compiled::tier_policy::LANE_BACKTRACKING_MAX_INSTS;
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] pub(crate) mod ahead;
 use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
-use lane_facts::{unit_closed, bind_callees, Census, plan_key, amortizes_entry, entry_pc, unit_direct_calls};
+use lane_facts::{unit_closed, bind_callees, Census, plan_key, entry_pc, unit_direct_calls};
 
 /// A lane body's work (`body_work_in_lane`), the route `jit_routes` installs.
 pub(crate) type BodyWork = fn(&mut Vm, &ResidualProgram, u32,
@@ -383,7 +372,7 @@ impl Vm {
         let mut lowered = job.run().or_else(|| { refuse(self, Refusal::NothingNative); None })?;
         if lowered.region.native == 0 { refuse(self, Refusal::NothingNative); return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
-        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation, tiers: self.programs.tiers(), tier: Tier::Ultra }, native))
+        Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation }, native))
     }
 
     /// What `function`'s lane body lowers from (`LanePrepared`): its unit, field proofs, global
@@ -473,12 +462,12 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method(&mut self, program: &ResidualProgram, function: u32,
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates], entry: Option<u32>,
-        called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
+        caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         #[cfg(feature = "jit")]
-        { self.start_lane_method_compiled(program, function, captures, direct, entry, called, caller) }
+        { self.start_lane_method_compiled(program, function, captures, direct, entry, caller) }
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (program, function, captures, direct, entry, called, caller);
+            let _ = (program, function, captures, direct, entry, caller);
             Err(Unstarted::Declined)
         }
     }
@@ -487,44 +476,24 @@ impl Vm {
     #[allow(clippy::too_many_arguments)]
     fn start_lane_method_compiled(&mut self, program: &ResidualProgram, function: u32,
         captures: &dyn Fn(Value) -> (usize, usize), direct: &[DirectCandidates], entry: Option<u32>,
-        called: bool, caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
+        caller: &crate::dispatch_fast::LaneView) -> Result<PendingLaneMethod, Unstarted> {
         // A plan costs the program's own time, as much as its compile and on its thread: what
         // decides against the compile after planning decides before it, charging the plan too.
         // One whose last plan from this entry did not pay at its size is not planned again until its
         // entries would pay for that size.
-        let tiers = self.programs.tiers();
         // The body's tier is its predicted tier through the policy (`lane_body_tier`): the interpreter's pick compiles
         // nothing, whoever calls the function.
         let level = super::jit_backend::CompileLevel::run_default();
         let pick = self.lane_pick(program, function, caller.called_by_regions());
-        let Some(tier) = quench_runtime::vm::tier_policy::lane_body_tier(pick) else { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Unpaid) };
+        if quench_runtime::vm::tier_policy::lane_body_tier(pick).is_none() { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Unpaid) }
         let Some(graph) = self.call_graph_of(program) else { refuse(self, Refusal::NoUnit); return Err(Unstarted::Declined) };
-        // A function that calls itself back through other functions runs a call tree per entry,
-        // as a loop does, before any of its calls is direct (`CallGraph::in_cycle`).
-        let recursive = entry.is_none() && graph.in_cycle(function);
-        // Phase A: the tier the policy picked (`admission::LanePlan`).
-        let plan_unit = match super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LanePlan,
-            facts: super::admission::UnitFacts { called_by_regions: caller.called_by_regions(), ..Default::default() } }) {
-            super::admission::Decision::Compile(unit) => unit,
-            super::admission::Decision::Declined => { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Declined); }
-            super::admission::Decision::Unpaid => return Err(Unstarted::Unpaid),
-            super::admission::Decision::Short => return Err(Unstarted::Short),
-        };
         super::base_region::count(super::base_region::Event::BodyPlanned);
-        // A unit too short to amortize its entry, or whose key a published body holds, is known
-        // before its lowering; the same tests after it stay, for the unit a smaller budget made.
-        // A member of the cycle is called, not inlined: inlined, its call back to `function`
+        // A body whose key a published body holds is known before its lowering. A member of the cycle is called, not inlined: inlined, its call back to `function`
         // leaves the body (a direct call runs only from the body's own frame), while called it
         // is a direct call of its own body once one exists, as `function`'s self calls are.
         let others: Vec<u32> = graph.cycle_of(function).iter().copied().filter(|member| *member != function).collect();
         let stopped: std::cell::RefCell<Option<Unstarted>> = std::cell::RefCell::new(None);
         let gate = |vm: &Self, unit: &lane_unit::Unit, fields: &dyn std::fmt::Debug, direct: &[DirectCallee]| {
-            // Phase B during planning: the entry gate, on the planned unit (`LaneEntry`). Its amortization is read only where the gate reads it.
-            let entry_facts = super::admission::UnitFacts { entry_none: entry.is_none(), called_by_bodies: called, recursive,
-                amortizes_entry: entry.is_some() || called || recursive || amortizes_entry(tiers, unit, function, direct, tier), ..Default::default() };
-            if super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LaneEntry(plan_unit), facts: entry_facts }).compiled().is_none() {
-                *stopped.borrow_mut() = Some(Unstarted::Short); return false;
-            }
             let key: LaneKey = (vm.active_program.raw(), function, entry, plan_key(unit, fields, direct.len(), entry));
             if let Some(published) = vm.programs.installed_lane(&key) { *stopped.borrow_mut() = Some(Unstarted::Installed(published)); return false; }
             true
@@ -535,25 +504,9 @@ impl Vm {
         self.host.before_native_compilation();
         let prepared = self.prepare_lane_plan(program, function, direct, &others, entry, Some(caller), &gate);
         self.host.after_native_compilation();
-        match stopped.into_inner() {
-            Some(Unstarted::Short) => { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short); }
-            Some(stop) => return Err(stop),
-            None => {}
-        }
+        if let Some(stop) = stopped.into_inner() { return Err(stop); }
         let LanePrepared { unit, fields, global_reads, direct, direct_sites, closed, entry: entry_at } =
             prepared.ok_or(Unstarted::Declined)?;
-        // A body that cannot amortize a lane entry would serve native callers only
-        // (`LaneView::specialized`); the lane's warm-up is not one, so it declines here rather
-        // than compile code no caller may ever run.
-        // A body compiles only where one entry of its unit amortizes it (`amortizes_entry`, the same test as above,
-        // inlined callees included).
-        // Phase B after planning: the install gate on the plan's unit (`LaneInstall`). The callees bind, and the
-        // installed and admission checks run, only with that unit.
-        let install_facts = super::admission::UnitFacts { entry_none: entry.is_none(), called_by_regions: caller.called_by_regions(),
-            recursive, amortizes_entry: entry.is_some() || recursive || amortizes_entry(tiers, &unit, function, &direct, tier), ..Default::default() };
-        let Some(_install) = super::admission::specialize(super::admission::UnitRequest { kind: super::admission::UnitKind::LaneInstall(plan_unit), facts: install_facts }).compiled() else {
-            refuse(self, Refusal::NotAmortized); return Err(Unstarted::Short);
-        };
         bind_callees(&direct, caller);
         let key: LaneKey = (self.active_program.raw(), function, entry, plan_key(&unit, &fields, direct.len(), entry));
         if let Some(published) = self.programs.installed_lane(&key) { return Err(Unstarted::Installed(published)); }
@@ -568,7 +521,7 @@ impl Vm {
         let census = crate::compiled::admission::diagnosing(self).then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
             direct: direct.len(), closed });
-        let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, tiers, tier };
+        let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
         let code = super::jit_backend::OffThread::guarded((job, census, level), |(job, census, level)| {
             Lowered::of(&job, census, level)
@@ -605,8 +558,8 @@ impl Vm {
         captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
-        let (called, caller) = match work {
-            LaneBodyWork::Start { called, caller } => (called, caller),
+        let caller = match work {
+            LaneBodyWork::Start { caller } => caller,
             LaneBodyWork::Poll(pending) => return self.body_poll_in_lane(program, pending),
         };
         // A function with an ahead-of-time body takes it where a first compile would.
@@ -614,11 +567,10 @@ impl Vm {
             return LaneBodyOutcome::Published(published);
         }
         let direct = direct(self);
-        let started = match self.start_lane_method(program, function, captures, &direct, entry, called, caller) {
+        let started = match self.start_lane_method(program, function, captures, &direct, entry, caller) {
             Ok(started) => started,
             Err(Unstarted::Installed(published)) => return LaneBodyOutcome::Published(published),
             Err(Unstarted::Unpaid) => return LaneBodyOutcome::Unpaid,
-            Err(Unstarted::Short) => return LaneBodyOutcome::Short,
             Err(Unstarted::Declined) => return LaneBodyOutcome::Declined,
         };
         // The plan's IR and lowering state, tens of megabytes for the largest bodies, are
@@ -760,7 +712,7 @@ impl LanePlan {
         let facts = LaneMethodFacts {
             unit: self.unit, stable: std::mem::take(&mut lowered.region.stable), fields: self.fields,
             direct: self.direct, closed: self.closed, function: self.function, invalidation: self.invalidation,
-            tiers: self.tiers, tier: self.tier, fault_poll: lowered.region.fault_poll,
+            fault_poll: lowered.region.fault_poll,
             exits: std::mem::take(&mut lowered.region.exits), summary: lowered.region.summary.take(), clif: lowered.clif, proven_calls: false,
         };
         finish_lane_method(memory, scalar, proven, facts)

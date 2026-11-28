@@ -45,7 +45,7 @@ impl LoopBody {
             LaneBodyOutcome::Published(method) => Self::Ready { method },
             LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Self::Idle,
             // The predicted tier is the interpreter's pick, fixed by the program: the loop runs interpreted for good.
-            LaneBodyOutcome::Declined | LaneBodyOutcome::Short | LaneBodyOutcome::Unpaid => Self::Declined,
+            LaneBodyOutcome::Declined | LaneBodyOutcome::Unpaid => Self::Declined,
         }
     }
 }
@@ -126,7 +126,7 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
-        None => LaneBodyWork::Start { called: false, caller: own },
+        None => LaneBodyWork::Start { caller: own },
     };
     let outcome = vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
     *body = LoopBody::after(outcome);

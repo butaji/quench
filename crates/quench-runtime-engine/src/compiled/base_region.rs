@@ -213,7 +213,6 @@ pub(crate) enum Event {
     BodyPublished,
     BodyCompiling,
     BodyUnpaid,
-    BodyShort,
     BodyDeclined,
     BodyStale,
     BodyDeferred,
