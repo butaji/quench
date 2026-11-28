@@ -1508,6 +1508,8 @@ fn shape_departures_retire_readers_through_each_storage_path() {
             // No departure: a repeated shape and storage descriptor preserve the
             // shape assumption (physical storage needs its own proof).
             heap.set_object_shape(object, 1);
+            // Record storage is what this check reads: the object is a record here (a test of the record's arena).
+            heap.depart_for_mutation(object);
             let (data, arena) = heap.object_and_arena_mut(object).unwrap();
             let properties = data.properties();
             data.set_properties(properties, arena);

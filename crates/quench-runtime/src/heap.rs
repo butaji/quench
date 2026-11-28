@@ -2210,8 +2210,7 @@ impl Heap {
             self.class_cell_initialize(granule, shape, values);
             return;
         }
-        // Otherwise replacing storage is a record edit: the cell departs first, so the owner is a record.
-        self.depart_for_mutation(owner);
+        // Otherwise the owner is a record (or a departed cell, which is one): its storage is replaced in the record.
         // An array's payload holds its element backing, so its properties live in the arena.
         let inline = !self
             .object(owner)
