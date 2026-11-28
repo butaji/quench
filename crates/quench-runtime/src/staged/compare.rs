@@ -3,7 +3,6 @@
 //! control edge through the frame's `branch`, so the interpreter, the lane and every other tier
 //! jump on one definition. A pair the words do not decide is the VM's (`CallOut::Decide`).
 
-use super::object::instance_decision;
 use super::value::{is_direct_array, is_direct_object};
 use super::{CallOut, Domain, Edge, NumericFrame, NumericStage, Operation, Step};
 #[cfg(not(stencil_build))]
@@ -276,12 +275,9 @@ fn decided_by_vm<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut
 
 /// Whether `value instanceof constructor` holds. Subsumes the hand `instanceof` relations of the lane
 /// (`lane_instanceof_value`, `lane_instanceof_value_walk`, and the jump forms `lane_instanceof_jump_true`,
-/// `lane_jump_instanceof_false`, which are this comparison under a `JumpTrue` or `JumpFalse`). The frame's own proof of the constructor's chain
-/// (`Frame::instance_of`: a published watch, or an ordinary walk that runs no guest code) decides it
-/// first where it holds. Else, where the frame holds the constructor's `prototype` as a Stable fact
-/// (`NumericFrame::stable_prototype`) the value's own words decide it by a walk of its prototype links
-/// (`object::instance_decision`), and the VM the pairs they leave; with no such fact, or no object record table
-/// to walk in, it is the VM's decision.
+/// `lane_jump_instanceof_false`, which are this comparison under a `JumpTrue` or `JumpFalse`). The frame's own proof of the
+/// constructor's chain (`Frame::instance_of`: a published watch, or an ordinary walk that runs no guest code) decides it
+/// first where it holds. Else it is the VM's decision: no word walk follows a prototype link to a record any more.
 #[inline(always)]
 fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F, operands: [Operand; 2]) -> Option<S::Cond> {
     let [value, constructor] = operands;
@@ -291,17 +287,7 @@ fn instanceof<S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     {
         return Some(holds);
     }
-    let target = constructor.register_index().and_then(|register| frame.stable_prototype(stage, register));
-    let Some(target) = target else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
-    let Some(records) = frame.object_records(stage) else { return decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR) };
-    let call = decision_call(operands, INSTANCEOF_OPERATOR)?;
-    let miss = frame.miss();
-    let (decided, holds) = instance_decision(stage, records, left?, target, miss)?;
-    let decision = stage.choose_leaving(decided, |stage| {
-        let [yes, no] = [Value::TRUE, Value::FALSE].map(|each| stage.constant(each.to_bits()));
-        Some(stage.select(holds, yes, no))
-    }, #[inline(always)] |stage| frame.vm_step(stage, call, None).map(|(word, _)| word))?;
-    Some(stage.eq_imm(decision, Value::TRUE.to_bits()))
+    decided_by_vm(stage, frame, operands, INSTANCEOF_OPERATOR)
 }
 
 /// Whether the bits `operation` makes of the operands' ToInt32 are nonzero (`if (flags & MASK)`).

@@ -185,7 +185,3 @@ pub fn admit_named<S: Stage>(stage: &mut S, named: Option<S::Cond>, (record, slo
     stage.guard(admitted, miss)
 }
 
-#[cfg(not(stencil_build))]
-mod glue;
-#[cfg(not(stencil_build))]
-pub use glue::*;

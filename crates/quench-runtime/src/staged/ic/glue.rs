@@ -73,18 +73,16 @@ pub unsafe fn concrete_hinted_own_field_hit<const FORM: u32>(object: &crate::hea
 }
 
 /// The own data value the field cache entry of the site `offset` bytes into `entries` (the
-/// running program's table, `Vm::active_field_entries`) names in `object`, which the object
-/// record table at `records` holds: the interpreter's primary read of a site, `site_own_read`
+/// running program's table, `Vm::active_field_entries`) names in `object`: the interpreter's primary read of a site, `site_own_read`
 /// through `Concrete`, the own arm of the row the stencil build compiles from `site_read`. `None`
 /// where it misses, or the entry names a prototype holder.
 ///
 /// # Safety
-/// `entries` is the table of the running program and `offset` a site's byte offset in it,
-/// `records` the object record reservation of `heap`, whose arena holds the record's run; none outlives the call.
+/// `entries` is the table of the running program and `offset` a site's byte offset in it; it outlives the call.
 #[inline(always)]
-pub unsafe fn concrete_site_own_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+pub unsafe fn concrete_site_own_read(heap: &crate::heap::Heap, entries: u64, object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = crate::staged::Concrete::over(heap);
-    crate::staged::entry::site_own_read(&mut stage, (entries, records), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
+    crate::staged::entry::site_own_read(&mut stage, entries, object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// `site_read` through `Concrete`: own and prototype-held entries alike.
@@ -92,9 +90,9 @@ pub unsafe fn concrete_site_own_read(heap: &crate::heap::Heap, (entries, records
 /// # Safety
 /// As `concrete_site_own_read`.
 #[cfg(test)]
-pub unsafe fn concrete_site_read(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64) -> Option<crate::Value> {
+pub unsafe fn concrete_site_read(heap: &crate::heap::Heap, entries: u64, object: crate::Value, offset: u64) -> Option<crate::Value> {
     let mut stage = crate::staged::Concrete::over(heap);
-    crate::staged::entry::site_read(&mut stage, (entries, records, 0), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
+    crate::staged::entry::site_read(&mut stage, (entries, 0), object.to_bits(), offset, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// The value `object.first.second` reads through the field cache entries `first` and `second`
@@ -104,9 +102,9 @@ pub unsafe fn concrete_site_read(heap: &crate::heap::Heap, (entries, records): (
 /// # Safety
 /// As `concrete_site_own_read`, for both offsets.
 #[inline(always)]
-pub unsafe fn concrete_site_own_chain(heap: &crate::heap::Heap, tables: (u64, u64), object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
+pub unsafe fn concrete_site_own_chain(heap: &crate::heap::Heap, entries: u64, object: crate::Value, offsets: (u64, u64)) -> Option<crate::Value> {
     let mut stage = crate::staged::Concrete::over(heap);
-    crate::staged::entry::site_own_chain(&mut stage, tables, object.to_bits(), offsets, ()).map(crate::value_vec::decode_staged_word)
+    crate::staged::entry::site_own_chain(&mut stage, entries, object.to_bits(), offsets, ()).map(crate::value_vec::decode_staged_word)
 }
 
 /// The store of `value` into the own data field the site's entry `offset` bytes into `entries`
@@ -114,10 +112,10 @@ pub unsafe fn concrete_site_own_chain(heap: &crate::heap::Heap, tables: (u64, u6
 /// write barrier needs no log. False changes nothing.
 ///
 /// # Safety
-/// As `concrete_site_read`, with `heap` the heap whose tables `entries` and `records` are.
+/// As `concrete_site_read`, with `heap` the heap whose table `entries` is.
 #[inline(always)]
 #[cfg(not(stencil_build))]
-pub unsafe fn concrete_site_store(heap: &crate::heap::Heap, (entries, records): (u64, u64), object: crate::Value, offset: u64, value: crate::Value) -> bool {
+pub unsafe fn concrete_site_store(heap: &crate::heap::Heap, entries: u64, object: crate::Value, offset: u64, value: crate::Value) -> bool {
     let mut stage = crate::staged::Concrete::over(heap);
-    crate::staged::entry::site_store(&mut stage, (entries, records), object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
+    crate::staged::entry::site_store(&mut stage, entries, object.to_bits(), offset, (value.to_bits(), true, None), ()).is_some()
 }

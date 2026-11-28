@@ -263,10 +263,6 @@ impl Stage for Concrete {
             }
         }
     }
-    #[inline(always)]
-    fn walk_prototypes(&mut self, records: u64, object: u64, target: u64, max_depth: u32) -> (bool, bool) {
-        super::object::walk_prototypes_loop(self, records, object, target, max_depth)
-    }
     /// The tuned forward search of `vm::wtf16::search` (memchr, the block filter, memmem).
     #[inline(always)]
     fn find_span(&mut self, text: UnitSpan<u64>, needle: UnitSpan<u64>, from: u64) -> (bool, u64) {

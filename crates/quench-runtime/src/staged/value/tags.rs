@@ -24,8 +24,7 @@ pub fn is_direct_object<S: Stage>(stage: &mut S, bits: S::Word) -> S::Cond {
     family_is(stage, bits, ValueLayout::DIRECT_OBJECT_TAG)
 }
 
-/// The id of the object record a direct object reference names, its low half (`Value::direct_object_index`).
-/// The id alone, for a caller that needs the id rather than the record's address (`object::object_record_of`).
+/// The id (granule) of the direct object a reference names, its low half (`Value::direct_object_index`).
 /// Every object-id read goes through here, so R4-B2b changes this one body.
 #[inline(always)]
 pub fn direct_object_id<S: Stage>(stage: &mut S, bits: S::Word) -> S::Word {

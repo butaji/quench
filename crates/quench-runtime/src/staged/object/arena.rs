@@ -2,21 +2,6 @@
 
 use super::*;
 
-/// The id and address of the object record the direct object reference `bits` names, in the
-/// record table at `records`; `miss` for any other word, a live object, or where the VM has no table (zero).
-/// The Cranelift projection of the same read is `ObjectRecord::prove`.
-#[inline(always)]
-#[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`), which includes this file
-pub fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, records: S::Word, miss: S::Miss)
-    -> Option<(S::Word, S::Word)> {
-    let object = super::super::value::is_direct_object(stage, bits);
-    stage.guard(object, miss)?;
-    let present = stage.ne_imm(records, 0u32);
-    stage.guard(present, miss)?;
-    let id = object_record_id_of(stage, bits, miss)?;
-    Some((id, object_record_at(stage, records, id)))
-}
-
 /// The address of the first arena value of the run starting at `start`.
 #[inline(always)]
 pub fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {

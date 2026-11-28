@@ -15,10 +15,7 @@
 
 use super::region::Region;
 use super::field_cache_layout::CLASS_KEY;
-use super::entry::direct_record;
-use super::object::{Form, plain_payload, proto_link};
-use crate::typed_ir::Representation;
-use super::slot_store::store_slot;
+use super::object::plain_payload;
 use super::{StagedRecordSpace, Stage};
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
@@ -60,61 +57,19 @@ fn admitted_gated<S: Stage, const HELD: bool>(stage: &mut S, space: StagedRecord
     Some(payload)
 }
 
-/// Adds `value` at the slot of `edge` to the object record at `record` (id `record_id`) and moves
-/// it to the edge's after-shape, where it holds the before-shape, is extensible and plain, the
-/// store gate admits the write and `form` holds its values; `None` (leaving at `miss`, before any
-/// write) otherwise. The value is written before the shape, so no reader sees a shape without its
-/// slot; the transition retires no shape reader because only an object with extras, which a
-/// prototype or holder has, is read through one.
+/// The compiled site's add of `value` at the slot of `edge` to the object word `object`. An edge keyed by a class
+/// (`Edge::before` carries `CLASS_KEY`, `Transition::edge`) is the live cell's add (`class_add`), and the cell's class
+/// key is the one guard: a cell of another class matches no key and leaves to the VM. A shape-keyed edge names an
+/// object record, and a direct object is a live cell with none, so it leaves at `miss`.
 #[inline(always)]
-pub fn add_property<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
-    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = admitted(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
-    store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
-    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
-    Some(())
-}
-
-/// `add_property` of a value the after-shape's slot observation already holds
-/// (`Heap::add_observation_holds`): the barrier's log alone gates the write (`admitted_gated`).
-#[inline(always)]
-pub fn add_property_held<S: Stage>(stage: &mut S, record: S::Word, record_id: S::Word, edge: Edge<S::Word>,
-    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
-    let payload = admitted_gated::<S, true>(stage, StagedRecordSpace::Object, record, record_id, edge.before, value, miss)?;
-    store_slot(stage, record, payload, edge.slot, form, (value, Representation::Tagged), miss)?;
-    stage.store_u32(Region::ShapeWord.mutable(), record, OBJECT.layout_offset as i32, edge.after);
-    Some(())
-}
-
-/// `add_property` for the object word `object` of the record table at `records`, the way a
-/// compiled site holds it: the word is a direct object (else `None`, leaving at `miss`). An edge
-/// keyed by a class (`Edge::before` carries `CLASS_KEY`, `Transition::edge`) is the live cell's add
-/// (`add_cell_property`); a record edge takes the record, where `link` (an add the prototype chain
-/// can intercept, whose chain proof the code holds as a Stable fact for exactly that prototype) is
-/// the object's prototype link. The chain's own shapes are not read: a change to the layout of a
-/// prototype on it retires the code (`Heap::subscribe_prototype_chain`), so only what varies per
-/// receiver, its link, is tested. The path is the edge's key, a fact of the site, not a test of the
-/// object: a cell whose class is not the edge's key matches no key, so a keyed edge leaves to the VM, and a shape
-/// edge leaves at `direct_record`, as a live cell has no record.
-#[inline(always)]
-pub fn site_add<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, (edge, link): (Edge<S::Word>, Option<S::Word>),
-    form: Form, value: S::Word, miss: S::Miss) -> Option<()> {
+pub fn site_add<S: Stage>(stage: &mut S, object: S::Word, edge: Edge<S::Word>, value: S::Word, miss: S::Miss) -> Option<()> {
     let keyed = edge_keys_class(stage, edge.before);
     stage.choose_leaving(keyed, #[inline(always)] |stage| {
         class_add(stage, object, edge, value, miss)?;
         Some(stage.constant(0))
     }, #[inline(always)] |stage| {
-        let present = stage.ne_imm(records, 0u32);
-        stage.guard(present, miss)?;
-        let (id, record) = direct_record(stage, records, object, miss)?;
-        if let Some(link) = link {
-            let held = proto_link(stage, record);
-            let moved = stage.sub(held, link);
-            let same = stage.eq_imm(moved, 0u32);
-            stage.guard(same, miss)?;
-        }
-        add_property(stage, record, id, edge, form, value, miss)?;
-        Some(stage.constant(0))
+        super::guard::no_record(stage, miss)?;
+        None
     })?;
     Some(())
 }
