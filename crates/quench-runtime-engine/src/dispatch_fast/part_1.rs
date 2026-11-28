@@ -1334,7 +1334,7 @@ pub(super) fn specialize_in_lane(cx: *mut LaneContext, own: &LaneView, function:
         // An image body takes a claimed prologue, whichever entry reached it first: its entry reads the function there.
         if let Some(body) = code.function_get(function as usize) && unsafe { (*own.prologue.get()).handler }.is_null() { own.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow); }
         let published = own.entry_published();
-        let installed = own.install_ahead_lane_body(body_entry_row(), || vm.install_ahead_body(crate::compiled::admission::ahead_unit(), code, function, None, &[]));
+        let installed = own.install_ahead_lane_body(body_entry_row(), || vm.install_ahead_body(crate::compiled::admission::ahead_unit(), code, function, None));
         if !published && own.entry_published() {
             unsafe { super::vm(cx) }.unprove_view_entries(own);
         }
@@ -1371,9 +1371,9 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
         crate::compiled::admission::LaneRoute::Interpreted => return crate::compiled::LaneBodyOutcome::Unpaid,
         // A stencil pick stitches its body at once: it calls the callees its sites recorded by their entries and waits for none.
         crate::compiled::admission::LaneRoute::Base => {
-            let crate::compiled::LaneBodyWork::Start { generic, .. } = &work else { unreachable!("a stencil body never compiles in the background") };
+            let crate::compiled::LaneBodyWork::Start { .. } = &work else { unreachable!("a stencil body never compiles in the background") };
             let unit = match vm.base_unit_or_outcome(code, function, parameters, own) { Ok(unit) => unit, Err(outcome) => return outcome };
-            return vm.base_body_work(unit, code, function, generic, parameters, own, &direct);
+            return vm.base_body_work(unit, code, function, parameters, own, &direct);
         }
         crate::compiled::admission::LaneRoute::Deferred => return crate::compiled::LaneBodyOutcome::Deferred,
         crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
@@ -1391,17 +1391,11 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
 pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite) {
     // A hot loop no region runs makes its function worth a body past the entry warm-up: its
     // calls have run, so their sites have linked, and its next entry runs the loop natively.
-    // A body still warming after the loop's trips asked for it is refused under the body's epoch
-    // (`LoopSite::refuse_warming`): its back edges are plain jumps until the epoch moves or the
-    // wait runs out, so a function whose entries do not advance costs no per-edge checks.
     // SAFETY: the program's views outlive the lane run.
     if crate::compiled::admission::lane_bodies_enrolled(unsafe { vm(cx) })
         && let Some(own) = unsafe { &*(*cx).views }.get(site.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view)
     {
         specialize_in_lane(cx, own, site.function, &[]);
-        // A body the model priced with the loop's work and found unpaid gains nothing from the loop asking
-        // again: the loop retires to its plain jump, which costs no countdown per back edge (TOD-2062).
-        if own.warming() && !own.body_unpaid() { return site.refuse_warming(own, site.tiers.loops.warmup_taken); }
     }
     // SAFETY: as `requicken`: the record lives in an `UnsafeCell` of the running view, and
     // the jump reads its distance from the operand, which the site kept (`LoopSite::jump`).

@@ -483,8 +483,6 @@ pub(crate) mod body_calls;
 pub(crate) mod body_forms;
 pub(crate) mod proven_callees;
 pub(crate) use body_calls::{body_call_helper, body_construct_helper};
-#[path = "lane_leaves.rs"]
-pub(crate) mod lane_leaves;
 #[path = "operand_feedback.rs"]
 pub(crate) mod operand_feedback;
 #[cfg(feature = "jit")]
@@ -496,7 +494,6 @@ use operand_feedback::note_operands;
 pub(crate) mod body_tier_in_lane;
 #[path = "loop_tier.rs"]
 pub(crate) mod loop_tier;
-use lane_leaves::LaneLeaves;
 
 
 use quench_runtime::vm::engine_types::FIXED_ARGUMENT_COPIES;
@@ -3961,10 +3958,6 @@ script_handler! {
         let header = unsafe { ip.byte_offset(site.jump) };
         if script_fuel_out(cx) {
             return safepoint_at(ip, header, Slot::unset());
-        }
-        // A refused compile (`LoopSite::refuse_warming`) is one epoch compare and a countdown: the back edge is a plain jump.
-        if site.refused_now() {
-            next!(cx, r, header, Carried::script_in(cx, view))
         }
         // The header rule (`enter_loop_body`): a ready body first.
         if let Some(attempt) = loop_body::enter_loop_body(cx, r, ip, site) {

@@ -13,10 +13,10 @@ pub(crate) use quench_runtime::vm::engine_types::LoopBody;
 #[cfg(feature = "jit")]
 use crate::compiled::loop_tier_up::raise_tier_up;
 
-use crate::compiled::tier_policy::{LOOP_BODY_ATTEMPTS, LOOP_BODY_REOPTIMIZE, LOOP_BODY_KEEP_SHARE, LOOP_BODY_POLL};
+use crate::compiled::tier_policy::LOOP_BODY_POLL;
 #[quench_macros::ext(LoopBodyOps1)]
 impl LoopBody {
-    pub(crate) const IDLE: Self = Self::Idle { stuck: LaneLeaves::NONE, attempts: 0 };
+    pub(crate) const IDLE: Self = Self::Idle;
 
     /// A new loop site's body. A loop's body runs once per iteration, a loop weight above its function's frequency,
     /// so its predicted tier is a compiled one (`tier_policy::predicted_tier`, which never picks the interpreter
@@ -25,35 +25,12 @@ impl LoopBody {
         if quench_runtime::vm::tier_policy::cranelift_runs() { Self::IDLE } else { Self::Declined }
     }
 
-    /// Records that a run left at `exit`: taken often, where they are few, the leaves are the
-    /// next body's feedback (a failed entry contract drops the contract), until the bodies
-    /// run out.
-    #[cold]
-    fn note_leave(&mut self, exit: LaneExit) {
-        let Self::Ready { runs, exits, leaves, stuck, attempts, .. } = self else { return };
-        *leaves = leaves.with(exit);
-        *exits += 1;
-        if *exits < LOOP_BODY_REOPTIMIZE { return; }
-        let next = stuck.union(*leaves);
-        // Leaves only where the bodies before it left, those places already generic, would
-        // plan the same body again: it stays while most of its runs complete, and its loop
-        // has no body otherwise.
-        if next == *stuck && next != LaneLeaves::Scattered {
-            if u64::from(*exits) * PERCENT > u64::from(*runs) * LOOP_BODY_KEEP_SHARE { *self = Self::Declined; }
-            else { (*exits, *leaves) = (0, LaneLeaves::NONE); }
-            return;
-        }
-        *self = if *attempts + 1 >= LOOP_BODY_ATTEMPTS || next == LaneLeaves::Scattered { Self::Declined }
-            else { Self::Idle { stuck: next, attempts: *attempts + 1 } };
-    }
-
     /// The body to run, if it is ready.
     fn ready(&mut self) -> Option<std::rc::Rc<crate::compiled::LaneMethod>> {
         match self {
-            Self::Ready { method, runs, stuck, attempts, .. } => {
+            Self::Ready { method } => {
                 let ready = method.lease();
-                *runs = runs.saturating_add(1);
-                if ready.is_none() { *self = Self::Idle { stuck: *stuck, attempts: *attempts }; }
+                if ready.is_none() { *self = Self::Idle; }
                 ready
             }
             Self::Compiling { wait, .. } if *wait > 0 => { *wait -= 1; None }
@@ -61,12 +38,12 @@ impl LoopBody {
         }
     }
 
-    /// The state after the work for the body (`outcome`), which `stuck` and `attempts` planned.
-    fn after(outcome: LaneBodyOutcome, stuck: LaneLeaves, attempts: u8) -> Self {
+    /// The state after the work for the body (`outcome`).
+    fn after(outcome: LaneBodyOutcome) -> Self {
         match outcome {
-            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL, stuck, attempts },
-            LaneBodyOutcome::Published(method) => Self::Ready { method, runs: 0, exits: 0, leaves: LaneLeaves::NONE, stuck, attempts },
-            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Self::Idle { stuck, attempts },
+            LaneBodyOutcome::Compiling(pending) => Self::Compiling { pending, wait: LOOP_BODY_POLL },
+            LaneBodyOutcome::Published(method) => Self::Ready { method },
+            LaneBodyOutcome::Stale | LaneBodyOutcome::Deferred => Self::Idle,
             // The predicted tier is the interpreter's pick, fixed by the program: the loop runs interpreted for good.
             LaneBodyOutcome::Declined | LaneBodyOutcome::Short | LaneBodyOutcome::Unpaid => Self::Declined,
         }
@@ -134,9 +111,9 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
     let mut body = site.body.borrow_mut();
-    let (pending, stuck, attempts) = match std::mem::replace(&mut *body, LoopBody::Declined) {
-        LoopBody::Compiling { pending, stuck, attempts, .. } => (Some(pending), stuck, attempts),
-        LoopBody::Idle { stuck, attempts } => (None, stuck, attempts),
+    let pending = match std::mem::replace(&mut *body, LoopBody::Declined) {
+        LoopBody::Compiling { pending, .. } => Some(pending),
+        LoopBody::Idle => None,
         settled => { *body = settled; return; }
     };
     let function = site.function;
@@ -149,10 +126,10 @@ fn plan_loop_body(cx: *mut LaneContext, own: &LaneView, site: &LoopSite) {
     let direct = |vm: &Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     let work = match pending {
         Some(pending) => LaneBodyWork::Poll(pending),
-        None => LaneBodyWork::Start { generic: &stuck.listed(), called: false, caller: own },
+        None => LaneBodyWork::Start { called: false, caller: own },
     };
     let outcome = vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, Some(site.header));
-    *body = LoopBody::after(outcome, stuck, attempts);
+    *body = LoopBody::after(outcome);
     if matches!(*body, LoopBody::Ready { .. }) { raise_tier_up(vm, site); }
     }
 }
@@ -195,8 +172,7 @@ fn run_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: &LoopSite) ->
     unsafe { (*cx).callee_warming = false };
     // A failed entry contract resumes at the loop's header, not at the function's first record.
     let resume = if exit.entered_nothing() { LaneExit::At(site.header as usize) } else { exit };
-    let (resumed, _) = body_left_in_lane(cx, r, own, &method, resume);
-    if resume.inside(site.header..=site.backedge) { site.body.borrow_mut().note_leave(exit); }
+    let resumed = body_left_in_lane(cx, r, own, &method, resume);
     drop(method);
     if site.diagnostics { site.body_runs.set(site.body_runs.get().saturating_add(1)); }
     Some(loop_attempt(cx, ip, resumed))

@@ -4,8 +4,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use quench_runtime::vm::tier_machine::{TierEvent, TierState};
-use super::{Handler, LaneBody, LaneLeaves, LaneView, Tiers};
-use quench_runtime::vm::tier_policy::PERCENT;
+use super::{Handler, LaneBody, LaneView, Tiers};
 use crate::compiled::LaneExit;
 
 pub(crate) use quench_runtime::vm::engine_types::LaneBodyHistory;
@@ -18,20 +17,6 @@ pub(crate) mod specialize;
 /// completions inside those runs are bounded by the caller's, so the credit lags by fewer than this.
 const NATIVE_CREDIT_RUNS: u64 = 64;
 
-/// What a body whose leaves reached the reoptimization threshold does next: it specializes
-/// again, these places generically, until `max_recompiles` bodies have; the last of them has
-/// every place any body left at generic, and is permanent. A body never retires to the lane.
-fn verdict(tiers: &Tiers, completed: bool, recompiles: u8, leaves: LaneLeaves, stuck: LaneLeaves) -> Option<LaneLeaves> {
-    // A body no run of which completed leaves at the places its recompile would too: only a
-    // body that has run natively learns anything from its leaves.
-    if !completed { return None; }
-    // Leaves only where the predecessors' bodies left, and those places already generic,
-    // would plan the same body again: it stays.
-    let nothing_new = leaves != LaneLeaves::Scattered && stuck != LaneLeaves::Scattered
-        && leaves.exits().all(|exit| stuck.exits().any(|known| known == exit));
-    (recompiles < tiers.lane_body.max_recompiles && !(recompiles > 0 && nothing_new)).then(|| stuck.union(leaves))
-}
-
 /// Credits the callees `method`'s body calls natively with `NATIVE_CREDIT_RUNS` completions
 /// (a bound, as the caller's completed runs need not reach each call).
 fn credit_native_callees(method: &quench_runtime::vm::engine_types::PublishedLaneMethod) {
@@ -42,29 +27,6 @@ fn credit_native_callees(method: &quench_runtime::vm::engine_types::PublishedLan
     }
 }
 
-/// The function a leave at `exit` is in (`None`: the body's own) and its PC, for a leave that
-/// has an instruction.
-fn leave_place(exit: LaneExit, method: &quench_runtime::vm::engine_types::PublishedLaneMethod) -> Option<(Option<u32>, usize)> {
-    match exit {
-        LaneExit::At(pc) => Some((None, pc)),
-        LaneExit::Inlined { frame, pc } => method.lease().and_then(|method| method.inlined.get(frame).map(|call| (Some(call.target.function), pc as usize))),
-        _ => None,
-    }
-}
-
-/// Names the place of a leave at `exit` among the body's, and hands a place it had not named to
-/// `left_new` once. A scattered body names none.
-fn name_leave(leaves_at: &std::cell::Cell<LaneLeaves>, exit: LaneExit, method: &quench_runtime::vm::engine_types::PublishedLaneMethod, left_new: impl FnOnce((Option<u32>, usize))) {
-    // SAFETY: the cell is read in place and nothing writes it meanwhile.
-    let seen = match unsafe { &*leaves_at.as_ptr() } {
-        LaneLeaves::Few(named) => named.contains(&Some(exit)),
-        LaneLeaves::Scattered => true,
-    };
-    if seen { return; }
-    leaves_at.set(leaves_at.get().with(exit));
-    if leaves_at.get() != LaneLeaves::Scattered && let Some(place) = leave_place(exit, method) { left_new(place); }
-}
-
 #[quench_macros::ext(LaneViewOpsX1)]
 impl LaneView {
     /// Whether the view's body is retired to `Declined` (`LaneBody::Declined`): a call of the view has no body to enter.
@@ -73,60 +35,18 @@ impl LaneView {
         matches!(unsafe { &*self.tier().tier_lane.get() }, LaneBody::Declined)
     }
 
-    /// Whether a leave at `exit` resumed in a direct callee's own body, `ran`, which the frame ran rather than the
-    /// root body (`root`) and which is still its current one: that leave takes the verdict its own runs' leaves
-    /// take (`note_lane_body_end`), so a body that leaves at every native call recompiles, or is retired to the
-    /// interpreter, as one the interpreter enters would.
-    fn left_own_body(&self, root: Option<&crate::compiled::LaneMethod>, ran: Option<&crate::compiled::LaneMethod>, exit: LaneExit) -> bool {
-        ran.is_some_and(|ran| !root.is_some_and(|root| std::ptr::eq(root, ran))
-            && exit.at_place()
-            && self.body_view_in_lane().is_some_and(|current| std::ptr::eq(&*current, ran)))
-    }
-
-    /// `left`, the place a leave at `exit` resumed, once the leave's activation is made: a leave in a direct callee's own
-    /// body (`left_own_body`) is noted as that body's (`note_body_end_in_lane`), which its retirement may not outlive.
-    pub(crate) fn resumed_leave<T>(&self, cx: *mut crate::dispatch_fast::LaneContext, (root, ran): (Option<&crate::compiled::LaneMethod>, Option<&crate::compiled::LaneMethod>), exit: LaneExit, left: T) -> T {
-        if self.left_own_body(root, ran, exit) { crate::dispatch_fast::note_body_end_in_lane(cx, self, exit, |_| {}); }
-        left
-    }
-
-    /// Counts how a run of the specialized body ended, at `exit`; at
-    /// `self.tiers.lane_body.reoptimize_exits` leaves, doubled per recompile, it takes its
-    /// `verdict`. A body it compiles past keeps its code for the direct callers that name it.
-    /// Whether the run retired the body.
-    pub(crate) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool, left_new: impl FnOnce((Option<u32>, usize))) -> bool {
+    /// Counts how a run of the specialized body ended, at `exit`: a completed run is the body's
+    /// evidence of completion. A leave is a deoptimization to the interpreter at its place; it
+    /// feeds no decision about the body.
+    pub(crate) fn note_lane_body_end(&self, exit: LaneExit, completed_region: bool) {
         // SAFETY: as `lane_body`; the run that ended has finished, and nothing reads its body.
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        let LaneBody::Specialized { leaves_at, completed, recompiles, stuck, method, .. } = body else { return false };
+        let LaneBody::Specialized { completed, method, .. } = body else { return };
         if completed_region || exit.completes() {
             completed.set(true);
             let completions = self.entry.note_completions(1);
             if completions % NATIVE_CREDIT_RUNS == 0 { credit_native_callees(method); }
-            return false;
         }
-        let exits = self.entry.note_leave();
-        name_leave(leaves_at, exit, method, left_new);
-        // An ahead image's body is the ladder's first body: it reoptimizes on its leaves as a JIT body does.
-        // Leaves past the first `reoptimize_exits` that exceed `reoptimize_share` percent of the runs.
-        let (completions, _) = self.entry.evidence();
-        let (leaves, runs) = (exits, exits + completions);
-        if exits < u64::from(self.tiers.lane_body.reoptimize_exits) || leaves * PERCENT <= runs * u64::from(self.tiers.lane_body.reoptimize_share) {
-            return false;
-        }
-        let Some(stuck) = verdict(self.tiers, completed.get(), *recompiles, leaves_at.get(), *stuck) else {
-            // A body that keeps leaving where no other body would, and has never completed a
-            // run, gains nothing from its entry: its function runs in the lane again.
-            let costly = runs >= u64::from(self.tiers.lane_body.retire_after_runs) && leaves * PERCENT > runs * u64::from(self.tiers.lane_body.retire_share);
-            if !completed.get() || costly {
-                self.retire_body(body, LaneBody::Declined);
-                self.release_from_tier();
-                return true;
-            }
-            return false;
-        };
-        let next = LaneBody::Unspecialized { recompiles: *recompiles + 1, stuck };
-        self.retire_body(body, next);
-        true
     }
 
     /// Counts a leave inside this function's body that a native caller's run made, which no
@@ -147,7 +67,7 @@ impl LaneView {
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         if history.short && !history.demanded && matches!(body, LaneBody::Declined) {
             self.tier().history.set(LaneBodyHistory { demanded: true, ..history });
-            *body = LaneBody::Unspecialized { recompiles: 0, stuck: LaneLeaves::NONE };
+            *body = LaneBody::Unspecialized { recompiles: 0 };
             self.reclaim_for_tier();
         }
         self.warming()
@@ -180,7 +100,7 @@ impl LaneView {
         // SAFETY: as `demand_body`; the lane runs no body of this view here (it has none).
         let body = unsafe { &mut *self.tier().tier_lane.get() };
         if (history.short || history.unpaid) && matches!(body, LaneBody::Declined) {
-            *body = LaneBody::Unspecialized { recompiles: 0, stuck: LaneLeaves::NONE };
+            *body = LaneBody::Unspecialized { recompiles: 0 };
             self.reclaim_for_tier();
         }
     }
@@ -236,12 +156,12 @@ impl LaneView {
     pub(crate) fn respecialize(&self) {
         let history = self.tier().history.get();
         let body = unsafe { &mut *self.tier().tier_lane.get() };
-        let LaneBody::Specialized { tier_prologue, recompiles, stuck, .. } = body else { return };
+        let LaneBody::Specialized { tier_prologue, recompiles, .. } = body else { return };
         if history.callee_recompiles >= self.tiers.lane_body.max_callee_recompiles { return; }
         let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory { callee_recompiles: history.callee_recompiles + 1, late_calls: 0, ..history });
         unsafe { (*self.prologue.get()).handler = *tier_prologue };
-        let next = LaneBody::Unspecialized { recompiles: *recompiles, stuck: *stuck };
+        let next = LaneBody::Unspecialized { recompiles: *recompiles };
         let body_state = body.tier_state();
         let LaneBody::Specialized { method, .. } = std::mem::replace(body, next) else { unreachable!() };
         quench_runtime::vm::tier_machine::withdraw(&self.entry, body_state, TierEvent::Demote);
@@ -256,7 +176,7 @@ impl LaneView {
     }
 
     /// The body a just published method makes of this view.
-    pub(crate) fn specialized(&self, entry: Handler, method: std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>, tier: quench_runtime::vm::tier_policy::Tier, recompiles: u8, stuck: LaneLeaves) -> LaneBody {
+    pub(crate) fn specialized(&self, entry: Handler, method: std::rc::Rc<quench_runtime::vm::engine_types::PublishedLaneMethod>, tier: quench_runtime::vm::tier_policy::Tier, recompiles: u8) -> LaneBody {
         // A body whose entry would not pay for itself serves native callers only
         // (`body_call_helper`, direct calls); the lane's own entries keep the records, and it
         // has no trial to run.
@@ -275,8 +195,7 @@ impl LaneView {
             quench_runtime::vm::tier_machine::publish(&self.entry, TierState::Compiling, tier, &method);
         }
         self.entry.reset_evidence();
-        LaneBody::Specialized { method, tier_prologue,
-            leaves_at: Cell::new(LaneLeaves::NONE), completed: Cell::new(false), recompiles, stuck }
+        LaneBody::Specialized { method, tier_prologue, completed: Cell::new(false), recompiles }
     }
 }
 

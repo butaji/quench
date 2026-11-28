@@ -9,10 +9,8 @@ mod mru_chain;
 mod shape_edits;
 pub(super) use mru_chain::MRU_CHAIN_END;
 use mru_chain::record_mru_entry;
-/// The slot word of a stored field entry: the slot in the low half, a store class in byte 2
-/// (`general_store`), and in byte 3 how many places of a lane body's leaves named the site
-/// (`Vm::note_field_leave`), written on that path only and kept across refills.
-pub(super) const FIELD_LEAVES_SHIFT: u32 = 24;
+/// The slot word of a stored field entry: the slot in the low half, and a store class in byte 2
+/// (`general_store`).
 pub const FIELD_BYTE: u32 = 0xff;
 
 #[cfg(test)]
@@ -5555,16 +5553,6 @@ impl Vm {
                 .and_then(|object| self.heap.property_get_ref(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
-    /// How many runs of a lane body left at the site since its record was last reset,
-    /// saturating at 255: the site's instability (byte 3 of its slot word, `FIELD_LEAVES_SHIFT`).
-    pub fn field_site_leaves(&self, site: usize) -> u8 {
-        (self.field_caches.stored(site).slot >> FIELD_LEAVES_SHIFT) as u8
-    }
-    pub fn record_field_leave(&mut self, site: usize) {
-        if !self.field_cache_records(site) { return; }
-        let word = &mut self.field_caches.stored_mut(site).slot;
-        if *word >> FIELD_LEAVES_SHIFT != FIELD_BYTE { *word += 1 << FIELD_LEAVES_SHIFT; }
-    }
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
         if !self.field_cache_records(site) {
             return;
@@ -5598,17 +5586,13 @@ impl Vm {
         }
         self.set_primary_field_cache(site, cache);
     }
-    /// Makes `cache` the site's primary entry, keeping its leave count. The primary entry is the
+    /// Makes `cache` the site's primary entry. The primary entry is the
     /// one the specializers' site rows read (`staged::entry::site_read`), so it is always the
     /// latest the interpreter resolved: a receiver whose shape moved on is read natively again
     /// after one leave, where a primary entry pinned to the first shape left on every read.
     /// The megamorphic set, which holds every entry, still answers the interpreter's misses.
     fn set_primary_field_cache(&mut self, site: usize, cache: FieldCache) {
-        let leaves = self.field_site_leaves(site);
         self.field_caches.set(site, cache);
-        if leaves != 0 {
-            self.field_caches.stored_mut(site).slot |= u32::from(leaves) << FIELD_LEAVES_SHIFT;
-        }
     }
     #[inline(always)]
     pub(super) fn megamorphic_field_cache(

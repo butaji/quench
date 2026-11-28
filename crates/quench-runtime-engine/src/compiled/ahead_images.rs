@@ -446,13 +446,13 @@ impl Vm {
     /// `function`'s body from the loaded images for this program, published as its lane body,
     /// linked to this VM at the address it runs. An image's base body installs nothing (`fbits9`):
     /// a function whose lane body this VM cannot take runs its records in the general loop.
-    pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>, generic: &[LaneExit]) -> Option<Rc<PublishedLaneMethod>> {
+    pub(crate) fn install_ahead_body(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, entry: Option<u32>) -> Option<Rc<PublishedLaneMethod>> {
         // The unit is the gate's proof that the specializer cleared `function` (`admission::ahead_unit`).
         let _ = unit;
         // Native code reads slot representations, which the runtime keeps from its first compile on.
         let traced = quench_runtime::trace::Channel::AotLanes.on();
-        if entry.is_some() || !generic.is_empty() {
-            if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}, {} generic leaves", generic.len()); }
+        if entry.is_some() {
+            if traced { eprintln!("aot-lanes: install function {function}: refused, entry {entry:?}"); }
             return None;
         }
         let Some(images) = self.programs.ahead_images(self.active_program, program) else {

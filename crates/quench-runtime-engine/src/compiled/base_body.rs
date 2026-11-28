@@ -103,10 +103,6 @@ pub(super) unsafe extern "C" fn value_step(_vm: u64, _residual: u64, context: u6
     status
 }
 
-fn widened(generic: &[LaneExit]) -> Vec<usize> {
-    generic.iter().filter_map(|exit| match exit { LaneExit::At(pc) => Some(*pc), _ => None }).collect()
-}
-
 #[quench_macros::ext(LaneMethodOps2)]
 impl LaneMethod {
     /// The lane body `body`'s code makes of `function`, published to executable memory. It names
@@ -264,20 +260,20 @@ impl Vm {
     }
 
     /// `base_body_work` for `function`, whose `unit` the gate cleared (`base_unit_or_outcome`).
-    pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
+    pub(crate) fn base_body_work(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         // An execution-only build (no `jit`) stitches no stencil body.
         #[cfg(not(feature = "jit"))]
         {
-            let _ = (unit, program, function, generic, parameters, caller, direct);
+            let _ = (unit, program, function, parameters, caller, direct);
             return LaneBodyOutcome::Declined;
         }
         #[cfg(feature = "jit")]
-        self.base_body_work_compiled(unit, program, function, generic, parameters, caller, direct)
+        self.base_body_work_compiled(unit, program, function, parameters, caller, direct)
     }
 
     #[cfg(feature = "jit")]
-    fn base_body_work_compiled(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, generic: &[LaneExit], parameters: &[Value],
+    fn base_body_work_compiled(&mut self, unit: super::admission::CompiledUnit, program: &ResidualProgram, function: u32, parameters: &[Value],
         caller: &crate::dispatch_fast::LaneView, direct: &dyn Fn(&Self) -> Vec<DirectCandidates>) -> LaneBodyOutcome {
         let _ = unit;
         let Some(body) = program.function_get(function as usize) else { return LaneBodyOutcome::Declined };
@@ -312,12 +308,11 @@ impl Vm {
             classes: if folds { classes.as_slice() } else { &[] },
             shapes: &[],
         };
-        let speculated = widened(generic);
         // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
         let typed: Vec<_> = self.aot_facts_of(program)
             .map(|aot| { let facts = aot.function_facts(function); (region.header..=region.backedge).map(|pc| facts.element_view(pc)).collect() })
             .unwrap_or_default();
-        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &speculated, seen: &seen, kinds: &[], typed: &typed };
+        let spec = BodySpec { function, registers: body.registers, known, realm: Some(self.realm_proof()), widened: &[], seen: &seen, kinds: &[], typed: &typed };
         // SAFETY: the callees' views and entry cells outlive the body that owns them (`DirectCallee`).
         let Ok(built) = (unsafe { build_body(&region, &spec, &callees, super::process_lane_helpers()) }) else { return LaneBodyOutcome::Declined };
         self.publish_base_body(built, (function, body.registers), callees, (region.instructions(), invalidation), caller)

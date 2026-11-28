@@ -996,8 +996,6 @@ pub struct LaneMethod {
 pub struct LaneTier {
     /// The frameless body the prologue runs once the JavaScript tier declined the function (`Vm::compile_lane_method`).
     pub tier_lane: std::cell::UnsafeCell<LaneBody>,
-    /// Counts specialization attempts (`specialize_lane_body`); a refused loop compile retries once it moves.
-    pub body_epoch: std::cell::Cell<u32>,
     /// Every body it published, kept until the view drops: a retired body's frame leaves through `Activation::body`.
     pub pinned: std::cell::RefCell<Vec<std::rc::Rc<LaneMethod>>>,
     /// What its bodies cost and earned so far (`LaneBodyHistory`).
@@ -1065,13 +1063,7 @@ pub struct LoopSite {
     pub body: std::cell::RefCell<LoopBody>,
     /// Whether a call boundary no region runs made the loop a body's (`loop_body::offer_body`).
     pub body_offered: std::cell::Cell<bool>,
-    /// The body epoch (`LaneView::body_epoch`) a refused compile was refused under, and the back
-    /// edges still plain under it, and the wait that last refusal set (`LoopSite::refuse_warming`).
-    pub refused_epoch: std::cell::Cell<u32>,
     /// The view that refused it: the site lies in that view, so its epoch is read through this pointer.
-    pub refused_view: std::cell::Cell<*const LaneView>,
-    pub refused_wait: std::cell::Cell<u32>,
-    pub refused_span: std::cell::Cell<u32>,
     /// Whether an enclosing admitted loop still enters (`LoopSite::inside_admitted_loop`); false once none does.
     pub enclosed: std::cell::Cell<bool>,
 }
@@ -1578,16 +1570,14 @@ pub const JS_IMPORT_ARGUMENTS: usize = 8;
 /// moves a body that names shape IDs back to `Unspecialized`.
 pub enum LaneBody {
     /// Waiting for its next entry to specialize (a function predicted to run in the interpreter stays here at its
-    /// first entry, and runs in the interpreter); `recompiles` bodies before it left too often for
-    /// their feedback (`LaneView::note_lane_body_end`), the last of them, where `stuck`, at those few
-    /// leaves only.
-    Unspecialized { recompiles: u8, stuck: LaneLeaves },
+    /// first entry, and runs in the interpreter).
+    Unspecialized { recompiles: u8 },
     /// Its body's code compiling on the code generator's thread; the function runs in the
     /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
     /// as far apart after each of its `looks`, up to `TIERS.lane_body.compile_poll_interval`:
     /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
     /// one pays few looks. `wait` counts the entries left before the next.
-    Compiling { pending: Box<dyn std::any::Any>, wait: std::cell::Cell<u16>, looks: u8, recompiles: u8, stuck: LaneLeaves },
+    Compiling { pending: Box<dyn std::any::Any>, wait: std::cell::Cell<u16>, looks: u8, recompiles: u8 },
     /// The body its prologue record enters directly (`body_entry_in_lane`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -1595,15 +1585,9 @@ pub enum LaneBody {
     Specialized {
         method: std::rc::Rc<PublishedLaneMethod>,
         tier_prologue: *const (),
-        /// Its leaves' places (`LaneLeaves`); the counts of its leaves and completed runs since
-        /// it specialized live in its entry cell (`EntryCell::evidence`), toward
-        /// `TIERS.lane_body.reoptimize_exits` and `TIERS.lane_body.reoptimize_share`.
-        leaves_at: std::cell::Cell<LaneLeaves>,
         /// Whether a run of it completed, natively called ones included.
         completed: std::cell::Cell<bool>,
         recompiles: u8,
-        /// Its predecessor's few leaves, where it left only there.
-        stuck: LaneLeaves,
     },
     Declined,
 }
@@ -1662,15 +1646,13 @@ pub type LeafForm = crate::staged::call_leaf::LeafForm;
 
 /// What a loop site has of its body.
 pub enum LoopBody {
-    /// Not yet compiled: where its earlier bodies' leaves went (`stuck`) is the next one's
-    /// feedback, over `attempts` bodies.
-    Idle { stuck: LaneLeaves, attempts: u8 },
+    /// Not yet compiled.
+    Idle,
     /// Its code compiling on the code generator's thread; `wait` counts the backedges left
     /// before the next look.
-    Compiling { pending: Box<dyn std::any::Any>, wait: u16, stuck: LaneLeaves, attempts: u8 },
-    /// `exits` counts its runs that left inside the loop, and `leaves` says where they went.
-    /// `runs` counts its runs, those that left inside the loop among them.
-    Ready { method: std::rc::Rc<PublishedLaneMethod>, runs: u32, exits: u16, leaves: LaneLeaves, stuck: LaneLeaves, attempts: u8 },
+    Compiling { pending: Box<dyn std::any::Any>, wait: u16 },
+    /// Its code, which a run enters at the loop's header.
+    Ready { method: std::rc::Rc<PublishedLaneMethod> },
     Declined,
 }
 
@@ -2023,12 +2005,6 @@ pub struct Inlining {
     pub latch: u32,
 }
 
-/// Where a specialized body's leaves went: at few exits, each once named, or scattered.
-#[derive(Clone, Copy, PartialEq)]
-pub enum LaneLeaves {
-    Few([Option<LaneExit>; LANE_LEAVE_SITES]),
-    Scattered,
-}
 
 
 /// A read a call site's memo makes (`MemoRead`): its field steps as copies of the field
@@ -2230,9 +2206,6 @@ pub struct JsStepDispatch {
     pub stop_pc: usize,
 }
 
-/// The most distinct places a body's leaves may go for them to be its specialization's
-/// feedback; past them they are scattered.
-pub const LANE_LEAVE_SITES: usize = 4;
 
 /// Where a lane body leaves: at a PC of its own function, or at a PC of an inlined callee
 /// whose activation the lane then makes (`Vm::body_inlined_activation_in_lane`).
@@ -5292,20 +5265,19 @@ impl LaneView {
     #[inline]
     pub fn called_by_bodies(&self) -> bool { !self.tier().callers.borrow().is_empty() || self.tier().history.get().demanded }
 
-    /// A specialized body that went at a lifecycle edge warms again from the start, keeping
-    /// where it and its predecessors left, and its recompiles, as its successor's feedback: a call site's behavior
+    /// A specialized body that went at a lifecycle edge warms again from the start: a call site's behavior
     /// outlives the shape ids the edge renumbered. One no run of which completed counts as
     /// wasted (`LaneBodyHistory`).
     pub fn drop_body(&self, body: &mut LaneBody) {
-        let LaneBody::Specialized { leaves_at, stuck, recompiles, .. } = body else { return };
-        let (stuck, recompiles) = (stuck.union(leaves_at.get()), *recompiles);
+        let LaneBody::Specialized { recompiles, .. } = body else { return };
+        let recompiles = *recompiles;
         let history = self.tier().history.get();
         self.tier().history.set(LaneBodyHistory {
             lifetimes: history.lifetimes.saturating_add(1),
             ..history
         });
         super::tier_machine::withdraw(&self.entry, body.tier_state(), TierEvent::Demote);
-        *body = LaneBody::Unspecialized { recompiles, stuck };
+        *body = LaneBody::Unspecialized { recompiles };
     }
 }
 
@@ -5338,8 +5310,7 @@ pub fn recorded() -> std::sync::MutexGuard<'static, Option<Recording>> { RECORDE
 impl Default for LaneTier {
     fn default() -> Self {
         Self {
-            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { recompiles: 0, stuck: LaneLeaves::NONE }),
-            body_epoch: std::cell::Cell::new(0),
+            tier_lane: std::cell::UnsafeCell::new(LaneBody::Unspecialized { recompiles: 0 }),
             pinned: std::cell::RefCell::default(),
             history: Default::default(),
             body_stats: LaneBodyStats::default(),
@@ -5365,16 +5336,6 @@ impl LaneBody {
     }
 }
 
-impl LaneLeaves {
-
-    pub const NONE: Self = Self::Few([None; LANE_LEAVE_SITES]);
-
-    /// These and `other`'s exits together.
-    #[inline]
-    pub fn union(self, other: Self) -> Self {
-        other.exits().fold(self, Self::with)
-    }
-}
 
 
 
@@ -5388,26 +5349,6 @@ impl EntryCell {
     }
 }
 
-impl LaneLeaves {
-
-    #[inline]
-
-    pub fn with(self, exit: LaneExit) -> Self {
-        let Self::Few(mut exits) = self else { return self };
-        if exits.contains(&Some(exit)) { return self; }
-        match exits.iter_mut().find(|slot| slot.is_none()) {
-            Some(slot) => { *slot = Some(exit); Self::Few(exits) }
-            None => Self::Scattered,
-        }
-    }
-
-    /// The exits these name: none where scattered.
-    #[inline]
-    pub fn exits(&self) -> impl Iterator<Item = LaneExit> + '_ {
-        let exits: &[_] = match self { Self::Few(exits) => exits, Self::Scattered => &[] };
-        exits.iter().flatten().copied()
-    }
-}
 
 /// The halves of a cell's counters word.
 pub const EVIDENCE: Evidence = Evidence { half_bits: u32::BITS };

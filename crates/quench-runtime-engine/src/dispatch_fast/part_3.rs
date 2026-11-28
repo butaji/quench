@@ -776,20 +776,19 @@ pub(super) fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this: bool) -> 
 /// the activation (no leave to resolve, no frame to materialize), any other leave resumes
 /// where it names (`body_left_in_lane`).
 #[inline(always)]
-pub(super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit, function: u32) -> Resumed {
+pub(super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit) -> Resumed {
     let base = unsafe { (*cx).base };
     if let crate::compiled::LaneExit::Returned { pc, value } = left {
         record_end_in_lane(cx, own, method, left);
         // SAFETY: as `leave_counts_in_lane`; a completed run carries no warming callee.
         unsafe { (*cx).callee_warming = false };
-        note_body_end_in_lane(cx, own, left, |_| {});
+        note_body_end_in_lane(cx, own, left);
         // SAFETY: the record that completes the activation is one of its function's.
         return returned_in_lane(cx, unsafe { base.add(pc) }, value);
     }
     let counts = leave_counts_in_lane(cx, left);
-    let (resumed, feedback) = body_left_in_lane(cx, r, own, method, left);
-    // Counted once the leave is resolved: a retirement or reoptimization moves the body.
-    if counts { note_body_end_in_lane(cx, own, feedback, |left| note_leave_in_lane(cx, function, left)) } else { note_warming_leave_in_lane(cx, own) }
+    let resumed = body_left_in_lane(cx, r, own, method, left);
+    if counts { note_body_end_in_lane(cx, own, left) } else { note_warming_leave_in_lane(cx, own) }
     body_resumed_in_lane(cx, ip, resumed)
 }
 
@@ -1147,10 +1146,8 @@ pub(super) fn record_end_in_lane(cx: *mut LaneContext, own: &LaneView, method: &
 
 /// `LaneView::note_lane_body_end`, counting the retirement it makes in the VM's tier events.
 #[inline(always)]
-pub(super) fn note_body_end_in_lane(cx: *mut LaneContext, own: &LaneView, exit: crate::compiled::LaneExit, left_new: impl FnOnce((Option<u32>, usize))) {
-    if own.note_lane_body_end(exit, false, left_new) {
-        unsafe { vm(cx) }.programs.tier_events().record(Event::Retired);
-    }
+pub(super) fn note_body_end_in_lane(cx: *mut LaneContext, own: &LaneView, exit: crate::compiled::LaneExit) {
+    own.note_lane_body_end(exit, false);
 }
 
 /// Counts an entry whose body the lane could not leave inside of (`body_admits_in_lane`): in the VM's
@@ -1169,16 +1166,15 @@ pub(super) fn body_left_in_lane(
     own: &LaneView,
     method: &crate::compiled::LaneMethod,
     exit: crate::compiled::LaneExit,
-) -> (LaneBodyLeft, crate::compiled::LaneExit) {
+) -> LaneBodyLeft {
     record_end_in_lane(cx, own, method, exit);
     if exit == crate::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
         // native frames instead of materializing stale homes for guest execution.
         native_frames::discard_frames(cx);
-        return (LaneBodyLeft::Terminated, exit);
+        return LaneBodyLeft::Terminated;
     }
-    let feedback = method.feedback(exit, unsafe { &*(*cx).code });
-    (frames_resumed_in_lane(cx, r, (own, Some(method)), exit), feedback)
+    frames_resumed_in_lane(cx, r, (own, Some(method)), exit)
 }
 
 /// The activation a leave resumes in: the one the leaving body ran in for a native call's callee, else
@@ -1215,7 +1211,7 @@ pub(super) fn frames_resumed_in_lane(
     let (r, own, method) = resumed_activation_in_lane(cx, r, (own, root), callee);
     // SAFETY: the running activation's records start at the context's base.
     let base = unsafe { (*cx).base };
-    own.resumed_leave(cx, (root, method), exit, match exit.resumed() {
+    match exit.resumed() {
         // SAFETY: the record that raised is one of the activation's function.
         crate::compiled::LaneExit::Threw { pc } => LaneBodyLeft::Raised(unsafe { base.add(pc) }),
         crate::compiled::LaneExit::Terminated | crate::compiled::LaneExit::Entry | crate::compiled::LaneExit::Stub => unreachable!("termination leaves before recovery; an entry leave or an unentered call resumes at its first record"),
@@ -1237,7 +1233,7 @@ pub(super) fn frames_resumed_in_lane(
         }
         // SAFETY: the record that completes the activation is one of its function's.
         crate::compiled::LaneExit::Returned { pc, value } => LaneBodyLeft::Completed(unsafe { base.add(pc) }, value),
-    })
+    }
 }
 
 /// Reloads the heap bases the running body's rows read through the payload (`Vm::refresh_body_bases`), as
@@ -1497,12 +1493,12 @@ pub(super) fn cell_body_ended_in_lane(
             vm(cx).lane_stack.values.set_top(window.0);
         }
         record_end_in_lane(cx, own, method, exit);
-        note_body_end_in_lane(cx, own, exit, |_| {});
+        note_body_end_in_lane(cx, own, exit);
         let (registers, next) = complete_leaf_in_lane(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
         return Resumed::At(registers, next, Carried::script(cx));
     }
     materialize_running_leaf_in_lane(cx);
-    body_concluded_in_lane(cx, window, own.start(), own, method, exit, function)
+    body_concluded_in_lane(cx, window, own.start(), own, method, exit)
 }
 
 /// The window of `target`'s plain activation at the lane stack's top, holding the `argc`

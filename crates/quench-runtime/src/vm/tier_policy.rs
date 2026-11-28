@@ -484,16 +484,6 @@ pub const LANE_ENTRY_MIN_RUN: usize = 3;
 /// context.
 pub const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
 
-// Loop sites (dispatch_fast/loop_body, loop_runs): body planning, entry backoff
-/// The bodies a loop site plans, each from its predecessors' leaves.
-pub const LOOP_BODY_ATTEMPTS: u8 = 4;
-
-/// The runs of a loop's body that leave inside the loop before the next body plans around them.
-pub const LOOP_BODY_REOPTIMIZE: u16 = 16;
-
-/// The share of a loop body's runs, in percent, that may leave inside the loop for it to stay.
-pub const LOOP_BODY_KEEP_SHARE: u64 = 10;
-
 /// The backedges between looks for a loop body's compiling code.
 pub const LOOP_BODY_POLL: u16 = 16;
 

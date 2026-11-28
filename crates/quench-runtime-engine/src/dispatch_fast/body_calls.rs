@@ -541,14 +541,14 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     {
         record_end_in_lane(cx, own, &method, exit);
         drop(method);
-        super::note_body_end_in_lane(cx, own, exit, |_| {});
+        super::note_body_end_in_lane(cx, own, exit);
         return body_returned_in_lane(cx, call, Some(value), constructs);
     }
     if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_EXIT callee={} exit={exit:?}", target.function); }
-    let (resumed, feedback) = body_left_in_lane(cx, registers, own, &method, exit);
+    let resumed = body_left_in_lane(cx, registers, own, &method, exit);
     drop(method);
     if leave_counts_in_lane(cx, exit) {
-        super::note_body_end_in_lane(cx, own, feedback, |left| note_leave_in_lane(cx, target.function, left));
+        super::note_body_end_in_lane(cx, own, exit);
     } else {
         super::note_warming_leave_in_lane(cx, own);
     }
@@ -616,7 +616,7 @@ pub(crate) fn enter_published_body(cx: *mut LaneContext, ip: Ip, r: Registers, v
     } else {
         vm.run_lane_method(&method, direct_calls_in_lane(cx), program, code, r.0, receiver, captures, cx.cast())
     };
-    body_concluded_in_lane(cx, r, ip, own, &method, left, function)
+    body_concluded_in_lane(cx, r, ip, own, &method, left)
 }
 
 /// A root frame's start at its first instruction where the program has an AOT image: the record or exit
