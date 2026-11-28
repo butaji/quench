@@ -21,33 +21,23 @@ impl LoopTier {
         if let Some(pending) = &self.pending { crate::compiled::pending_osr_ref(&**pending).retire_named_shapes(); }
     }
 
-    /// Whether this entry passes to the interpreter's jump while the code compiles: entries
-    /// between looks count down, and a look publishes code that is ready.
+    /// Whether this entry passes to the interpreter's jump while the code compiles. A site with
+    /// a compile under way polls it once, without blocking, at each entry: the entry that finds
+    /// the code publishes it on the VM thread.
     #[inline(always)]
     pub(crate) fn awaits_code(&mut self, vm: &mut Vm, site: &LoopSite) -> bool {
-        // A site with published code, or none under way, has nothing to wait for. A look still
-        // counting down is one decrement here; only the look itself leaves the inline path.
+        // A site with published code, or none under way, has nothing to wait for.
         if self.pending.is_none() { return false; }
-        if self.wait > 0 {
-            self.wait -= 1;
-            return true;
-        }
         self.poll_pending(vm, site)
     }
 
     #[cold]
     fn poll_pending(&mut self, vm: &mut Vm, site: &LoopSite) -> bool {
         let Some(pending) = self.pending.take() else { return false };
-        if self.wait > 0 {
-            self.wait -= 1;
-            self.pending = Some(pending);
-            return true;
-        }
         use crate::compiled::OsrCompile;
         let program = vm.programs.get(vm.active_program);
         match crate::compiled::pending_osr(pending).poll(vm, program.as_deref()) {
             Err(pending) => {
-                self.wait = crate::compiled::tier_policy::COMPILE_POLL_INTERVAL;
                 self.pending = Some(pending);
                 return true;
             }
@@ -69,7 +59,6 @@ impl LoopTier {
     /// code at once.
     fn start(&mut self, started: Option<crate::compiled::PendingOsrRegion>, vm: &mut Vm, site: &LoopSite) {
         self.pending = started.filter(|pending| { let (mut facts, programs) = vm.fact_watch(); pending.watch(&mut facts, programs) }).map(|pending| Box::new(pending) as Box<dyn std::any::Any>);
-        self.wait = 0;
         // A declined or failed region retires the site now: later entries build no entry
         // record. A promoted site keeps entering the stencil code it has.
         if self.pending.is_none() && !self.is_published() { site.entering.set(false); }

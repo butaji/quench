@@ -1556,11 +1556,10 @@ pub enum LaneBody {
     /// first entry, and runs in the interpreter).
     Unspecialized,
     /// Its body's code compiling on the code generator's thread; the function runs in the
-    /// lane meanwhile, and looks for the code (`Vm::body_work_in_lane`) at entries spaced twice
-    /// as far apart after each of its `looks`, up to `tier_policy::COMPILE_POLL_INTERVAL`:
-    /// a function entered seldom (a hot loop's) finds its code at its next entries, and a hot
-    /// one pays few looks. `wait` counts the entries left before the next.
-    Compiling { pending: Box<dyn std::any::Any>, wait: std::cell::Cell<u16>, looks: u8 },
+    /// lane meanwhile. Each entry that finds it polls the worker handle once without blocking
+    /// (`Vm::body_work_in_lane`): the entry that finds the code publishes it on the VM thread
+    /// and leaves this state for `Specialized`.
+    Compiling { pending: Box<dyn std::any::Any> },
     /// The body its prologue record enters directly (`body_entry_in_lane`); `tier_prologue` is
     /// the handler that record had, which it takes back when the body retires. Its
     /// publication may retire at a lifecycle edge (`ProgramStore::retire_dead_native_calls`),
@@ -1633,10 +1632,8 @@ pub enum LoopBody {
 pub struct LoopTier {
     pub views: ElementViews,
     pub code: Option<Rc<crate::code_dependencies::PublishedCode<CompiledOsrRegion>>>,
-    /// The compile under way, and the entries left before the next look for its code
-    /// (`tier_policy::COMPILE_POLL_INTERVAL`, as a lane body's).
+    /// The compile under way, which each entry polls once without blocking.
     pub pending: Option<Box<dyn std::any::Any>>,
-    pub wait: u16,
 }
 
 /// What a call site's read target answered with (`script_call_memo_miss`), so the site's
