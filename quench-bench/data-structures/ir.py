@@ -4,9 +4,8 @@
 Each (engine, case) runs under callgrind twice: the driver at n and at 2n, with the same
 warm-up, so start-up, warm-up and per-process costs cancel: Ir/iteration = (Ir(2n) - Ir(n)) / n.
 Ir/op divides that by the ops the two runs add (the driver's "ops" in each run's rows).
-This is the method of crates/quench-gate/src/ir_budget.rs. Quench runs the Node driver with
-QUENCH_DEV=sync-compile in the JIT modes, so a compile counts where it is made; C runs the
-driver built with -march=x86-64-v3, as valgrind traps on AVX-512.
+This is the method of crates/quench-gate/src/ir_budget.rs. C runs the driver built with
+-march=x86-64-v3, as valgrind traps on AVX-512.
 
 usage: ir.py --engines c,q-no-jit,q-b-jit,q-default --ds unionfind --cases chain --n 20000
              [--quench PATH] [--reps 1] [--warmup 0] [--tag NAME]
@@ -48,9 +47,6 @@ def whole_run(engine, ds, case, length, reps, warmup, quench):
         cache = HERE / "results" / ".xdg"
         cache.mkdir(parents=True, exist_ok=True)
         env.update(XDG_CACHE_HOME=str(cache), QUENCH_STARTUP_SNAPSHOT="off", QUENCH_COMPILE_CACHE="")
-        if engine != "q-no-jit":
-            # The JIT tiers compile on the requesting thread, so a compile counts where it is made.
-            env["QUENCH_DEV"] = "sync-compile"
     argv += [case, str(length), str(reps), str(warmup)]
     p = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True)
     rows = [json.loads(l) for l in p.stdout.splitlines() if l.startswith("{")]

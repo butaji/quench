@@ -33,14 +33,11 @@ const TRIM_THRESHOLD_VARIABLE: &str = "MALLOC_TRIM_THRESHOLD_";
 /// allocator handed out before the selection stay its own (`quench_alloc::owns`).
 pub(crate) fn apply(policy: MemoryPolicy) {
     #[cfg(unix)]
-    if policy == MemoryPolicy::Throughput && !quench_runtime::vm::tier_policy::memory_mix_has("alloc") {
+    if policy == MemoryPolicy::Throughput {
         quench_alloc::QuenchAlloc::enable();
     }
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    if policy == MemoryPolicy::Throughput
-        && !quench_runtime::vm::tier_policy::memory_mix_has("trim")
-        && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none()
-    {
+    if policy == MemoryPolicy::Throughput && std::env::var_os(TRIM_THRESHOLD_VARIABLE).is_none() {
         // SAFETY: mallopt only adjusts allocator parameters.
         unsafe {
             libc::mallopt(libc::M_TRIM_THRESHOLD, TRIM_THRESHOLD_BYTES);

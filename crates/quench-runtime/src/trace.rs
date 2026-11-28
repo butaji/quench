@@ -1,10 +1,6 @@
-//! The process's two diagnostic settings, each read once.
-//!
-//! `QUENCH_TRACE` names reports (`Channel`); `QUENCH_DEV` names temporary development
-//! experiments (`Dev`). Each is a comma list of names, and a name that takes an argument,
-//! such as a path, is written `name=value`: `QUENCH_TRACE=gc,js-jit,jit-dump=/tmp/jit`.
-//! Reports never change what a program computes; experiments are off in every measured
-//! configuration, and each one is deleted once it is either adopted or rejected.
+//! The process's diagnostic reports, named in `QUENCH_TRACE` (`Channel`): a comma list of
+//! names, and a name that takes an argument, such as a path, is written `name=value`:
+//! `QUENCH_TRACE=gc,js-jit,jit-dump=/tmp/jit`. Reports never change what a program computes.
 
 use std::sync::OnceLock;
 
@@ -115,17 +111,5 @@ setting! {
         BodyLeave = "body-leave",
         /// Each AOT image compile: how many functions got a lane body, and why each other did not.
         AotLanes = "aot-lanes",
-    }
-}
-
-setting! {
-    /// One temporary development experiment, named in `QUENCH_DEV`; none is on by default.
-    "QUENCH_DEV", Dev {
-        /// `memory-mix=young+full+aging+external+pages+alloc+trim`: memory-first's named
-        /// components on top of the throughput policy (`vm::tier_policy::memory_mix_has`).
-        MemoryMix = "memory-mix",
-        /// A requested compile runs on the requesting thread and installs at once, as in tests:
-        /// instruction counts then see the code a run installs.
-        SyncCompile = "sync-compile",
     }
 }

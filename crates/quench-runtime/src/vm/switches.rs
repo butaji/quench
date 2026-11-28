@@ -1,7 +1,7 @@
 //! The boolean `QUENCH_*` A/B and diagnostic switches, each read from the environment once and
 //! named here, so a run's configuration is one list. A switch is on when its variable is set to
-//! anything but `0`; every one defaults to off. (`trace` owns the named diagnostic channels and
-//! development experiments, `QUENCH_TRACE` and `QUENCH_DEV`.)
+//! anything but `0`; every one defaults to off. (`trace` owns the named diagnostic channels,
+//! `QUENCH_TRACE`.)
 
 /// Whether the environment variable `name` switches something on: set, and not `0`.
 fn named(name: &str) -> bool {

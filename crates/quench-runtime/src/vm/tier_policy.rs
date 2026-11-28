@@ -444,13 +444,6 @@ pub fn quick_only() -> bool {
     crate::jit_mode::quick_only()
 }
 
-/// Whether `QUENCH_DEV=memory-mix=a+b` names the memory-first component `part` to take on top
-/// of throughput (TOD-2055: which memory-first settings cost no performance). The one read of
-/// the memory-mix experiment; the pacing tables and the allocator settings ask it.
-pub fn memory_mix_has(part: &str) -> bool {
-    crate::trace::Dev::MemoryMix.value().is_some_and(|parts| parts.split('+').any(|named| named == part))
-}
-
 /// Whether BaseJIT (stencil) bodies and regions run in this process.
 pub fn base_runs() -> bool {
     crate::jit_mode::tiers_allowed(&[Tier::Base])
@@ -876,5 +869,3 @@ mod tests {
         }
     }
 }
-
-

@@ -83,8 +83,6 @@ const MODE_VARIABLE: &str = "QUENCH_IR_BUDGET_MODE";
 /// The default mode: a full run measures every op under all three tiers.
 const TIERS: &str = "tiers";
 const LINE_PREFIX: &str = "IRBUDGET ";
-/// The JIT tiers' compiles run on the requesting thread, so a compile counts where it is made.
-const SYNCHRONOUS_COMPILE: &str = "sync-compile";
 /// A count within this many instructions per iteration of its ceiling is the same count...
 pub(crate) const SAME_COUNT: f64 = 0.5;
 /// ...or within this fraction of it: ops that run library code (`parseInt`, string builders)
@@ -277,9 +275,6 @@ fn whole_run(config: &Config, mode: &str, op: &str, length: u64, scratch: &Path)
         .arg(host).args((mode != DEFAULT).then_some(mode)).args(COLLECT.then_some("--expose-gc")).arg(RUNNER).arg(length.to_string()).arg(op)
         .env("IRBUDGET_WARMUP", if mode == INTERPRETER { "3" } else { "12" })
         .env("QUENCH_COMPILE_CACHE", "").env("QUENCH_STARTUP_SNAPSHOT", "off").env("XDG_CACHE_HOME", scratch);
-    if mode != INTERPRETER {
-        command.env("QUENCH_DEV", SYNCHRONOUS_COMPILE);
-    }
     let run = process::run(&mut command)?;
     if !run.success || !run.stdout.lines().any(|line| line.strip_prefix(LINE_PREFIX) == Some(op)) {
         return Err(format!("{RUNNER} failed under callgrind\n{}", run.excerpt()));

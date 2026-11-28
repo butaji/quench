@@ -1,8 +1,7 @@
 //! Step `tier-order`: a higher tier never runs a program in more instructions than the tier under it
 //! (interpreter > b-jit > u-jit, and the default, which tiers b-jit up to u-jit, no more than b-jit).
 //! Each C-parity kernel, and every `.js` file in the directories `QUENCH_TIER_ORDER_CORPUS` names
-//! (colon-separated, such as the V8-v7 files), runs cold in callgrind under each mode with
-//! `QUENCH_DEV=sync-compile`, so a compile counts where it is made. A pair whose higher tier counts
+//! (colon-separated, such as the V8-v7 files), runs cold in callgrind under each mode. A pair whose higher tier counts
 //! more than the slack over the lower one is a violation, one `program higher>lower` line, held to
 //! `crates/quench-tier-corpus/tier_order.txt`: a violation the file does not list fails the step,
 //! and a listed one that no longer occurs leaves it, so the list only shrinks. `quench-lint
@@ -22,8 +21,8 @@ const VALGRIND: &str = "valgrind";
 const CALLGRIND: [&str; 4] = ["--tool=callgrind", "--fair-sched=yes", "--smc-check=all", "--callgrind-out-file=/dev/null"];
 /// The line callgrind ends its report with, before the total.
 const COLLECTED: &str = "Collected : ";
-/// Cold runs, every compile on the running thread.
-const ENVIRONMENT: [(&str, &str); 3] = [("QUENCH_COMPILE_CACHE", ""), ("QUENCH_STARTUP_SNAPSHOT", "off"), ("QUENCH_DEV", "sync-compile")];
+/// Cold runs, with no caches.
+const ENVIRONMENT: [(&str, &str); 2] = [("QUENCH_COMPILE_CACHE", ""), ("QUENCH_STARTUP_SNAPSHOT", "off")];
 /// Each mode by name and runner flag (none for the default).
 const MODES: [(&str, Option<&str>); 4] = [("no-jit", Some(INTERPRETER)), ("b-jit", Some("--b-jit")), ("u-jit", Some("--u-jit")), ("default", None)];
 /// The pairs held in order: the first never counts more than the second.
