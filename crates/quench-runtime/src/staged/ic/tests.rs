@@ -21,7 +21,8 @@ fn an_op_list_reads_a_prototype_slot_and_misses_past_its_guards() {
     }
     let prototype = heap.alloc_object(Object::new(Value::NULL));
     heap.property_add(prototype, Value::number(1.5), 1);
-    heap.object_record_mut(prototype).unwrap().mark_as_prototype();
+    heap.ensure_cell_extras(prototype);
+    heap.object_mut(prototype).unwrap().mark_as_prototype();
     let object = heap.alloc_object(Object::new(prototype));
     heap.property_add(object, Value::number(7.0), 1);
     heap.property_add(object, Value::number(8.0), 2);
@@ -42,7 +43,8 @@ fn an_op_list_reads_a_prototype_slot_and_misses_past_its_guards() {
 fn a_prototype_constant_is_selected_by_the_receivers_link() {
     let mut heap = Heap::new();
     let prototype = heap.alloc_object(Object::new(Value::NULL));
-    heap.object_record_mut(prototype).unwrap().mark_as_prototype();
+    heap.ensure_cell_extras(prototype);
+    heap.object_mut(prototype).unwrap().mark_as_prototype();
     let object = heap.alloc_object(Object::new(prototype));
     let (link, shape) = { let record = heap.object(object).unwrap(); (record.proto_link().bits(), record.exact_shape()) };
     let (one, two) = (Value::number(1.5).to_bits(), Value::number(2.5).to_bits());
@@ -65,7 +67,8 @@ fn the_interpreters_prototype_read_agrees_with_the_staged_one() {
         for slot in 0..len {
             heap.property_add(prototype, Value::number(slot as f64 + 0.5), slot as u32 + 1);
         }
-        heap.object_record_mut(prototype).unwrap().mark_as_prototype();
+        heap.ensure_cell_extras(prototype);
+        heap.object_mut(prototype).unwrap().mark_as_prototype();
         let object = heap.alloc_object(Object::new(prototype));
         let holder = heap.object(prototype).unwrap();
         for slot in 0..len {

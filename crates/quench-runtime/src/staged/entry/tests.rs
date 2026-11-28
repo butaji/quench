@@ -67,7 +67,8 @@ fn a_site_read_follows_a_holder_entry_to_the_prototype_and_misses_on_any_other()
         for shape in 1..=count as u32 {
             heap.property_add(prototype, Value::integer(70 + shape as i32), shape);
         }
-        heap.object_record_mut(prototype).unwrap().mark_as_prototype();
+        heap.ensure_cell_extras(prototype);
+        heap.object_mut(prototype).unwrap().mark_as_prototype();
         let receiver = heap.alloc_object(Object::new(prototype));
         let (holder_shape, receiver_shape) = (shape_of(&heap, prototype), shape_of(&heap, receiver));
         let records = heap.object_record_base().expect("object records exist") as u64;

@@ -1480,11 +1480,6 @@ impl Vm {
             _ => None,
         }
     }
-    /// The record of `value` for a record-only edit: a live class cell departs first (`Heap::object_record_mut`).
-    pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
-        self.heap.object_record_mut(value)
-    }
-
     #[inline] pub fn is_object_like(&self, value: Value) -> bool {
         self.heap.object(value).is_some()
             || matches!(self.heap.get(value), Some(Cell::Error(_)))

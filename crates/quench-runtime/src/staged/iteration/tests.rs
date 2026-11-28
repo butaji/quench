@@ -58,7 +58,8 @@ fn a_state_whose_memo_does_not_hold_leaves_before_writing() {
     assert_eq!(step(&heap, unmemoed, epoch), None, "the keys came from the general walk");
     let other_shape = state(&mut heap, held, [u64::from(shape) + 1, epoch]);
     assert_eq!(step(&heap, other_shape, epoch), None, "the object is not of the listed shape");
-    heap.object_record_mut(object).expect("an object").mark_as_prototype();
+    heap.ensure_cell_extras(object);
+    heap.object_mut(object).expect("an object").mark_as_prototype();
     let prototype = state(&mut heap, held, [u64::from(shape), epoch]);
     assert_eq!(step(&heap, prototype, epoch), None, "an object with extras keeps keys outside its shape");
     for state in [stale, unmemoed, other_shape, prototype] {

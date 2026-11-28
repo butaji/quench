@@ -49,7 +49,8 @@ fn objects_of_every_form(heap: &mut Heap) -> Vec<(Value, Vec<Value>)> {
                 heap.property_add(object, *value, slot as u32 + 1);
             }
             if prototype {
-                heap.object_record_mut(object).unwrap().mark_as_prototype();
+                heap.ensure_cell_extras(object);
+                heap.object_mut(object).unwrap().mark_as_prototype();
             }
             objects.push((object, values.clone()));
         }
