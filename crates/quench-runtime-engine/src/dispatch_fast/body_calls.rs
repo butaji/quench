@@ -349,7 +349,6 @@ fn construct_admitted(cx: *mut LaneContext, vm: &Vm) -> Result<(), u64> {
 /// values), which calls nothing; an invalid length is a miss, whose RangeError the VM throws.
 fn constructed_in_place(vm: &mut Vm, call: &BodyCall, callee: Value, class: u32) -> Option<Value> {
     let this = planned_construction(vm, callee, class, call.argument())
-        .or_else(|| forwarded_fields_in_lane(vm, callee, class, call.argument()))
         .or_else(|| {
             if !vm.realm_array_constructor(callee) { return None; }
             if call.argc() == 0 { return Some(vm.hole_array(0)); }
@@ -369,7 +368,8 @@ fn construct_activated(cx: *mut LaneContext, call: &BodyCall, callee: Value, cla
     let vm = unsafe { vm(cx) };
     let Some(target) = construct_target_in_lane(cx, vm, callee) else { return miss(vm, Miss::Callee) };
     // A forwarding constructor is built by its forwarded initializer's plan or not at all here.
-    if target.forwards() { return construct_forwarded(vm, call, callee, class); }
+    // A forwarding constructor's receiver is no plan's: its construction takes the helper path.
+    if target.forwards() { return miss(vm, Miss::NoPlan); }
     if !target.constructs() { return miss(vm, Miss::ConstructNotConstructor); }
     // The activation of the lane's own construction (`script_construct_miss`): a target that
     // keeps or gathers values, or is passed more than it has parameters, by the keeping form.
@@ -413,14 +413,6 @@ fn construct_target_in_lane(cx: *mut LaneContext, vm: &mut Vm, callee: Value) ->
         vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)
             .filter(|target| concrete_admits_target_program(target.program().raw(), vm.active_program.raw()))
     })
-}
-
-/// A forwarding constructor's fields, built by its forwarded initializer's plan.
-fn construct_forwarded(vm: &mut Vm, call: &BodyCall, callee: Value, class: u32) -> u64 {
-    let Some(this) = forwarded_fields_in_lane(vm, callee, class, call.argument()) else { return miss(vm, Miss::NoPlan) };
-    note_allocation(vm);
-    call.registers.set(call.site.result, this);
-    LANE_CALL_COMPLETED
 }
 
 /// The target a lane body's call of `callee` activates: the site's linked entry, else the one

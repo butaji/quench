@@ -423,7 +423,7 @@ use this_binding::ThisBinding;
 pub(crate) mod loop_fields; use loop_fields::loop_field_stores;
 pub(crate) mod construct_plan; pub(crate) mod super_chain; use super_chain::super_construction; pub(crate) mod setters; pub(crate) mod proxy_traps; pub(crate) mod accessor_protocol; pub(crate) mod completions; use completions::*;
 use construct_plan::{ConstructPlan, ConstructPlanKind, EMPTY_CONSTRUCT_PLAN, field_reader, initialize_stores_in_lane, add_stores_in_lane, return_constructed_in_lane, planned_construction_in_lane, planned_construction, construct_argument_in_lane, construct_plan_index, holding_construct_plan, holding_construct_plan_index, watch_construct_plan, site_class_in_lane, planned_site_in_lane, planned_quick_site_in_lane, initialize_site_in_lane, inline_receiver_site_in_lane};
-pub(crate) use construct_plan::{body_construction_in_lane, body_receiver_in_lane, context_constructs_in_lane, construct_plan_holds, materialized_construction_in_lane};
+pub(crate) use construct_plan::{body_construction_in_lane, context_constructs_in_lane, construct_plan_holds, materialized_construction_in_lane};
 use accessor_protocol::AccessorCall;
 pub(crate) mod list_calls;
 pub(crate) mod loop_runs;
@@ -1371,8 +1371,6 @@ impl ScriptTargets {
 
 use quench_runtime::vm::engine_types::FUNCTION_TARGETS;
 const _: () = assert!(FUNCTION_TARGETS.is_power_of_two());
-
-use quench_runtime::vm::engine_types::ForwardedResolution;
 
 pub(crate) use quench_runtime::vm::engine_types::CONSTRUCT_PLAN_FIELDS;
 // A plan's values fill a receiver's inline slots (`ConstructPlan::allocate`).
@@ -5576,10 +5574,7 @@ script_handler! {
         // As `script_construct_miss`: a leaf's construction materializes the leaf's activation
         // before anything completes, which a site reaches directly once it is keeping.
         materialize_running_leaf_in_lane(cx);
-        let finished = match construct_planned_fields_in_lane(cx, r, ip, i) {
-            Some(this) => Ok(KeepingConstruction::Finished(this)),
-            None => construct_keeping_activation_in_lane(cx, r, ip, i),
-        };
+        let finished = construct_keeping_activation_in_lane(cx, r, ip, i);
         match finished {
             Ok(KeepingConstruction::Activated(registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
             Ok(KeepingConstruction::Finished(this)) => {

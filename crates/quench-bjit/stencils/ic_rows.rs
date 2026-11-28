@@ -16,8 +16,7 @@
 //! `HOLE_NEXT`, the site's next entry; the last entry's miss, and a destination that cannot hold
 //! the value, leave through exit 0 with nothing written, so the interpreter runs the
 //! instruction. Receiver proofs are per-execution facts, proved once per row; the object record table is
-//! gone (S7f), so a direct object is read through its class cell (`IC_*_CLASS_ROW`), and the known-object rows
-//! are read through the class rows too.
+//! gone (S7f), so a direct object is read through its class cell (`IC_*_CLASS_ROW`).
 //!
 //! Expected code of a flat own get on a frame destination: load the receiver word, test its
 //! family, mask the id, scale it and add the record table base, compare the record's exact shape
@@ -34,7 +33,7 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_KNOWN_GET_FLAT_ROW, IC_KNOWN_GET_ROW, IC_KNOWN_SET_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ADMITTED_ROW, IC_KNOWN_SET_FLAT_ROW, IC_KNOWN_SET_INT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW, IC_KNOWN_SET_INT_FLAT_ROW, IC_KNOWN_SET_INT_ROW, IC_KNOWN_SET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
+use crate::codes::{IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
 use crate::heap_rows::{payload, word_at};
 use crate::numeric::{HOLE_A, Out, S, deliver, number_word};
 use crate::places::{Places, finish_chained, site_object};
@@ -161,12 +160,6 @@ pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>
         IC_GET_HELD_CLASS_ROW => class_get_row::<true, CHAINED, D>(s, payload),
         IC_SET_CLASS_ROW => class_set_row::<CHAINED, A>(s, payload),
         IC_PROOF_ROW => proof(s),
-        // The known-object rows read through the class rows: their entry's key is the class key the class rows test,
-        // and a shape key equals no live cell's class key, so the row leaves where the class row does.
-        IC_KNOWN_GET_ROW | IC_KNOWN_GET_FLAT_ROW => class_get_row::<false, CHAINED, D>(s, payload),
-        IC_KNOWN_SET_ROW | IC_KNOWN_SET_INT_ROW | IC_KNOWN_SET_ADMITTED_ROW | IC_KNOWN_SET_INT_ADMITTED_ROW
-        | IC_KNOWN_SET_FLAT_ROW | IC_KNOWN_SET_INT_FLAT_ROW | IC_KNOWN_SET_FLAT_ADMITTED_ROW
-        | IC_KNOWN_SET_INT_FLAT_ADMITTED_ROW => class_set_row::<CHAINED, A>(s, payload),
         _ => set_row::<false, CHAINED, A>(s, payload),
     }
 }

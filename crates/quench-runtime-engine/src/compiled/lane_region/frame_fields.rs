@@ -281,11 +281,6 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
         Some(Some(free))
     }
 
-    fn field_store_bound(&mut self, stage: &mut Emit<'b, 'c>, _owner: Owner, object: ir::Value, (atom, site): (u32, u16),
-        (value, _fact): (ir::Value, Type), miss: ir::Block) -> Option<()> {
-        self.field_store_host(stage, object, atom, site, value, miss)
-    }
-
     fn entry_slot_store(&mut self, stage: &mut Emit<'b, 'c>, site: u16, value: ir::Value, miss: ir::Block) -> Option<()> {
         self.loop_slot_store(stage, site, value, miss)
     }

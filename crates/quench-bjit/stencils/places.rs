@@ -175,20 +175,6 @@ pub(crate) fn deliver<const D: u8>(mut s: S, word: u64) -> Out {
     if put_tagged::<D>(&mut s, word) { Out::Next(s) } else { Out::Exit(s) }
 }
 
-/// `deliver` of a `word` the fact store proved a Number (an int word or a double, `ic_rows::known_get`): a
-/// pinned double takes it with no tag test and no exit, an int word converted; any other place as `deliver`.
-#[inline(always)]
-pub(crate) fn deliver_number<const D: u8>(mut s: S, word: u64) -> Out {
-    match D {
-        PINF.. => {
-            let bits = if is_double(word) { word } else { widen(word) };
-            s.f[(D - PINF) as usize] = f64::from_bits(bits);
-            Out::Next(s)
-        }
-        _ => deliver::<D>(s, word),
-    }
-}
-
 /// The row's outcome for the staged step `step` over `frame`: `next` where the step produced its word
 /// and every result fit its place, else the row leaves with the state as it was.
 #[inline(always)]

@@ -239,7 +239,7 @@ impl Lowering<'_, '_> {
         self.forget_append_rooms(self.at);
         match join {
             StoreJoin::Add => self.reshaped(state),
-            StoreJoin::Host | StoreJoin::Bound => state.proofs.stable = false,
+            StoreJoin::Host => state.proofs.stable = false,
         }
     }
 

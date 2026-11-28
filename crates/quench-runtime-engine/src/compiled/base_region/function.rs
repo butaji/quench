@@ -142,20 +142,9 @@ pub(crate) struct ClassProto {
     pub(crate) link: u32,
     pub(crate) holder: u32,
     pub(crate) members: Vec<(quench_runtime::bytecode::Atom, u64)>,
-    /// The class id of the receiver's live class cell, where it has one (`HeapReads::live_class_key`, `CLASS_KEY` stripped).
-    /// The entry then tests the class (`Heap::Class`), which names the shape and prototype link too; else the exact shape and link.
-    pub(crate) class: Option<u32>,
-}
-
-/// A loop-invariant receiver and the exact shape its field accesses saw at the region's entry: the entry checks the shape
-/// once (`Heap::Shape`), and every access of the register the proofs carry takes its known-shape row (`proofs::prove`).
-/// `flat`: every access saw the shape in flat form too, so the entry checks the form (`Heap::ShapeFlat`) and the accesses
-/// take the flat rows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ShapeProto {
-    pub(crate) register: quench_runtime::bytecode::Register,
-    pub(crate) shape: u32,
-    pub(crate) flat: bool,
+    /// The class id of the receiver's live class cell (`HeapReads::live_class_key`, `CLASS_KEY` stripped). The entry tests
+    /// the class (`Heap::Class`), which names the shape and prototype link too; a receiver with no class cell is no entry.
+    pub(crate) class: u32,
 }
 
 /// The body of the function `spec` names that `region` spans, over the callees its call sites
@@ -241,8 +230,6 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let (ending, callees, function) = (sites.ending, sites.targets, sites.function);
     // The class-typed receivers the entry checks, as `build` limited them (`Known::classes`): the same list the rows fold on.
     let prototypes = sites.known.classes.to_vec();
-    // The loop-invariant receivers whose entry shape is checked (`Known::shapes`, already limited to those the loop never writes).
-    let shapes = sites.known.shapes.to_vec();
     let stitched = stitch(region, parts(region, &mut sites, helpers), spec.registers, spec.known.invalidation, ending);
     let scratch = scratch(&stitched.rows, spec.registers);
     let span = Span::of(region, stitched.rows.len(), &stitched.live);
@@ -259,17 +246,9 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let (reprs, homes, webs, mut decoded) = analyze(&span, &rows, operand_sites.as_slice(), &seen);
     direct_admits(&mut decoded, &operand_sites, spec.known.fields);
     let shaped: Vec<Register> = prototypes.iter().map(|proto| proto.register).collect();
-    // The entry seeds the direct objects it checks: the declared ones, and each shape-checked receiver (`Heap::Shape`).
-    let objects: Vec<Register> = super::declared::exact_objects(function, &prototypes).into_iter().chain(shapes.iter().map(|proto| proto.register)).collect();
-    let loops: Vec<Register> = shapes.iter().map(|proto| proto.register).collect();
-    let flat: Vec<Register> = shapes.iter().filter(|proto| proto.flat).map(|proto| proto.register).collect();
-    // The slot-type proofs a row keeps (`Decoded::typed`) are settled before the receiver proofs, which an object read's
-    // destination joins (`proofs::typed_object`).
+    // The slot-type proofs a row keeps (`Decoded::typed`) are settled before the class receivers' shape proofs.
     super::repr::keep_typed_reads(&homes, &mut decoded);
-    proofs::prove(&span, &mut decoded, &reached, &objects, &shaped, &loops, &flat);
-    // The run's stores word is checked at the entry where a store is admitted on it (`Heap::Stores`); a store that re-reads
-    // the word itself (`Decoded::recheck`) needs no entry test, and the stores after it are admitted by that test.
-    let stores = decoded.iter().any(|row| row.admitted && !row.recheck);
+    proofs::prove(&span, &mut decoded, &reached, &shaped);
     if ending == Ending::Region && let Some(generic) = decoded.iter().enumerate().find(|(k, row)| reached.contains(*k) && interprets(row)) {
         return Err(format!("interprets in the loop: row {} {:?}", generic.0, generic.1.step));
     }
@@ -277,7 +256,6 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     // A body proves the realm it was compiled in at its entry, whatever it folds: a program shared by
     // realms enters it only in that one, so a realm switch need not retire it (`LaneMethod::realm_bound`).
     let realm = (ending == Ending::Body || !stitched.frames.is_empty()).then_some(spec.realm).flatten().or_else(|| held_realm(&decoded));
-    let relies: Vec<bool> = decoded.iter().map(|row| row.relies).collect();
     let (guards, numbers) = (super::declared::entry_guards(function), super::declared::entry_numbers(function));
     // A declared Number's rows rely on its entry guard, and an inlined frame's copies run at a leave: those guards stay.
     let kept: Vec<Register> = numbers.iter().copied().chain(stitched.copies.iter().flatten().flat_map(|&(param, arg)| [param, arg])).collect();
@@ -297,7 +275,7 @@ fn assemble(region: &LoopRegion, spec: &BodySpec, mut sites: Sites, helpers: Lan
     let proven_args = super::call_args::ProvenArgs::new(function, &spec.known.program.constants, seeded, pinned_ints);
     let chain_holders = std::cell::RefCell::new(Vec::new());
     let builtins = sites.callees.builtins();
-    let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, relies: &relies, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, shapes, stores, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
+    let layout = Layout { id: spec.function, span, homes, webs, ending, callees, origins: &stitched.origins, copies: &stitched.copies, entries: &stitched.entries, invalidation, realm, number_held: &number_held, entry_reads: &entry_reads, proven_args: &proven_args, guards, numbers, prototypes, identities, reads: sites.known.reads, holders: &chain_holders, builtins: &builtins };
     let singles = decoded.iter().enumerate().map(|(k, row)| plan_row(&layout, (&reprs, operand_sites[k]), &decoded, reached.contains(k), k as u32, row, helpers)).collect::<Result<Vec<_>, _>>()?;
     if helpers == LaneHelpers::Ahead && quench_runtime::trace::Channel::AotLanes.on() {
         report_steps(&layout, spec.known.program, &singles);

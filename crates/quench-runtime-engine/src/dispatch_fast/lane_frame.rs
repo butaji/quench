@@ -158,8 +158,6 @@ impl CaptureStores {
 struct Decisions {
     context: *mut (),
     decide: fn(*mut (), u32, Value, Value) -> Option<bool>,
-    /// The encoded `prototype` link of a constructor the VM proved Stable (`Vm::instanceof_fact`).
-    prototype: fn(*mut (), Value) -> Option<u32>,
     /// `value instanceof constructor` by the VM's published proof of the constructor's chain (`Vm::record_instanceof`),
     /// else the ordinary walk (`Vm::ordinary_instanceof`): neither runs guest code.
     instance: fn(*mut (), Value, Value) -> Option<bool>,
@@ -171,8 +169,6 @@ impl Decisions {
     fn of(cx: *mut LaneContext) -> Self {
         Self { context: cx.cast(), decide: |context, operator, left, right|
             super::vm_steps::comparison_decision(unsafe { vm(context.cast::<LaneContext>()) }, operator, left, right),
-            prototype: |context, constructor| unsafe { vm(context.cast::<LaneContext>()) }.instanceof_fact(constructor)
-                .map(|fact| fact.link),
             instance: instance_decision }
     }
 }
@@ -1701,14 +1697,6 @@ impl<const ACC: u8> NumericFrame<Concrete> for LaneFrame<ACC> {
     fn number_operand(&mut self, stage: &mut Concrete, operand: Operand, _miss: ()) -> Option<Float64<u64>> {
         let word = self.operand_word(stage, operand)?;
         Float64::checked(Value::from_bits(word))
-    }
-
-    /// The constructor's live `prototype` link, where the VM proved its `instanceof` steady: the
-    /// interpreter reads it from the objects each time, so it needs no dependency.
-    #[inline(always)]
-    fn stable_prototype(&mut self, _stage: &mut Concrete, constructor: Register) -> Option<u64> {
-        let Decisions { context, prototype, .. } = self.decisions?;
-        prototype(context, self.read_value(constructor)).map(u64::from)
     }
 
     /// ToInt32 of an operand, as the bitwise operators read it: the staged `Int32::guard_truncating`, so the

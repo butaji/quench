@@ -1345,7 +1345,7 @@ fn nested_reads_follow_their_first_steps_hint_across_shapes() {
 #[test]
 fn inherited_reads_follow_their_hint_and_the_prototype_values() {
     // An inherited read's record keeps the entry that last answered it as its hint, and the
-    // entry its answer while no prototype changes (`Vm::inherited_hint_operands`):
+    // entry its answer while no prototype changes:
     // instances of sibling and nested subclasses reading one site, a method replaced on the
     // base prototype, shadowed on an intermediate one and deleted again, and a receiver moved
     // to another prototype each read the method the receiver in hand inherits. Expected value
@@ -21944,7 +21944,7 @@ fn lane_equality_and_relations_of_int32_fields_and_parameters() {
 #[test]
 fn loop_stores_to_packed_objects_write_like_the_interpreter() {
     // A loop region's stores through a field's slot, a packed object's inline word or an
-    // arena slot (`emit_js_cached_field_slot`): Int32, double and object values written
+    // arena slot (the loop's cached field-slot stores): Int32, double and object values written
     // there read back as the interpreter's.
     let source = r#"
       function Counter() { this.count = 0; this.step = 1; }

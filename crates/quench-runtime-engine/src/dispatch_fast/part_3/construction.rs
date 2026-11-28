@@ -1,4 +1,4 @@
-//! Construction in a lane: the planned fields a construction sets, the forwarded construction of a class constructor, and the forwarding resolution it takes.
+//! Construction in a lane: the forwarded construction of a class constructor, and the finished receiver its initializer makes.
 use super::*;
 
 /// Whether a construction at `i` may complete in the lane with a receiver its body finished
@@ -10,27 +10,6 @@ pub(in super::super) fn finishes_construction_in_lane(cx: *mut LaneContext, i: &
     i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
         || unsafe { vm(cx) }.lane_stack.has_frames()
         || returning_call_admitted(cx)
-}
-
-/// The receiver a forwarding constructor's holding plan finishes with its recorded fields
-/// (`forwarded_fields_in_lane`), the first case `construct_keeping_activation_in_lane` tries, in a
-/// function of its own: inlined there it ran inside that function's frame (six saved
-/// registers and 1.3 KB of stack for the activation paths). `None` for any other case, which
-/// that function then decides from the start.
-#[inline(never)]
-pub(in super::super) fn construct_planned_fields_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, i: &LaneInstruction) -> Option<Value> {
-    let vm = unsafe { vm(cx) };
-    if !quench_runtime::staged::call_construct::concrete_admits_construct(unsafe { (*cx).script_calls }, unsafe { (*cx).script_constructs }, vm.construct_target.is_some())
-        || !finishes_construction_in_lane(cx, i)
-    {
-        return None;
-    }
-    // SAFETY: `ip` is a record of the running view.
-    let class = unsafe { site_class_in_lane(cx, ip, r.get(i.b)) };
-    let this = forwarded_fields_in_lane(vm, r.get(i.b), class, construct_argument_in_lane(r, i))?;
-    // Allocating the receiver can make a collection due.
-    note_allocation(vm);
-    Some(this)
 }
 
 /// `script_construct_keeping_miss`'s activation, under `script_construct_miss`'s admission:
@@ -52,13 +31,6 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
     // SAFETY: `ip` is a record of the running view.
     let class = unsafe { site_class_in_lane(cx, ip, callee) };
     let finishes = finishes_construction_in_lane(cx, i);
-    // A plan holding for `callee` fixes its function, so the plan alone answers before its
-    // target is resolved.
-    if finishes && let Some(this) = forwarded_fields_in_lane(vm, callee, class, construct_argument_in_lane(r, i)) {
-        // Allocating the receiver can make a collection due.
-        note_allocation(vm);
-        return Ok(KeepingConstruction::Finished(this));
-    }
     // Matched rather than filtered: the combinators moved the target through copies.
     let Some(target) = script_target_in_lane(cx, callee) else {
         return Err(None);
@@ -66,8 +38,7 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
     if !(target.constructs() && target.forwards()) {
         return Err(None);
     }
-    // One look at the plan serves the receiver and the forwarding: a plan the receiver's
-    // allocation leaves records no resolution yet.
+    // One look at the plan serves the receiver.
     let plan = holding_construct_plan(vm, callee, class);
     let union = fixed_receiver_union(vm, callee, class);
     let Some(this) = planned_receiver_in_lane(vm, callee, class, plan.as_ref(), union) else {
@@ -76,10 +47,7 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
     note_allocation(vm);
     let arguments = ActivationArguments::Window(i.c);
     if let Some(method) = forwarded_method_of(vm, &target)
-        && let Some(forwarded) = match resolved_forwarding_in_lane(cx, callee, plan.as_ref()) {
-            Some(forwarded) => Some(forwarded),
-            None => forwarded_construction_in_lane(cx, target, method, this),
-        }
+        && let Some(forwarded) = forwarded_construction_in_lane(cx, target, method, this)
     {
         // A forwarded method that only initializes `this` from its parameters, which the
         // forwarding passes the construction's arguments as: its adds alone, with neither
@@ -92,10 +60,7 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
             let code = unsafe { &*(*cx).code };
             let argument = construct_argument_in_lane(r, i);
             let read = construct_plan::field_reader(vm, callee);
-            if let Some(fields) = construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument, read, union) {
-                if let Some(fields) = fields {
-                    record_forwarded_fields_in_lane(vm, callee, class, (forwarded.program(), forwarded.function), this, &fields);
-                }
+            if construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument, read, union).is_some() {
                 return Ok(KeepingConstruction::Finished(this));
             }
         }
@@ -112,59 +77,6 @@ pub(in super::super) fn construct_keeping_activation_in_lane(
     activate_keeping_in_lane::<false>(cx, r, ip, &target, arguments, this, true, None)
         .map(|(registers, base)| KeepingConstruction::Activated(registers, base))
         .map_err(Some)
-}
-
-/// The finished receiver of a forwarding constructor's construction under `callee`'s
-/// holding plan, when it records the fields its forwarded initializer stores
-/// (`record_forwarded_fields_in_lane`) and its forwarding still reads that initializer
-/// (`resolved_forwarded_method`): the receiver that initializer's adds would finish, whose
-/// body completes with `undefined`, as the forwarding body then does.
-#[inline(always)]
-pub(in super::super) fn forwarded_fields_in_lane(vm: &mut Vm, callee: Value, class: u32, argument: impl Fn(u16) -> Value) -> Option<Value> {
-    let index = holding_construct_plan_index(vm, callee, class)?;
-    // The plan in place: the allocation borrows the heap beside it, not a copy.
-    let plan = &vm.lane_stack.construct_plans[index];
-    plan.forwarded?.initializer?;
-    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
-    plan.fill_values(vm, &mut values, argument)?;
-    // A nested construction's field is a fresh object of its own plan; allocation never collects.
-    if let Some(nested) = vm.lane_stack.construct_plans[index].nested {
-        if !construct_plan::nested_root_holds(vm, &nested) { return None; }
-        if nested.constructs {
-            values[usize::from(nested.field)] = construct_plan::nested_construction(vm, nested.constructor, &nested.arguments)?;
-        }
-    }
-    { let plan = vm.lane_stack.construct_plans[index]; Some(plan.allocate_values(vm, &values)) }
-}
-
-/// Records in `callee`'s holding plan of no fields, whose forwarding resolved
-/// (`ConstructPlan::forwarded`), the fields `fields` the forwarded `initializer`'s adds gave
-/// `this`, which that plan's receiver started as: later constructions allocate the finished
-/// object (`forwarded_fields_in_lane`). The adds ran no guest code, so the plan's epoch still
-/// holds.
-#[inline(never)]
-pub(in super::super) fn record_forwarded_fields_in_lane(
-    vm: &mut Vm,
-    callee: Value,
-    class: u32,
-    initializer: (ProgramId, u32),
-    this: Value,
-    fields: &ConstructPlan,
-) {
-    let Some(index) = holding_construct_plan_index(vm, callee, class) else {
-        return;
-    };
-    let Some(shape) = vm.heap_reads().object(this).map(|object| object.shape()) else {
-        return;
-    };
-    let plan = &mut vm.lane_stack.construct_plans[index];
-    let Some(resolution) = plan.forwarded.filter(|_| plan.fields == 0) else {
-        return;
-    };
-    *plan = plan.with_recorded(fields, shape, ForwardedResolution { initializer: Some(initializer), ..resolution });
-    if let Some(nested) = fields.nested {
-        watch_construct_plan(vm, index, false, nested.held());
-    }
 }
 
 /// The method a forwarding constructor's body (`ScriptCallTarget::forwarded_method`) would
@@ -213,27 +125,6 @@ pub(in super::super) fn forwarded_construction_in_lane(
         return None;
     }
     script_target_in_lane(cx, function)
-}
-
-/// The method a forwarding constructor's construction activates, from `callee`'s plan's
-/// recorded resolution (`resolved_forwarded_method`) as a frameless target, under `plan`,
-/// `callee`'s holding plan. `None` resolves afresh (`forwarded_construction_in_lane`).
-#[inline(always)]
-pub(in super::super) fn resolved_forwarding_in_lane(
-    cx: *mut LaneContext,
-    callee: Value,
-    plan: Option<&ConstructPlan>,
-) -> Option<ScriptCallTarget> {
-    let function = resolved_forwarded_method(callee, plan?)?;
-    script_target_in_lane(cx, function)
-}
-
-/// The method `callee`'s forwarding reads under `plan`, its holding plan: the recorded
-/// resolution's (`ConstructPlan::forwarded`), which the plan's dependency keeps (see
-/// `ForwardedResolution`), unless it is `callee`.
-#[inline(always)]
-pub(in super::super) fn resolved_forwarded_method(callee: Value, plan: &ConstructPlan) -> Option<Value> {
-    plan.forwarded.map(|resolution| resolution.method).filter(|&method| method != callee)
 }
 
 /// `forward_call_miss`'s activation: the callee's registers and first record, or the record

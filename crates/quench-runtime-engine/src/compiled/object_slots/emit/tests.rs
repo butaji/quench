@@ -255,7 +255,7 @@ fn formed_own_read_clif(isa: &dyn cranelift_codegen::isa::TargetIsa, id: u32, sl
     let mut stage = Emit { builder: &mut builder, property_values: Some(base), gate: None , payload: None, facts: Default::default(), fresh: false };
     let ops = [ic::IcOp::GuardLayout(id), ic::IcOp::LoadSlot { slot, form: ic::form_of_layout(id),
         storage_len: usize::from(slot) + 1, rep: Representation::Tagged }];
-    let value = ic::run(&mut stage, &ops, ic::Reached::bare(record), None, miss).expect("a load ends the read");
+    let value = ic::run(&mut stage, &ops, ic::Reached::bare(record), miss).expect("a load ends the read");
     builder.ins().return_(&[value]);
     builder.switch_to_block(miss);
     let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);

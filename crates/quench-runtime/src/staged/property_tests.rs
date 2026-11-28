@@ -88,10 +88,6 @@ impl<'p> PropertyFrame<Concrete> for Host<'p> {
     fn field_store_host(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _value: u64, _miss: ()) -> Option<()> {
         self.call("field_store_host").then_some(())
     }
-    fn field_store_bound(&mut self, _stage: &mut Concrete, _owner: Owner, _object: u64, _site: (u32, u16), _value: (u64, Type),
-        _miss: ()) -> Option<()> {
-        self.call("field_store_bound").then_some(())
-    }
     fn entry_slot_store(&mut self, _stage: &mut Concrete, _site: u16, _value: u64, _miss: ()) -> Option<()> {
         self.call("entry_slot_store").then_some(())
     }
@@ -351,16 +347,15 @@ fn several_arms_store_through_the_one_that_holds_the_receivers_shape() {
 }
 
 #[test]
-fn bound_and_entry_plans_reach_their_frame_callouts_and_a_bound_join_completes_what_no_arm_takes() {
+fn an_entry_plan_reaches_its_frame_callout_and_an_arm_takes_its_shape() {
     let mut heap = heap_of(1);
     let (object, shape) = object_of(&mut heap, &[Value::integer(7)]);
     let (other, _) = object_of(&mut heap, &[]);
-    assert_eq!(store(&mut heap, StorePlan::Bound, object, Value::integer(1)).1, ["field_store_bound"]);
     assert_eq!(store(&mut heap, StorePlan::Entry, object, Value::integer(1)).1, ["entry_slot_store"]);
     let arms: &'static [StoreArm] = Box::leak(Box::new([StoreArm { shape, slot: 0, holds: None, class: Type::ANY, image: false }]));
-    let plan = StorePlan::of(arms, StoreJoin::Bound);
+    let plan = StorePlan::of(arms, StoreJoin::Host);
     assert_eq!(store(&mut heap, plan, object, Value::integer(2)).1, Vec::<&str>::new(), "the arm takes its shape");
-    assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_bound"], "the join the plan names");
+    assert_eq!(store(&mut heap, plan, other, Value::integer(2)).1, ["field_store_host"], "the join the plan names");
 }
 
 #[test]

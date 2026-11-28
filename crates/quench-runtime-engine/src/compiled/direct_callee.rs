@@ -5,7 +5,7 @@ use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::DirectCallee;
-use crate::dispatch_fast::{body_tier_in_lane, capture_reads, capture_stores, construct_plan::holding_construct_plan, site_targets_in_lane, this_binding::ThisBinding, LaneView, ScriptCallTarget, SkippedForwarder};
+use crate::dispatch_fast::{body_tier_in_lane, capture_reads, capture_stores, this_binding::ThisBinding, LaneView, ScriptCallTarget};
 use quench_runtime::bytecode::ImmediateLayout;
 
 #[quench_macros::ext(DirectCalleeOps1)]
@@ -104,8 +104,8 @@ pub(crate) fn direct_callees_in_lane(vm: &mut Vm, view: &LaneView, function: u32
         let direct = quench_runtime::staged::calls(instruction.op()) && !instruction.direct_eval() && !instruction.parameter_eval()
             && !quench_runtime::compile::call_plan::tail_site(instruction.returns_from_frame(), body.permits_js_tail_call_at(pc as u32));
         let mut callees = crate::compiled::DirectCandidates::new();
+        // A construction through a forwarding constructor names no direct callee: its forwarding resolution is no plan's.
         if quench_runtime::staged::construction_family(instruction.op()) {
-            callees.extend(construct_callee_in_lane(vm, view, function, pc, ImmediateLayout::argument_count(instruction.imm())));
             return callees;
         }
         let Some(argc) = direct_argc(program, instruction) else { return callees };
@@ -142,29 +142,6 @@ pub(crate) fn direct_argc(program: &quench_runtime::bytecode::ResidualProgram, i
     } else {
         Some(ImmediateLayout::argument_count(instruction.imm()))
     }
-}
-
-/// The `compiled::DirectCallee` of the construction at `pc` of `view` through a forwarding
-/// constructor: the forwarded initializer the site last ran (`construct_keeping_activation_in_lane`)
-/// as the callee, the constructor as the identity it guards and the activation it skips.
-fn construct_callee_in_lane(vm: &Vm, view: &LaneView, function: u32, pc: usize, argc: u16) -> Option<crate::compiled::DirectCallee> {
-    for site in site_targets_in_lane(vm, view, function, pc as u32) {
-        let crate::compiled::CalleeBinding::Forwarded { through, callee } = site.callee else { continue };
-        // SAFETY: as `Vm::script_call_entry`; both targets are copied before anything resolves one.
-        let (constructor, initializer) = unsafe { (*vm.script_call_entry(through)?, *vm.script_call_entry(callee)?) };
-        let method = crate::dispatch_fast::forwarded_method_of(vm, &constructor)?;
-        // The construction's class: the site's, in the running program (`Vm::construct_site_class`).
-        let class = vm.construct_site_class(vm.active_program, function, pc, vm.ordinary_class(through));
-        if !constructor.forwards() || !constructor.constructs() || holding_construct_plan(vm, through, class).is_none_or(|plan| plan.forwarded.is_none()) {
-            return None;
-        }
-        let mut direct = direct_callee_in_lane(vm, view, function, pc, argc, initializer)?;
-        direct.callee = through;
-        direct.bound = quench_runtime::vm::engine_types::BoundClosure::new(through.to_bits(), direct.capture_word());
-        direct.forwarder = Some(SkippedForwarder { function: constructor.function, callee: through, env: constructor.env, method });
-        return Some(direct);
-    }
-    None
 }
 
 /// The `compiled::DirectCallee` of `target`, the callee the call at `pc` of `view` passes

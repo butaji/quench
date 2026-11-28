@@ -135,26 +135,6 @@ impl ConstructPlan {
         }
     }
 
-    /// This plan holding the fields `fields` that a forwarded initializer's adds gave a receiver
-    /// of `shape` (`record_forwarded_fields_in_lane`), forwarding as `forwarded`.
-    pub(crate) fn with_recorded(&self, fields: &Self, shape: u32, forwarded: ForwardedResolution) -> Self {
-        Self {
-            shape,
-            fields: fields.fields,
-            parameters: fields.parameters,
-            defaulted: fields.defaulted,
-            constant: fields.constant,
-            computed: fields.computed,
-            operators: fields.operators,
-            fallbacks: fields.fallbacks,
-            nested: fields.nested,
-            forwarded: Some(forwarded),
-            fixed: fields.fixed,
-            ..*self
-        }
-        .derive_header()
-    }
-
     /// This plan extended by the field `store` adds, `None` once it names all it can.
     pub(crate) fn with_field(mut self, store: &quench_runtime::bytecode::InitializerStore, value: Value) -> Option<Self> {
         let field = usize::from(self.fields);

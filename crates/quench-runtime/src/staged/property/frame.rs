@@ -162,15 +162,6 @@ pub trait PropertyFrame<S: Stage>: Frame<S> {
     #[inline(always)]
     fn math_call(&mut self, _stage: &mut S, _callee: S::Word, _arguments: [S::Word; 2], _count: usize) -> Option<S::Word> { None }
 
-    /// The VM's own-field store hit of `value`, of type `fact`, through the slot the entry bound
-    /// for `site`, which a frame that bound one stores into inline first (a value its writes
-    /// admit); the plain hit otherwise.
-    #[inline(always)]
-    fn field_store_bound(&mut self, stage: &mut S, _owner: Owner, object: S::Word, (atom, site): (u32, u16),
-        (value, _fact): (S::Word, Type), miss: S::Miss) -> Option<()> {
-        self.field_store_host(stage, object, atom, site, value, miss)
-    }
-
     /// Stores `value` through the slot a loop's entry projected for the access at `site`, which
     /// a frame that made the projection (`StorePlan::Entry`) addresses; a failure leaves at `miss`.
     #[inline(always)]

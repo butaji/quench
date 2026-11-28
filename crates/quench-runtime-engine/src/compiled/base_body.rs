@@ -290,7 +290,6 @@ impl Vm {
             fields: folds.then_some(&fields as &dyn Fn(u16) -> bool),
             globals: globals.as_ref(),
             classes: if folds { classes.as_slice() } else { &[] },
-            shapes: &[],
         };
         // The typed array kind each element access of the region proves, from the header (`FunctionFacts::element_view`).
         let facts = self.aot_facts_of(program);
@@ -338,7 +337,7 @@ impl Vm {
             _ => None,
         }).filter(|atom| self.shape_slot(shape, *atom).is_none())
             .filter_map(|atom| Some((atom, self.own_data_bits(prototype, atom)?))).collect();
-        let class = self.heap_reads().live_class_key(instance).map(|key| key & !quench_runtime::staged::field_cache_layout::CLASS_KEY);
+        let class = self.heap_reads().live_class_key(instance)? & !quench_runtime::staged::field_cache_layout::CLASS_KEY;
         Some(ClassProto { register, shape, link: link.bits(), holder: data.exact_shape(), members, class })
     }
 
@@ -391,7 +390,7 @@ pub(crate) fn image_body(program: &ResidualProgram, facts: &AotFacts, function: 
     let constants: Vec<Value> = program.constants.iter().map(|constant| super::facts::immediate(constant).unwrap_or(Value::DELETED)).collect();
     let known = Known {
         program, stitch: &super::tier_policy::STITCH, stores: None, reads: None, adds: None,
-        invalidation: None, constants: &constants, typeof_names: &[], presences: None, fields: None, globals: None, classes: &[], shapes: &[],
+        invalidation: None, constants: &constants, typeof_names: &[], presences: None, fields: None, globals: None, classes: &[],
     };
     let spec = BodySpec { function, registers: body.registers, known, realm: None, seen: &[], facts: Some(facts), typed: &[] };
     // SAFETY: a proven callee names no entry cell (its record is the image's, `Callees::proven`).
