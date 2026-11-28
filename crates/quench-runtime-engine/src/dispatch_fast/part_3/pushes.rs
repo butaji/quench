@@ -153,7 +153,6 @@ pub(in super::super) fn native_call_in_lane(cx: *mut LaneContext, target: &Scrip
     let exit = vm.run_lane_body(&run);
     // SAFETY: the window is the stack's top the fill moved; a returned call leaves the stack as it found it.
     unsafe { vm.lane_stack.values.set_top(window.0) };
-    record_end_in_lane(cx, exit);
     match exit {
         crate::compiled::LaneExit::Returned { value, .. } => Some(value),
         _ => unreachable!("a frameless body leaves nothing: its call form's leaves are Never"),
@@ -190,7 +189,6 @@ pub(in super::super) fn cell_body_ended_in_lane(
     {
         // SAFETY: the window held the callee's registers; the completed call leaves the stack as it found it.
         unsafe { vm(cx).lane_stack.values.set_top(window.0) };
-        record_end_in_lane(cx, exit);
         let (registers, next) = complete_leaf_in_lane(cx, value, CONTEXT_LEAF).expect("the leaf runs until it completes or materializes");
         return Resumed::At(registers, next, Carried::script(cx));
     }

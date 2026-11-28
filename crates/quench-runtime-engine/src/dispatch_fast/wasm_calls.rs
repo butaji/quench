@@ -362,7 +362,7 @@ impl WasmActivation for LaneCall<'_> {
         let called = in_place_in_lane(self.cx, self.ip, |vm, code| {
             vm.call_compiled_js_wasm_import(
                 program, code, callee, target, capture, &signature, Value::UNDEFINED, &args,
-                Value::UNDEFINED, std::ptr::null_mut(),
+                Value::UNDEFINED,
             )
         });
         match called {

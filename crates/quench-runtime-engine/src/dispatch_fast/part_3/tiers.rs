@@ -58,7 +58,6 @@ pub(in super::super) fn entry_receiver_in_lane(cx: *mut LaneContext, binds_this:
 pub(in super::super) fn body_concluded_in_lane(cx: *mut LaneContext, r: Registers, ip: Ip, own: &LaneView, method: &crate::compiled::LaneMethod, left: crate::compiled::LaneExit) -> Resumed {
     let base = unsafe { (*cx).base };
     if let crate::compiled::LaneExit::Returned { pc, value } = left {
-        record_end_in_lane(cx, left);
         // SAFETY: the record that completes the activation is one of its function's.
         return returned_in_lane(cx, unsafe { base.add(pc) }, value);
     }

@@ -295,7 +295,7 @@ pub mod words {
 /// and memory values as `u64`, the compiled artifact, table words and diagnostics as bytes (only their
 /// pointers are read), the program id as `u32` and the raised completion as three words (an `Option<Raised>`,
 /// 24 bytes). `base_rows` checks each against the runtime type.
-pub type CallContextWords = super::record_heads::CallContextHead<u64, u8, u8, u8, u32, [usize; 3]>;
+pub type CallContextWords = super::record_heads::CallContextHead<u64, u8, u8, u32, [usize; 3]>;
 pub const CALL_CONTEXT_ADAPTER_PAYLOAD: usize = core::mem::offset_of!(CallContextWords, adapter_payload);
 pub const CALL_CONTEXT_BODY_SHIM: usize = core::mem::offset_of!(CallContextWords, body_shim);
 pub const JS_STEP_LOOP_ENTRY: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, loop_entry);

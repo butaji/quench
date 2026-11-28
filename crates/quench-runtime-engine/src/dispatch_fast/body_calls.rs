@@ -485,7 +485,6 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     // SAFETY: the program's views outlive the lane run.
     let own = unsafe { &*(*cx).views }.get(target.body.function as usize).and_then(quench_runtime::vm::program_store::derived_lane_view);
     let Some(own) = own else {
-        if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_LEAVE callee={} why=no-view", target.body.function); }
         return leave(start, Value::UNDEFINED)
     };
     if own.body_view_in_lane().is_none() { specialize_in_lane(cx, own, target.body.function, &[]); }
@@ -497,10 +496,6 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
         // A caller with a body of its own planned this call already (`bind_callees`); a loop region did not.
         let caller_body = calling_body_in_lane(cx);
         if own.body_view_in_lane().is_none() && !rest_view && !caller_body { own.note_native_caller(); }
-        if quench_runtime::trace::Channel::BodyLeave.on() {
-            let why = if own.body_view_in_lane().is_some() { "not-admitted" } else if own.warming() { "warming" } else { "no-body" };
-            eprintln!("QUENCH_CALLEE_LEAVE callee={} why={why} tier={}", target.body.function, own.tier_note());
-        }
         return leave(start, Value::UNDEFINED);
     };
     let (program, code) = unsafe { ((*cx).program, &*(*cx).code) };
@@ -513,11 +508,9 @@ fn body_run_in_lane(cx: *mut LaneContext, call: &BodyCall, target: &ScriptCallTa
     if let crate::compiled::LaneExit::Returned { value, .. } = exit
         && !native_frames::left_native_frames(cx)
     {
-        record_end_in_lane(cx, exit);
         drop(method);
         return body_returned_in_lane(cx, call, Some(value), constructs);
     }
-    if quench_runtime::trace::Channel::BodyLeave.on() { eprintln!("QUENCH_CALLEE_EXIT callee={} exit={exit:?}", target.body.function); }
     let resumed = body_left_in_lane(cx, registers, own, &method, exit);
     drop(method);
     match resumed {

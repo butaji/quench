@@ -27,7 +27,6 @@ pub(crate) unsafe extern "C" fn vm_call_callout(
     // SAFETY: the row passes the context its entry was called with, whose VM is suspended in
     // that call, and the argument and result words of this call.
     let context = unsafe { &mut *context };
-    note_compiled_callout(context.known_callouts);
     let vm_pointer = context.vm.cast::<Vm>();
     let (program, env) = (context.program, context.env);
     // The VM's own code runs outside compiled code: no guard fault is ours.
