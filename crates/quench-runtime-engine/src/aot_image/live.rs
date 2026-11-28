@@ -237,6 +237,11 @@ fn writable_text<T>(spans: &[(usize, usize)], link: impl FnOnce() -> Result<T, S
         else { Err(format!("mprotect of the lane text failed: {}", std::io::Error::last_os_error())) }
     });
     protect(libc::PROT_READ | libc::PROT_WRITE)?;
+    // Written, the pages are no longer the file's: a resident-set release must keep them.
+    for &span in spans.iter().filter(|span| span.1 > 0) {
+        let (start, bytes) = pages(span);
+        quench_runtime::placed_text::note_written(start, start + bytes);
+    }
     let linked = link();
     protect(libc::PROT_READ | libc::PROT_EXEC)?;
     for &(address, length) in spans { crate::compiled::code_heap::views::flush_icache(address as *mut u8, length); }
