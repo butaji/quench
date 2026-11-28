@@ -2740,6 +2740,11 @@ impl Vm {
         fast_lane: bool,
     ) -> Result<(usize, usize), JsError> {
         loop {
+            // A capture took the frames the pending calls name (the frame stack may be empty now) and no handler
+            // catches it: the run ends with the chain.
+            if error.is_captured() {
+                return Err(error);
+            }
             // The clone keeps the residual alive for the whole iteration, past any switch of `executing`.
             let retained = executing.retained.clone();
             let p = retained.as_deref().unwrap_or(entry_program);
@@ -2747,10 +2752,6 @@ impl Vm {
             match self.exception_handler_target(p, frame, function, throwing_pc, error) {
                 Ok(target) => return Ok((frame, target)),
                 Err(unhandled) => {
-                    // A capture took the frames the pending calls name: the run ends with the chain.
-                    if unhandled.is_captured() {
-                        return Err(unhandled);
-                    }
                     self.frames[frame].pc = pc;
                     self.frames[frame].pc_is_resume = true;
                     let Some(mut pending) = pending_calls.pop() else {
