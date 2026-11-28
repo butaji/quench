@@ -107,6 +107,13 @@ impl Point {
         ranges::exact(&ranges::lookup(&self.types, constants), instruction).is_some_and(|range| range.fits_int32())
     }
 
+    /// Whether the arithmetic of `instruction` has an exact result here within `IntRange::PRODUCT_EXACT`, where its
+    /// binary64 is exact, so the ToInt32 of the product needs no exactness test (`truncated_product`).
+    pub(crate) fn product_exact(&self, constants: &[Constant], instruction: WideInstruction) -> bool {
+        ranges::exact(&ranges::lookup(&self.types, constants), instruction)
+            .is_some_and(|range| IntRange::PRODUCT_EXACT.contains(range))
+    }
+
     /// Whether `register` holds a Number at this point on every path into it (`Type::NUMBER`).
     pub(crate) fn holds_number(&self, register: Register) -> bool {
         self.types.get(usize::from(register)).is_some_and(|ty| ty.is_subtype(Type::NUMBER))
