@@ -1060,14 +1060,14 @@ fn a_method_only_called_on_its_class_instances_takes_that_class_as_this() {
 fn an_instance_of_a_class_only_stored_by_name_never_departs_its_shape() {
     let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); s.count = 1;");
     let facts = analyze(&program);
-    assert!(facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+    assert!(facts.class_writable_cell(function_named(&program, "Scheduler") as u32));
 }
 
 #[test]
 fn a_delete_on_an_instance_departs_its_class_shape() {
     let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); delete s.count;");
     let facts = analyze(&program);
-    assert!(!facts.class_never_departs(function_named(&program, "Scheduler") as u32));
+    assert!(!facts.class_writable_cell(function_named(&program, "Scheduler") as u32));
 }
 
 #[test]
@@ -1196,10 +1196,21 @@ fn a_class_only_built_by_direct_new_is_a_fixed_cell_from_birth() {
 }
 
 #[test]
-fn a_parent_of_a_derived_class_is_no_fixed_cell_since_super_constructs_it() {
-    let program = program("function Scheduler() { this.count = 0; } class Timer extends Scheduler { constructor() { super(); } } var t = new Timer();");
+fn a_parent_of_a_derived_class_stays_a_fixed_cell_and_the_derived_class_is_none() {
+    let program = program("function Scheduler() { this.count = 0; } class Timer extends Scheduler { constructor() { super(); } } \
+                           var s = new Scheduler(); var t = new Timer();");
     let facts = analyze(&program);
-    assert!(!facts.class_fixed_cell(function_named(&program, "Scheduler") as u32), "super() constructs the parent with new_target Timer");
+    assert!(facts.class_fixed_cell(function_named(&program, "Scheduler") as u32), "super() builds a Timer, whose class word is Timer's");
+    assert!(!facts.class_fixed_cell(function_named(&program, "Timer") as u32), "a derived class builds no instance in its own frame");
+}
+
+#[test]
+fn a_frozen_instance_keeps_its_slots_for_reads_but_not_for_stores() {
+    let program = program("function Scheduler() { this.count = 0; } var s = new Scheduler(); Object.freeze(s); s.count;");
+    let facts = analyze(&program);
+    let class = function_named(&program, "Scheduler") as u32;
+    assert!(facts.class_fixed_cell(class), "a flag transition moves no slot");
+    assert!(!facts.class_writable_cell(class), "a frozen instance rejects stores");
 }
 
 #[test]
