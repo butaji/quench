@@ -1135,14 +1135,6 @@ impl LoopEntry {
         (self.primed - left).max(0) as u64
     }
 
-    /// Lets a b-jit region's run take at most `budget` backward edges (`LoopTier::backedge_budget`): the word is
-    /// primed with it, and the stencil edge that debits it to zero leaves at the jump, so a loop due to move to u-jit
-    /// leaves its stencil code mid-run. Never above `BACKEDGE_BUDGET`, the run's own bound.
-    pub(crate) fn set_backedge_budget(&mut self, budget: u64) {
-        self.primed = i64::try_from(budget).unwrap_or(BACKEDGE_BUDGET).clamp(1, BACKEDGE_BUDGET);
-        self.words[ENTRY_BACKEDGE_COUNT].write(self.primed as u64);
-    }
-
     /// The record's words. Native OSR may also update the private first counter word.
     pub(crate) fn words_mut(&mut self) -> *mut u64 {
         debug_assert!(self.length <= ENTRY_WORDS);

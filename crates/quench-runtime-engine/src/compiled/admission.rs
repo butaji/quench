@@ -1,6 +1,6 @@
 //! The one admission policy for compiles: every question that decides whether a callee or a
 //! body compiles, and every reason it does not, lives here. A refused compile records its
-//! `Refusal`; `QUENCH_REFUSALS=1` prints the counts at exit (`refusal_report`).
+//! `Refusal`.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
@@ -11,9 +11,8 @@ use crate::dispatch_fast::lane_body_stats::{miss, Miss};
 use crate::dispatch_fast::LaneView;
 use quench_runtime::vm::Vm;
 
-/// Why a compile or a callee's admission is refused. Each variant is one refusal site, counted
-/// by `record` and named in `refusal_report`. The OSR region reasons (`RegionRejection`) share
-/// this enum through `From`.
+/// Why a compile or a callee's admission is refused. Each variant is one refusal site. The OSR region reasons (`RegionRejection`) share this enum
+/// through `From`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Refusal {
     /// The predicted tier is the interpreter (`PredictedTier::Interpreter`, `PlanNotAmortized`).
@@ -45,37 +44,6 @@ pub(crate) enum Refusal {
 }
 
 impl Refusal {
-    /// The report's names, in `slot` order.
-    const NAMES: [&'static str; 17] = [
-        "not-amortized", "callee-not-eligible", "no-unit", "frame-not-admitted",
-        "no-entry", "compile-bound", "nothing-native", "dependencies",
-        "region-too-large", "unsupported-instruction", "register-limit", "capture-limit", "array-limit",
-        "field-limit", "field-store-limit", "field-mutation", "array-redefined",
-    ];
-
-    /// The counter this refusal counts in (`NAMES`).
-    fn slot(self) -> usize {
-        match self {
-            Self::NotAmortized => 0,
-            Self::CalleeNotEligible => 1,
-            Self::NoUnit => 2,
-            Self::FrameNotAdmitted => 3,
-            Self::NoEntry => 4,
-            Self::CompileBound => 5,
-            Self::NothingNative => 6,
-            Self::Dependencies => 7,
-            Self::RegionTooLarge => 8,
-            Self::UnsupportedInstruction(_) => 9,
-            Self::RegisterLimit => 10,
-            Self::CaptureLimit => 11,
-            Self::ArrayLimit => 12,
-            Self::FieldLimit => 13,
-            Self::FieldStoreLimit => 14,
-            Self::FieldMutation => 15,
-            Self::ArrayRedefined => 16,
-        }
-    }
-
     /// The plan-stage miss the lane diagnostics count this refusal as, if it has one.
     fn miss(self) -> Option<Miss> {
         Some(match self {
@@ -90,71 +58,12 @@ impl Refusal {
         })
     }
 
-    /// Whether the refusal is an expensive fallback (`quench_runtime::fallback`): a unit that wanted
-    /// to compile and could not. The tier model's pricing and the compile bound decide that a
-    /// compile does not pay, which is policy, not a fallback.
-    fn is_fallback(self) -> bool {
-        !matches!(self, Self::NotAmortized | Self::CompileBound)
-    }
-
-    /// The refusal's report name, with the operation an unsupported instruction names.
-    pub(crate) fn describe(self) -> String {
-        let name = Self::NAMES[self.slot()];
-        match self {
-            Self::UnsupportedInstruction(op) => match quench_runtime::bytecode::Op::from_index(usize::from(op)) {
-                Some(op) => format!("{name} {op:?}"),
-                None => format!("{name} {op}"),
-            },
-            _ => name.to_owned(),
-        }
-    }
 }
 
-/// Refusals counted since the process started, one per `Refusal::slot`. Atomics rather than
-/// thread-local cells, so the exit report sees the compiles of every thread.
-static COUNTS: [std::sync::atomic::AtomicU64; Refusal::NAMES.len()] = [const { std::sync::atomic::AtomicU64::new(0) }; Refusal::NAMES.len()];
-static REPORT: std::sync::Once = std::sync::Once::new();
-
-/// Whether refusals print at exit (`QUENCH_REFUSALS=1`).
-fn reporting() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("QUENCH_REFUSALS").is_ok_and(|value| value == "1"))
-}
-
-/// Counts `refusal`, and registers the exit report on the first count when reporting is on.
-pub(crate) fn record(refusal: Refusal) {
-    COUNTS[refusal.slot()].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if quench_runtime::fallback::on() && refusal.is_fallback() {
-        quench_runtime::fallback::note_in_focus(quench_runtime::fallback::Fallback::JitReject, format_args!("{}", refusal.describe()));
-    }
-    if reporting() {
-        REPORT.call_once(|| {
-            // SAFETY: `report` is a plain function that outlives the process.
-            unsafe { libc::atexit(report) };
-        });
-    }
-}
-
-/// Counts `refusal` and, where the lane diagnostics name it as a plan miss, counts that too
-/// (`lane_body_stats::miss`, which also names the decline reason).
+/// Where the lane diagnostics name `refusal` as a plan miss, counts it (`lane_body_stats::miss`,
+/// which also names the decline reason).
 pub(crate) fn refuse(vm: &Vm, refusal: Refusal) {
-    record(refusal);
     if let Some(reason) = refusal.miss() { miss(vm, reason); }
-}
-
-/// The refusals counted so far, `QUENCH_REFUSALS {...}`, most frequent first; only the nonzero ones.
-pub fn refusal_report() -> String {
-    let mut counts: Vec<(&str, u64)> = Refusal::NAMES.iter().zip(COUNTS.iter())
-        .map(|(name, count)| (*name, count.load(std::sync::atomic::Ordering::Relaxed)))
-        .filter(|(_, count)| *count != 0).collect();
-    counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-    let fields = counts.iter().map(|(name, count)| format!("\"{name}\":{count}")).collect::<Vec<_>>().join(",");
-    format!("QUENCH_REFUSALS {{{fields}}}")
-}
-
-/// Prints `refusal_report` at process exit.
-extern "C" fn report() {
-    eprintln!("{}", refusal_report());
 }
 
 /// The kinds of unit whose tier gate `may_compile` decides.
@@ -165,8 +74,8 @@ pub(crate) enum UnitKind {
     /// A loop region, under its memory policy's loop tier.
     Region(quench_runtime::MemoryPolicy),
     /// An ahead image's body of this function, lowered at build time or installed at run time: the one
-    /// AOT kind. No JIT mode or memory policy gates it, only the `AotBodies` trace range.
-    Ahead(u32),
+    /// AOT kind. No JIT mode or memory policy gates it.
+    Ahead,
     /// A b-jit (stencil) body: its facts decide it (`specialize`).
     Base,
     /// A Wasm function's specialization (its lowered body and entry): always cleared.
@@ -178,8 +87,7 @@ pub(crate) enum UnitKind {
     Regexp,
     /// A JavaScript function's numeric or lane compile at an entry, when the Cranelift tiers run here.
     Entry,
-    /// A Wasm program's module compile at a root (`Vm::wasm_module_unit`): the program is Wasm, and a
-    /// root-only compile names its root.
+    /// A Wasm program's module compile (`Vm::wasm_module_unit`): the program is Wasm.
     WasmModule,
     /// A lane body's plan from an entry, before planning (phase A): the compile bound, the tier predicted
     /// makes, the looped iterations' payment. Its unit is the proof every later lane gate needs.
@@ -209,12 +117,10 @@ pub(crate) struct UnitFacts {
     pub(crate) indexes_typed: bool,
     /// The Cranelift function tiers run in this VM (`tier_policy::tiers_run`), for `UnitKind::Entry`.
     pub(crate) cranelift_allowed: bool,
-    /// The runtime compiles Wasm modules whole at their first entry (`wasm_modules_compile_at_first_entry`).
+    /// The runtime compiles Wasm modules whole at their first entry.
     pub(crate) wasm_first_entry: bool,
     /// The program is a Wasm program (`ProgramKind::Wasm`), for `UnitKind::WasmModule`.
     pub(crate) wasm_program: bool,
-    /// A root-only compile names its root (`WasmModule`).
-    pub(crate) root_ok: bool,
     /// Lane phase A: the compile bound leaves room for a compile from this entry (`compiles_left_in_lane`).
     pub(crate) compiles_left: bool,
     /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
@@ -239,25 +145,15 @@ fn may_compile(kind: UnitKind) -> bool {
     match kind {
         UnitKind::Body => quench_runtime::vm::tier_policy::may_compile(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
-        UnitKind::Ahead(function) => within_trace_range(quench_runtime::trace::Dev::AotBodies, function),
-        UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
+        UnitKind::Ahead | UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
         UnitKind::WasmEager | UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
             unreachable!("facts decide these kinds, in `specialize`"),
     }
 }
 
-/// Whether the trace setting `setting` (a `LOOP_RANGE` style `low-high` range, or off) admits
-/// `function`. Off admits every function.
-pub(crate) fn within_trace_range(setting: quench_runtime::trace::Dev, function: u32) -> bool {
-    !setting.on() || setting.value()
-        .and_then(|range| range.split_once('-'))
-        .and_then(|(low, high)| Some((low.parse::<u32>().ok()?, high.parse::<u32>().ok()?)))
-        .is_some_and(|(low, high)| (low..=high).contains(&function))
-}
-
-/// The unit of an ahead image's body of `function`, where the trace range admits it.
-pub(crate) fn ahead_unit(function: u32) -> Option<CompiledUnit> {
-    specialize(UnitRequest { kind: UnitKind::Ahead(function), facts: UnitFacts::default() }).compiled()
+/// The unit of an ahead image's body: the AOT kind is always cleared, so every image body may compile.
+pub(crate) fn ahead_unit() -> CompiledUnit {
+    CompiledUnit { ceiling: code_ceiling(UnitKind::Ahead) }
 }
 
 /// One request to specialize a unit (`specialize`): what it is and the facts its decisions read.
@@ -306,7 +202,7 @@ fn code_ceiling(kind: UnitKind) -> usize {
         UnitKind::Entry => JS_COMPILED_MAX_CODE_BYTES,
         UnitKind::Regexp => REGEXP_NATIVE_MAX_CODE_BYTES,
         // An image body compiles once, offline: the JIT lane body's warm-up bound is not its cost.
-        UnitKind::Ahead(_) => AHEAD_BODY_MAX_CODE_BYTES,
+        UnitKind::Ahead => AHEAD_BODY_MAX_CODE_BYTES,
         _ => LANE_BODY_MAX_CODE_BYTES,
     }
 }
@@ -314,7 +210,7 @@ fn code_ceiling(kind: UnitKind) -> usize {
 /// A unit minted for a test, through `specialize` (an AOT unit of the root, which no mode gates).
 #[cfg(test)]
 pub(crate) fn test_unit() -> CompiledUnit {
-    ahead_unit(0).expect("an AOT unit always compiles")
+    ahead_unit()
 }
 
 /// The one specializer entry: whether the request's unit may compile, under the process's JIT
@@ -331,7 +227,7 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
         UnitKind::WasmEager => facts.wasm_first_entry,
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
-        UnitKind::WasmModule => facts.wasm_program && facts.root_ok,
+        UnitKind::WasmModule => facts.wasm_program,
         // Phase A: the compile bound, then the looped iterations (the pick decided the tier before this gate).
         UnitKind::LanePlan => {
             if !facts.compiles_left { return Decision::Declined; }
@@ -347,24 +243,9 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
             if facts.entry_none && !facts.called_by_regions && facts.looped_none && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
             true
         }
-        UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead(_) | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
+        UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
     };
-    if cleared && bisected_out() { return Decision::Declined; }
     if cleared { Decision::Compile(CompiledUnit { ceiling: code_ceiling(kind) }) } else { Decision::Declined }
-}
-
-/// Whether the `unit-bisect` range leaves out the unit `specialize` is about to clear: each cleared
-/// unit takes the next number, and only numbers in the range compile.
-fn bisected_out() -> bool {
-    use quench_runtime::trace::Dev::UnitBisect;
-    if !UnitBisect.on() { return false; }
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let number = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if UnitBisect.value().is_none_or(str::is_empty) {
-        eprintln!("unit-bisect {number}");
-        return false;
-    }
-    !within_trace_range(UnitBisect, number)
 }
 
 /// The tiers of the JIT mode, as the specializer names them.
@@ -381,7 +262,7 @@ pub(crate) fn diagnosing(vm: &Vm) -> bool { vm.programs.js_jit_diagnostics_enabl
 
 /// The unit of a loop region that `policy` lets compile: the policy's loop tier, through `specialize`.
 pub(crate) fn region_unit_under(policy: quench_runtime::MemoryPolicy) -> Option<CompiledUnit> {
-    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default(), fresh: false }).compiled()
+    specialize(UnitRequest { kind: UnitKind::Region(policy), facts: Default::default() }).compiled()
 }
 
 /// The unit of a loop region this VM may compile (`region_unit_under` of its memory policy).
@@ -465,7 +346,6 @@ pub(crate) fn admit_callee(program: &ResidualProgram, callee: &Function, how: Ca
         }
     };
     if admitted { Ok(()) } else {
-        record(Refusal::CalleeNotEligible);
         Err(Refusal::CalleeNotEligible)
     }
 }

@@ -109,6 +109,7 @@ pub(crate) use call_frames::ProvenCall;
 #[path = "lane_region/register_rows.rs"] pub(crate) mod register_rows;
 #[path = "lane_region/window_locals.rs"] pub(crate) mod window_locals;
 #[path = "lane_region/element_rows.rs"] pub(crate) mod element_rows;
+#[path = "lane_region/tag_proofs.rs"] pub(crate) mod tag_proofs;
 #[path = "lane_region/fixed_arrays.rs"] pub(crate) mod fixed_arrays;
 #[cfg(test)] #[path = "lane_region/element_tests.rs"] pub(crate) mod element_tests;
 #[cfg(test)] #[path = "lane_region/loop_shape_tests.rs"] pub(crate) mod loop_shape_tests;
@@ -3243,20 +3244,6 @@ impl Lowering<'_, '_> {
     }
 
     /// Lower the instruction at `pc`; whether control falls through to the next.
-    /// The instruction at unit `pc`, which this body hands back to the lane, as an expensive fallback
-    /// (`quench_runtime::fallback`), at its own function's instruction.
-    #[cold]
-    fn unlowered_fallback(&self, pc: usize) {
-        let (function, at) = match self.unit.origins.get(pc) {
-            Some(super::lane_unit::Origin::Inlined { frame, pc }) => (self.unit.frames.get(*frame).map_or(self.function_id, |call| call.target.function), *pc),
-            Some(super::lane_unit::Origin::Caller(pc)) => (self.function_id, *pc),
-            None => (self.function_id, pc as u32),
-        };
-        let what = if self.helpers == LaneHelpers::Ahead { "unlowered in an ahead image" } else { "unlowered" };
-        quench_runtime::fallback::note(quench_runtime::fallback::Fallback::HelperCall, format_args!("{what}"),
-            quench_runtime::fallback::Site::new(self.program, function, at));
-    }
-
     fn instruction(&mut self, state: &mut State, pc: usize, instruction: WideInstruction) -> bool {
         if self.consumed.contains(pc) { return true; }
         // A construction readiness a loop's entry tested holds only across quiet instructions
@@ -4265,7 +4252,9 @@ impl Lowering<'_, '_> {
                 let bits = self.tagged(state, register);
                 let records = emit_js_record_base(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.object_record_base));
                 let class_base = headers::class_table_base(&mut self.builder, self.payload);
-                ObjectHeader::prove(&mut self.builder, bits, ObjectTable::Unchecked(records), class_base, None, missed)
+                // The register's solver type proves its family where it names a direct object: no family test (`ObjectRecord::prove`).
+                let known = Some(state.values[usize::from(register)].value).filter(|fact| tag_proofs::proves_object(fact.ty));
+                ObjectHeader::prove(&mut self.builder, bits, ObjectTable::Unchecked(records), class_base, known, missed)
             }
             _ => self.object_header(state, None, true, missed),
         };
@@ -4538,9 +4527,13 @@ impl Lowering<'_, '_> {
             // The closure the entry holds, admitted by its function on this edge: the capture view
             // every iteration reads through is the one it resolves here.
             let callee = self.tagged(state, register);
-            let function = self.unit.frames[frame].target.function;
-            let matched = self.function_binding(callee, function);
-            emit_js_guard(&mut self.builder, matched, exit);
+            // A call plan that names exactly this frame's target proves the callee's body, which the held closure is
+            // (`invariant_callee_read`: the loop neither writes the register nor reads the callee again): no compare.
+            if !self.plan_call(state, exit, frame) {
+                let function = self.unit.frames[frame].target.function;
+                let matched = self.function_binding(callee, function);
+                emit_js_guard(&mut self.builder, matched, exit);
+            }
             return Ok(Some(callee));
         }
         let read = invariant_callee_read(self.unit, reads.iter().map(|read| read.pc), frame, boundaries)
@@ -4562,11 +4555,13 @@ impl Lowering<'_, '_> {
             if self.hoisted_by_enclosing_loop(pc, owner) { continue; }
             let field = self.loop_fields.iter().position(|field| field.reads[0] == pc);
             let exit = self.guard_exit(state, header as u32);
-            let (value, int32) = if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. })) {
+            // The flag `typed`: the solver or the read already types the value's int32 tag, so no test is made for it.
+            let (value, int32, typed) = if matches!(crate::compiled::performed(instruction), Some(quench_runtime::staged::Operation::LoadCapture { .. })) {
                 let Ok(admitted_callee) = self.admitted_callee_read(state, pc, &reads, &boundaries, exit, callee) else { continue };
                 let value = self.load_capture(state, pc, instruction, exit, admitted_callee, if rooted { RootedRead::OnEntry } else { RootedRead::No });
-                let int32 = self.capture_int32_use(pc, &boundaries) || self.capture_solved_int(pc);
-                (value, int32)
+                let typed = self.capture_solved_int(pc);
+                let int32 = self.capture_int32_use(pc, &boundaries) || typed;
+                (value, int32, typed)
             } else {
                 let Some(FieldLookup::Atom { atom, base, cache_site }) = instruction.field_lookup() else { continue };
                 let register = owner.or_else(|| base.register_index());
@@ -4574,13 +4569,13 @@ impl Lowering<'_, '_> {
                 match register.filter(|_| super::names_length(self.program, atom)) {
                     Some(register) => {
                         let length = self.length_read(state, pc, register, (atom, cache_site), exit, Some(header));
-                        (int_tagged(&mut self.builder, length), true)
+                        (int_tagged(&mut self.builder, length), true, true)
                     }
                     None => {
                         let base = register.map_or(quench_runtime::bytecode::FieldBase::THIS, quench_runtime::bytecode::FieldBase::register);
                         let lookup = FieldLookup::Atom { atom, base, cache_site };
                         let Some(value) = self.field_value(state, (base, lookup), &[(atom, cache_site)], HeldRead::default(), exit) else { continue };
-                        (value, field_reads::int32_read(self.program, self.fields, instruction))
+                        (value, field_reads::int32_read(self.program, self.fields, instruction), false)
                     }
                 }
             };
@@ -4590,7 +4585,8 @@ impl Lowering<'_, '_> {
                     self.cell_before(*store, self.unit.instructions[*store].register_a()).ty.is_int32()
                 })
             } else { int32 };
-            if int32 {
+            // An int32 read from a load is tested here; a capture the solver types int32, or a length, already holds its tag.
+            if int32 && !typed {
                 let integer = is_int_tagged(&mut self.builder, value);
                 emit_js_guard(&mut self.builder, integer, exit);
             }

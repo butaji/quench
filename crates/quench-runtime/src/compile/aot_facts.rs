@@ -46,6 +46,9 @@ mod tests;
 
 use std::collections::BTreeMap;
 
+/// The linear forms an index range's ends are made of (`FunctionFacts::index_ceiling`), for the lane to read their bases.
+pub use crate::staged::effects::{Affine, Base};
+
 use crate::bytecode::ResidualProgram;
 use crate::typed_ir::{ElementClass, Representation};
 use super::call_plan::{self, CallPlan};
@@ -409,6 +412,12 @@ impl AotFacts {
     /// The classes some construction (`new`) always constructs (`construct_classes`).
     pub fn constructed_classes(&self) -> std::collections::BTreeSet<u32> {
         self.construct_classes.values().copied().collect()
+    }
+
+    /// The function body class `class` runs (`ClassIds::body`): `class` itself for a constructor's own class, the shared body
+    /// of a synthetic class. Code, frame sizes, callee bodies and function facts are keyed by this function id.
+    pub fn class_body(&self, class: u32) -> u32 {
+        self.classes.body(class)
     }
 
     /// The facts of function `function`, for its lowering.

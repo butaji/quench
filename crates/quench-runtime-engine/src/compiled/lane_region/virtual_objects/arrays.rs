@@ -122,11 +122,10 @@ impl Lowering<'_, '_> {
 
     /// Allocates each kept array live at `pc` from its element values, into its register, and drops the rest:
     /// what the instruction at `pc`, or the interpreter resuming there, reads as the array. Nothing allocates
-    /// between a construction and here (`keeps_virtuals`). Each `NewArray` is an allocation: it sets a collection
-    /// due and never runs one (DESIGN 4.7), so no poll is needed before it. Its helper refuses at entry where a
-    /// collection is already due, and the code traps there. Two kept arrays live at one point are two
-    /// allocations, so the second can find the first's due collection and trap. Kept receivers materialized at
-    /// the same point (`materialize_virtuals`) share that hazard.
+    /// between a construction and here (`keeps_virtuals`). Each array is made by `MaterializeArray`, which never
+    /// refuses for a due collection: an allocation sets a collection due and never runs one (DESIGN 4.7), and
+    /// the next safepoint collects (the lane's leave, or an allocating helper's refusal or poll). So any number
+    /// of kept arrays and receivers can be made at one point, and no poll is needed before them.
     pub(crate) fn materialize_arrays(&mut self, state: &mut State, pc: usize) {
         for kept in std::mem::take(&mut state.virtual_arrays) {
             if !self.is_live(pc, kept.register) { continue; }
@@ -154,13 +153,10 @@ impl Lowering<'_, '_> {
         }
     }
 
-    /// The array `NewArray` makes of `length` from `elements` (a slot's address, or none for holes); its refusal
-    /// where a collection is due traps (`materialize_arrays`).
+    /// The array `MaterializeArray` makes of `length` from `elements` (a slot's address, or none for holes). It
+    /// never answers `DELETED`, so the result is the array with no check (`materialize_arrays`).
     fn new_kept_array(&mut self, payload: ir::Value, length: ir::Value, elements: ir::Value) -> ir::Value {
-        let this = self.helper_call(LaneHelper::NewArray, &[payload, length, elements]);
-        let built = self.raw_compare_imm(Relation::NotEqual, this, Value::DELETED.to_bits() as i64);
-        self.builder.ins().trapz(built, ir::TrapCode::unwrap_user(1));
-        this
+        self.helper_call(LaneHelper::MaterializeArray, &[payload, length, elements])
     }
 
     /// A stack slot holding the bits of `elements` in index order, its address.
@@ -176,8 +172,8 @@ impl Lowering<'_, '_> {
 
     /// Where the access `key` of a kept array of `length` elements lands at `pc`: the solver's int range of the
     /// key must lie in `0..length`. A key of one value is that element; any other is selected by its word, read
-    /// as an int (a guard leaves at `pc` where the register holds no int). `select_ok` admits the select: a read
-    /// through it needs every element written, so no hole is read.
+    /// as an int (a guard leaves at `pc` where the register holds no int). `select_ok` admits the select: an access
+    /// through it needs every element written, so no hole is read or left unrecorded.
     fn kept_index(&mut self, state: &mut State, pc: usize, register: Register, length: usize, select_ok: bool) -> Option<KeptIndex> {
         let range = self.cell_before(pc, register).ty.int_range()?;
         if range.min < 0 || range.max >= length as i64 { return None; }
@@ -205,14 +201,23 @@ impl Lowering<'_, '_> {
         }
     }
 
+    /// Whether an unwritten element of a frame array reads as `undefined`: no builtin prototype object has an index
+    /// property in the closed world the facts describe (`AotFacts::prototype_indices_empty`). Without facts, it is not known.
+    fn holes_read_undefined(&self) -> bool {
+        self.vm.facts.is_some_and(|facts| facts.function_facts(self.function_id).prototype_indices_empty())
+    }
+
     /// `arr[key]` of a kept array into `destination`: the element's value, typed by the join of the elements the
-    /// access may name. A destination that is the array itself ends the array there.
+    /// access may name. A destination that is the array itself ends the array there. A constant index of an unwritten
+    /// element (a hole) is read only where `holes_read_undefined`; elsewhere the array materializes at the read.
     fn kept_read(&mut self, state: &mut State, pc: usize, instruction: WideInstruction,
         (base, key): (Register, quench_runtime::bytecode::Operand)) -> Option<bool> {
         let position = state.virtual_arrays.iter().position(|kept| kept.register == base)?;
         let array = &state.virtual_arrays[position];
-        let (length, every_written) = (array.elements.len(), array.written == all_elements(array.elements.len()));
+        let (length, written) = (array.elements.len(), array.written);
+        let every_written = written == all_elements(length);
         let index = self.kept_index(state, pc, key.register_index()?, length, every_written)?;
+        if let KeptIndex::At(element) = index && written & (1u16 << element) == 0 && !self.holes_read_undefined() { return None; }
         let elements = state.virtual_arrays[position].elements.clone();
         let value = self.select_element(&elements, index);
         let ty = elements.iter().map(|(_, ty)| *ty).reduce(|a, b| a.join(b))?;
@@ -224,11 +229,14 @@ impl Lowering<'_, '_> {
 
     /// `arr[key] = value` of a kept array: the element the index names takes the value's bits, and each element the
     /// index may name takes them in a select. A value that is itself kept escapes into the array, so the write
-    /// materializes instead. Only a constant index proves its element written.
+    /// materializes instead. Only a constant index proves its element written, so a select writes only an array
+    /// with every element written (`kept_read`'s rule): its unwritten elements would otherwise lose the value.
     fn kept_write(&mut self, state: &mut State, pc: usize, (value, base, key): (Register, Register, Register)) -> Option<bool> {
         if value == base || self.is_kept(state, value) { return None; }
         let position = state.virtual_arrays.iter().position(|kept| kept.register == base)?;
-        let index = self.kept_index(state, pc, key, state.virtual_arrays[position].elements.len(), true)?;
+        let array = &state.virtual_arrays[position];
+        let (length, every_written) = (array.elements.len(), array.written == all_elements(array.elements.len()));
+        let index = self.kept_index(state, pc, key, length, every_written)?;
         let ty = state.values[usize::from(value)].value.ty;
         let bits = self.tagged(state, value);
         if let KeptIndex::At(element) = index { state.virtual_arrays[position].written |= 1u16 << element; }

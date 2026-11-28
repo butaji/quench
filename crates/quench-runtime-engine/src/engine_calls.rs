@@ -166,7 +166,7 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_enable_l
 #[unsafe(no_mangle)]
 fn quench_engine_vm_compile_wasm_eagerly(this: &mut Vm) -> () {
     use crate::compiled::admission::{specialize, UnitFacts, UnitKind, UnitRequest};
-    let facts = UnitFacts { wasm_first_entry: <Vm as CompiledVm4>::wasm_compile_at_first_entry(this), ..UnitFacts::default() };
+    let facts = UnitFacts { wasm_first_entry: true, ..UnitFacts::default() };
     if let Some(unit) = specialize(UnitRequest { kind: UnitKind::WasmEager, facts }).compiled() { <Vm as CompiledVm4>::compile_wasm_eagerly(this, unit) }
 }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_vm_compile_wasm_eagerly = quench_engine_vm_compile_wasm_eagerly;
@@ -209,9 +209,6 @@ const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_lane_unl
 #[unsafe(no_mangle)]
 fn quench_engine_fn_census() -> (u64, u64, u64) { crate::compiled::base_region::census() }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_census = quench_engine_fn_census;
-#[unsafe(no_mangle)]
-fn quench_engine_fn_jit_wasm_selective_enabled() -> bool { crate::compiled::jit_wasm_selective_enabled() }
-const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_jit_wasm_selective_enabled = quench_engine_fn_jit_wasm_selective_enabled;
 #[unsafe(no_mangle)]
 fn quench_engine_fn_candidate_rejection_reason(program: &ResidualProgram, function_id: u32) -> &'static str { crate::js_compiled::candidate_rejection_reason(program, function_id) }
 const _: quench_runtime::vm::engine_calls::signatures::quench_engine_fn_candidate_rejection_reason = quench_engine_fn_candidate_rejection_reason;

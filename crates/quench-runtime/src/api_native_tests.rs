@@ -35,7 +35,7 @@ fn split_host_catalog_preserves_descriptors_and_dispatch_indices() {
         runtime.execute(&program).unwrap();
         assert_eq!(calls.get(), 1);
         {
-            let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+            let native = crate::NativeJsProgram::publish(program).unwrap();
             let calls = Rc::new(std::cell::Cell::new(0));
             let mut runtime = Runtime::new(SplitHost(calls.clone()));
             runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
@@ -2194,8 +2194,8 @@ fn eager_native_module_keeps_harness_closures_alive_after_owner_drop() {
     ).unwrap();
     let entry = compiler.finish(entry).unwrap();
     let residual = entry.clone();
-    let harness = crate::NativeJsProgram::compile_eager(harness).unwrap();
-    let native = crate::NativeJsProgram::compile_eager(entry).unwrap();
+    let harness = crate::NativeJsProgram::publish(harness).unwrap();
+    let native = crate::NativeJsProgram::publish(entry).unwrap();
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native_after_scripts(&[harness], &native).unwrap();
@@ -2217,7 +2217,7 @@ fn native_execution_audit_retains_guest_caught_source_rejections() {
     let program = Engine::specialize_unspecialized(
         "try { eval('1'); } catch (error) { if (!(error instanceof TypeError)) throw error; }", "caught-eval.js",
     ).unwrap();
-    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+    let native = crate::NativeJsProgram::publish(program).unwrap();
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
@@ -2249,7 +2249,7 @@ if (effects.join(",") !== "rhs,create,plain") throw Error(effects.join(","));
         let mut runtime = Runtime::new(TestHost::default());
         runtime.set_execution_mode(mode);
         if mode == crate::ExecutionMode::NativeOnly {
-            let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+            let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
             runtime.execute_native(&native).unwrap();
         } else { runtime.execute(&program).unwrap(); }
     }
@@ -2275,7 +2275,7 @@ fn native_regions_preserve_cross_region_calls_backedges_exceptions_jobs_and_owne
     let module = crate::lower_native_js_module(&program, "native_regions").unwrap();
     assert!(module.functions.iter().filter(|function| matches!(function, crate::NativeFunction::Definition { .. })).count() > program.function_count());
     crate::emit_native_module("native_regions", module.functions, module.data).unwrap();
-    let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+    let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
     let mut runtime = Runtime::new(TestHost::default());
     runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
     runtime.execute_native(&native).unwrap();
@@ -2322,7 +2322,7 @@ fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity(
         }).collect::<Vec<_>>();
         let entry = compiler.finish(programs.remove(0)).unwrap();
         let entries = Rc::new(RefCell::new(programs.into_iter().zip(&sources[1..]).map(|(program, (name, source))| {
-            (name.to_string(), source.to_string(), crate::NativeJsProgram::compile_eager(program).unwrap())
+            (name.to_string(), source.to_string(), crate::NativeJsProgram::publish(program).unwrap())
         }).collect::<Vec<_>>()));
         let lookup = entries.clone();
         let module_sources: Vec<_> = sources.iter().map(|(name, source)| crate::ModuleSource::text(*name, *source)).collect();
@@ -2331,7 +2331,7 @@ fn native_module_graph_shares_cycles_live_bindings_await_and_namespace_identity(
             .with_native_programs(move |name, parts| Ok(lookup.borrow().iter().find(|(candidate, source, _)| {
                 candidate == name && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, source.as_str()]
             }).map(|(_, _, native)| native.clone())));
-        let native = crate::NativeJsProgram::compile_eager(entry.clone()).unwrap();
+        let native = crate::NativeJsProgram::publish(entry.clone()).unwrap();
         let mut runtime = Runtime::new(host);
         runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
         runtime.execute_native(&native).unwrap();
@@ -2365,7 +2365,7 @@ fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effect
             compiler.compile_module(SOURCE, "./dep.mjs").unwrap()
         };
         let entry = compiler.finish(entry).unwrap();
-        let dependency = crate::NativeJsProgram::compile_eager(dependency).unwrap();
+        let dependency = crate::NativeJsProgram::publish(dependency).unwrap();
         let host = TestHost::default()
             .with_modules(move |name| Ok((name == "./dep.mjs").then(|| crate::ModuleSource::text(name,
                 if mismatch == "source" { "globalThis.dependencyRan = false;" } else { SOURCE },
@@ -2374,7 +2374,7 @@ fn native_module_admission_rejects_wrong_goal_namespace_and_source_before_effect
                 Ok((name == "./dep.mjs" && parts == ["unspecialized", crate::STATIC_MODULE_GOAL, SOURCE])
                     .then(|| dependency.clone()))
             });
-        let native = crate::NativeJsProgram::compile_eager(entry).unwrap();
+        let native = crate::NativeJsProgram::publish(entry).unwrap();
         let mut runtime = Runtime::new(host);
         runtime.set_execution_mode(crate::ExecutionMode::NativeOnly);
         let error = runtime.execute_native(&native).unwrap_err().to_string();
@@ -2400,9 +2400,9 @@ fn native_graph_rejects_conflicting_module_tables_before_harness_or_entry_effect
     let harness = compiler.compile_script("globalThis.harnessRan = true;", "harness.js", Default::default()).unwrap();
     let entry = compiler.compile_module("globalThis.entryRan = true;", "entry.mjs").unwrap();
     let dependency = compiler.compile_module("globalThis.depRan = true; export {};", "dep.mjs").unwrap();
-    let entry = crate::NativeJsProgram::compile_eager(compiler.finish(entry).unwrap()).unwrap();
-    let dependency = crate::NativeJsProgram::compile_eager(dependency).unwrap();
-    let harness = crate::NativeJsProgram::compile_eager(harness).unwrap();
+    let entry = crate::NativeJsProgram::publish(compiler.finish(entry).unwrap()).unwrap();
+    let dependency = crate::NativeJsProgram::publish(dependency).unwrap();
+    let harness = crate::NativeJsProgram::publish(harness).unwrap();
     for (modules, message) in [
         (vec![entry.clone()], "duplicates the entry module"),
         (vec![dependency.clone(), dependency], "duplicate native module identity"),

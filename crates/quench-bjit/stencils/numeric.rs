@@ -393,7 +393,8 @@ fn imul_row<const SPEC: bool>(mut frame: Places) -> Out {
 }
 
 /// `Math.pow` of the two operands (`NumberOperation::Power`): the staged product where the exponent is a constant
-/// `SmallPower` names. A stencil holds no call of the power leaf, so any other exponent leaves through `staged`.
+/// `SmallPower` names. A numeric row holds no call of the power leaf, so a constant exponent that is no `SmallPower` leaves
+/// through `staged`; a register exponent is planned as the leaf call (`call_numeric_leaf`, `steps::leaf_plan`) instead.
 #[inline(always)]
 fn power_row(mut frame: Places) -> Out {
     let operation = NumberOperation::Power { destination: DEST, base: Operand::register(LEFT), exponent: Operand::register(RIGHT) };

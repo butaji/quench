@@ -338,12 +338,14 @@ impl Stage for Emit<'_, '_> {
     fn box_number(&mut self, number: quench_runtime::staged::Float64<ir::Value>) -> ir::Value {
         super::super::emit_js_box_number(self.builder, number)
     }
-    /// `Value::from_f64_raw`: the double's own bits, a NaN the canonical one (decision 4.1).
+    /// A stored double's own bits (decision 4.1): a plain move, no read-side canonicalization.
     fn box_raw_number(&mut self, number: quench_runtime::staged::Float64<ir::Value>) -> ir::Value {
-        let double = number.word();
-        let bits = self.raw_unary(Unary::Bitcast(Lane::I64), double);
-        let unordered = self.raw_compare(Relation::FloatUnordered, double, double);
-        let nan = self.raw_const(Lane::I64, f64::NAN.to_bits() as i64);
+        self.raw_unary(Unary::Bitcast(Lane::I64), number.word())
+    }
+    /// A float bit entry: a NaN the canonical one (decision 4.1), an unordered self-compare's select.
+    fn canonical_float(&mut self, bits: ir::Value) -> ir::Value {
+        let unordered = self.raw_compare(Relation::FloatUnordered, bits, bits);
+        let nan = self.raw_const(Lane::F64, f64::NAN.to_bits() as i64);
         self.raw_select(unordered, nan, bits)
     }
     /// An int32 word converts to its double's bits; any other Number word is a double already.

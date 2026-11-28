@@ -73,8 +73,8 @@ pub enum GlobalRead {
     /// A global cell's value, of type `ty`, held under `fact` by code that runs while the realm
     /// of global object `global` is active: the one the VM's field at `realm_offset` names.
     Stable { value: Value, ty: Type, fact: GlobalFact, global: Value, realm_offset: i32 },
-    /// A whole-program AOT fact: the cell's value at every read, checked once per read
-    /// site and folded while it holds (`Division::Frozen`).
+    /// A whole-program AOT fact: the closed world's value of the binding at every read, which the
+    /// dominating root store fixes (`AotFacts::dominated_root_store`); the read needs no check.
     Frozen { value: Value, ty: Type },
     /// A `StoreName` or `LoadNameTypeof` of a slot of the global object held directly.
     Slot(GlobalSlot),

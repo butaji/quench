@@ -423,9 +423,9 @@ impl Vm {
         let unit = self.plan_unit_in_lane(program, function, graph.as_deref(), &plans, &targets)?;
         let entry = entry_pc(&unit, entry).or_else(|| { refuse(self, Refusal::NoEntry); None })?;
         let (left_at, entry_left) = left_places(&unit, generic, entry.unwrap_or(0));
-        let mut fields = self.unit_fields_in_lane(program, &unit, &left_at, view);
+        let mut fields = self.unit_fields_in_lane(program, &unit, function, &left_at, view);
         // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
-        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.unit_fields_in_lane(program, &unit, &left_at, view); }
+        if !self.admit_lane_stores(lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice))) { fields = self.unit_fields_in_lane(program, &unit, function, &left_at, view); }
         let global_reads = self.global_reads_in_lane(program, function, &unit);
         let (direct, direct_sites) = unit_direct_calls(&unit, direct);
         // What decides against a plan from its unit alone decides before its lowering, the most
@@ -520,7 +520,7 @@ impl Vm {
         let planned = self.programs.planned_lane_ir(&site);
         // A function the loaded image gave a body was paid for ahead of time: a plan after that body
         // left (a fact it took weakened) respecializes at once, as the image's install did.
-        let ahead = super::admission::ahead_unit(function).is_some() && self.programs.ahead_images(self.active_program, program).is_some();
+        let ahead = self.programs.ahead_images(self.active_program, program).is_some();
         // The body's tier is its predicted tier through the policy (`lane_body_tier`): the interpreter's pick compiles
         // nothing, whoever calls the function.
         let level = super::jit_backend::CompileLevel::run_default();
@@ -541,7 +541,6 @@ impl Vm {
             super::admission::Decision::Short => return Err(Unstarted::Short),
         };
         super::base_region::count(super::base_region::Event::BodyPlanned);
-        let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "plan", function, entry.unwrap_or(0), || program.function_get(function as usize).map_or(0, |body| body.instructions().count()));
         // A unit too short to amortize its entry, or whose key a published body holds, is known
         // before its lowering; the same tests after it stay, for the unit a smaller budget made.
         // A member of the cycle is called, not inlined: inlined, its call back to `function`
@@ -602,8 +601,7 @@ impl Vm {
             generic: generic.len(), direct: direct.len(), closed });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation, tiers, tier };
         let watch = Rc::new(quench_runtime::code_dependencies::PublishedCode::new(()));
-        let code = super::jit_backend::OffThread::guarded((job, census, level, (function, entry.unwrap_or(0), plan.unit.instructions.len())), |(job, census, level, (function, pc, bytecodes))| {
-            let _mark = quench_runtime::trace::CompileMark::begin("u-jit", "body", function, pc, || bytecodes);
+        let code = super::jit_backend::OffThread::guarded((job, census, level), |(job, census, level)| {
             Lowered::of(&job, census, level)
         });
         self.programs.note_pending_native_calls(&watch, plan.callees());
@@ -638,16 +636,12 @@ impl Vm {
         captures: &dyn Fn(Value) -> (usize, usize),
         direct: &dyn Fn(&Self) -> Vec<DirectCandidates>, work: LaneBodyWork<'_>, entry: Option<u32>) -> LaneBodyOutcome {
         // Native code reads slot representations, which the runtime keeps from its first compile on.
-        // A refusal noted while the body plans happened in this function (`quench_runtime::fallback`).
-        let _focus = quench_runtime::fallback::focus(program, function, entry.unwrap_or(0));
         let (generic, looped, called, caller) = match work {
             LaneBodyWork::Start { generic, looped, called, caller } => (generic.to_vec(), looped, called, caller),
             LaneBodyWork::Poll(pending) => return self.body_poll_in_lane(program, pending),
         };
         // A function with an ahead-of-time body takes it where a first compile would.
-        if let Some(unit) = super::admission::ahead_unit(function)
-            && let Some(published) = self.install_ahead_body(unit, program, function, entry, &generic)
-        {
+        if let Some(published) = self.install_ahead_body(super::admission::ahead_unit(), program, function, entry, &generic) {
             return LaneBodyOutcome::Published(published);
         }
         let direct = direct(self);
@@ -713,7 +707,7 @@ impl Vm {
         plan.direct.iter().map(|callee| callee.summary().is_some()).eq(taken.callee_summaries.iter().copied())
             && FactTables::of(self, plan.function, &plan.unit, &plan.fields, &taken.global_reads) == taken.tables
             && self.global_reads_in_lane(program, plan.function, &plan.unit) == taken.global_reads
-            && unformed(&self.unit_fields_in_lane(program, &plan.unit, &taken.left_at, None)) == unformed(&plan.fields)
+            && unformed(&self.unit_fields_in_lane(program, &plan.unit, plan.function, &taken.left_at, None)) == unformed(&plan.fields)
             && plan.unit.frames.iter().map(|frame| frame.target.identity().map_or((0, 0), |callee| self.callee_capture_slots(callee)))
                 .eq(taken.frame_captures.iter().copied())
             && lowered.region.stable.atoms.iter().all(|atom| !self.method_cache_atoms.bits().contains(*atom as usize))

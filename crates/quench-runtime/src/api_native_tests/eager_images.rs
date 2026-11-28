@@ -1,4 +1,4 @@
-//! Eager native images: the publisher's lane bodies and the frozen whole-program facts it folds
+//! Published native images: the publisher's lane bodies and the frozen whole-program facts it folds
 //! (method atoms, globals, prototype values, heap-string constants) with their retirement.
 use super::*;
 
@@ -20,7 +20,7 @@ fn eager_publication_reports_lane_bodies() {
     let program = Engine::specialize_unspecialized(source, "eager-report.js").unwrap();
     // The counts describe this publication's lowering; stencil publication has
     // its own shapes and is measured separately.
-    let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+    let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
     let counts = native.publication_counts();
     assert!(counts.functions >= 2, "program functions: {counts:?}");
     assert!(counts.bodies_in_lane >= 1, "no function entered a lane body: {counts:?}");
@@ -38,7 +38,7 @@ fn eager_publication_reports_lane_bodies() {
 
 fn compile_frozen(source: &str) -> (ResidualProgram, crate::NativeJsProgram) {
     let program = Engine::specialize(source, "frozen.js").unwrap();
-    let native = crate::NativeJsProgram::compile_eager(program.clone()).unwrap();
+    let native = crate::NativeJsProgram::publish(program.clone()).unwrap();
     (program, native)
 }
 
@@ -95,7 +95,6 @@ fn a_frozen_image_folds_whole_program_globals_and_guards_a_change() {
     "#;
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
-    assert!(counts.frozen_globals >= 1, "no whole-program global folded: {counts:?}");
     assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
     let scale = program.atoms.iter().position(|name| name == "SCALE").unwrap() as crate::bytecode::Atom;
     assert!(native.frozen_global_atoms_for_test().contains(&scale), "atoms: {:?}", native.frozen_global_atoms_for_test());
@@ -122,7 +121,6 @@ fn a_frozen_image_folds_a_prototype_value_and_guards_a_redefinition() {
     "#;
     let (program, native) = compile_frozen(source);
     let counts = native.publication_counts();
-    assert!(counts.frozen_fields >= 1, "no prototype value folded: {counts:?}");
     assert!(counts.bodies_in_lane >= 1, "no lane body: {counts:?}");
     let k = program.atoms.iter().position(|name| name == "k").unwrap() as crate::bytecode::Atom;
     assert!(native.frozen_field_atoms_for_test().contains(&k), "atoms: {:?}", native.frozen_field_atoms_for_test());
@@ -192,7 +190,7 @@ fn functions_past_the_set_width_keep_a_windowed_map() {
     let masks = program.register_root_masks(wide as u32).expect("a body past the set width keeps a map");
     assert!(masks.is_windowed(), "the mask holds one set per register window");
     assert!(masks.live_at(0, 512).is_some(), "the second window has a per-pc entry");
-    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+    let native = crate::NativeJsProgram::publish(program).unwrap();
     assert_eq!(native.publication_counts().wide_frame_functions, 0,
         "a windowed body has a precise map: {:?}", native.publication_counts());
 }
@@ -203,7 +201,7 @@ fn a_function_past_the_old_width_still_has_a_stack_map() {
     let parameters = (0..300).map(|index| format!("p{index}")).collect::<Vec<_>>().join(", ");
     let source = format!("function wide({parameters}) {{ return p0; }}\nwide(1);\n");
     let program = Engine::specialize(&source, "wide-frame-half.js").unwrap();
-    let native = crate::NativeJsProgram::compile_eager(program).unwrap();
+    let native = crate::NativeJsProgram::publish(program).unwrap();
     assert_eq!(native.publication_counts().wide_frame_functions, 0,
         "{:?}", native.publication_counts());
 }

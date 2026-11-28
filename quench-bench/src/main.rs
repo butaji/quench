@@ -32,12 +32,10 @@ const FIXTURES: &[&str] = &[
     "richards.js",
     "splay.js",
 ];
-use analysis::{MIN_QUALIFYING_ROUNDS, SELECTIVE_HANDOFF_CONFIG};
+use analysis::MIN_QUALIFYING_ROUNDS;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 /// How long one engine run forced to a tier may take (`--residuals`, `--tier-differential`).
 const TIER_RUN_TIMEOUT_MS: u64 = 60_000;
-/// The development-experiment setting (`quench_runtime::trace::Dev`).
-const QUENCH_DEV: &str = "QUENCH_DEV";
 /// The only inherited variables; every child process gets exactly these plus its explicit overrides.
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME"];
 /// The directory cargo writes optimized builds to; a quench under test beneath it is a release build.
@@ -408,21 +406,6 @@ struct SuiteRecord {
     /// qualification measurements.
     #[serde(default)]
     jit_diagnostics: bool,
-    /// Experimental bounded root compilation; never qualification mode.
-    #[serde(default)]
-    jit_wasm_root: Option<u32>,
-    /// Experimental interpreter-to-native single-root mode; never qualification mode.
-    #[serde(default)]
-    jit_wasm_root_only: bool,
-    /// Starts from one selected Wasm root and then promotes hot fallback callees.
-    #[serde(default)]
-    jit_wasm_root_first: bool,
-    /// Starts Wasm functions in the interpreter and promotes hot roots only.
-    #[serde(default)]
-    jit_wasm_selective: bool,
-    /// Paired GCC-Wasm diagnostic for selective CallKnown handoff.
-    #[serde(default)]
-    jit_wasm_selective_ab: bool,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -573,11 +556,6 @@ struct Options {
     suite: Suite,
     jit_mode: JitMode,
     jit_diagnostics: bool,
-    jit_wasm_root: Option<u32>,
-    jit_wasm_root_only: bool,
-    jit_wasm_root_first: bool,
-    jit_wasm_selective: bool,
-    jit_wasm_selective_ab: bool,
     fixture: Option<String>,
     fixtures: Option<Vec<String>>,
     all: bool,
@@ -644,11 +622,6 @@ fn main() {
         suite,
         jit_mode: options.jit_mode,
         jit_diagnostics: options.jit_diagnostics,
-        jit_wasm_root: options.jit_wasm_root,
-        jit_wasm_root_only: options.jit_wasm_root_only,
-        jit_wasm_root_first: options.jit_wasm_root_first,
-        jit_wasm_selective: options.jit_wasm_selective,
-        jit_wasm_selective_ab: options.jit_wasm_selective_ab,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -730,11 +703,6 @@ fn main() {
     report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
         && !options.jit_diagnostics
-        && options.jit_wasm_root.is_none()
-        && !options.jit_wasm_root_only
-        && !options.jit_wasm_root_first
-        && !options.jit_wasm_selective
-        && !options.jit_wasm_selective_ab
         && report
             .fixtures
             .values()
@@ -880,11 +848,6 @@ fn resume_metadata_matches(saved: &SuiteRecord, expected: &SuiteRecord) -> bool 
         && saved.suite == expected.suite
         && saved.jit_mode == expected.jit_mode
         && saved.jit_diagnostics == expected.jit_diagnostics
-        && saved.jit_wasm_root == expected.jit_wasm_root
-        && saved.jit_wasm_root_only == expected.jit_wasm_root_only
-        && saved.jit_wasm_root_first == expected.jit_wasm_root_first
-        && saved.jit_wasm_selective == expected.jit_wasm_selective
-        && saved.jit_wasm_selective_ab == expected.jit_wasm_selective_ab
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -900,80 +863,6 @@ fn same_json<T: Serialize>(left: &T, right: &T) -> bool {
     serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
 }
 
-fn jit_wasm_root_only_error(
-    suite: Suite,
-    jit_mode: JitMode,
-    root: Option<u32>,
-    root_only: bool,
-) -> Option<&'static str> {
-    (root_only && (suite != Suite::JetStream3 || jit_mode != JitMode::Jit || root.is_none()))
-        .then_some("--jit-wasm-root-only requires --suite jetstream3 --jit-wasm-root ID")
-}
-
-fn jit_wasm_root_first_error(
-    suite: Suite,
-    jit_mode: JitMode,
-    root: Option<u32>,
-    root_first: bool,
-    root_only: bool,
-) -> Option<&'static str> {
-    (root_first
-        && (suite != Suite::JetStream3
-            || jit_mode != JitMode::Jit
-            || root.is_none()
-            || root_only))
-        .then_some("--jit-wasm-root-first requires --suite jetstream3 --jit-wasm-root ID and cannot combine with --jit-wasm-root-only")
-}
-
-fn jit_wasm_selective_error(
-    suite: Suite,
-    jit_mode: JitMode,
-    root: Option<u32>,
-    root_only: bool,
-    selective: bool,
-) -> Option<&'static str> {
-    (selective
-        && (suite != Suite::JetStream3
-            || jit_mode != JitMode::Jit
-            || root.is_some()
-            || root_only))
-        .then_some("--jit-wasm-selective requires --suite jetstream3 and cannot combine with --jit-wasm-root, --jit-wasm-root-only, or --jit-wasm-root-first")
-}
-
-fn jit_wasm_selective_ab_error(options: &Options) -> Option<&'static str> {
-    if !options.jit_wasm_selective_ab {
-        return None;
-    }
-    if options.suite != Suite::JetStream3
-        || options.jit_mode != JitMode::Jit
-        || options.rounds < SELECTIVE_HANDOFF_CONFIG.minimum_rounds
-        || options.jit_diagnostics
-        || options.jit_wasm_root.is_some()
-        || options.jit_wasm_root_only
-        || options.jit_wasm_root_first
-        || options.jit_wasm_selective
-        || options.fixed_work
-        || options.quench_peer.is_some()
-    {
-        return Some(
-            "--jit-wasm-selective-ab requires --suite jetstream3, at least 3 rounds, and no other JIT diagnostic modes",
-        );
-    }
-    if options.preflight_only {
-        return (options.fixture.is_some() || options.fixtures.is_some() || options.all)
-            .then_some("--preflight-only cannot select fixtures");
-    }
-    let pinned = SELECTIVE_HANDOFF_CONFIG.fixture_name;
-    let one_pinned_fixture = options.fixture.as_deref() == Some(pinned)
-        || options
-            .fixtures
-            .as_ref()
-            .is_some_and(|fixtures| fixtures.len() == 1 && fixtures[0] == pinned);
-    (!one_pinned_fixture || options.all).then_some(
-        "--jit-wasm-selective-ab is pinned to the single JetStream fixture gcc-loops-wasm",
-    )
-}
-
 fn parse_options() -> Options {
     parse_options_from(env::args().skip(1))
 }
@@ -987,11 +876,6 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
         suite: Suite::V8V7,
         jit_mode: JitMode::Jit,
         jit_diagnostics: false,
-        jit_wasm_root: None,
-        jit_wasm_root_only: false,
-        jit_wasm_root_first: false,
-        jit_wasm_selective: false,
-        jit_wasm_selective_ab: false,
         fixture: None,
         fixtures: None,
         all: first == "--all",
@@ -1035,16 +919,6 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
             }
             "--no-jit" => options.jit_mode = JitMode::NoJit,
             "--jit-diagnostics" => options.jit_diagnostics = true,
-            "--jit-wasm-selective" => options.jit_wasm_selective = true,
-            "--jit-wasm-selective-ab" => options.jit_wasm_selective_ab = true,
-            "--jit-wasm-root-only" => options.jit_wasm_root_only = true,
-            "--jit-wasm-root-first" => options.jit_wasm_root_first = true,
-            "--jit-wasm-root" => {
-                options.jit_wasm_root = Some(
-                    u32::try_from(required_number(&mut args, "--jit-wasm-root"))
-                        .unwrap_or_else(|_| usage("--jit-wasm-root is too large")),
-                )
-            }
             "--node" => options.node = required_path(&mut args, "--node"),
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
@@ -1099,40 +973,6 @@ fn parse_options_from(args: impl IntoIterator<Item = String>) -> Options {
     }
     if options.jit_diagnostics && options.jit_mode != JitMode::Jit {
         usage("--jit-diagnostics requires --suite jetstream3");
-    }
-    if options.jit_wasm_root.is_some()
-        && (options.jit_mode != JitMode::Jit || options.suite != Suite::JetStream3)
-    {
-        usage("--jit-wasm-root requires --suite jetstream3");
-    }
-    if let Some(error) = jit_wasm_root_only_error(
-        options.suite,
-        options.jit_mode,
-        options.jit_wasm_root,
-        options.jit_wasm_root_only,
-    ) {
-        usage(error);
-    }
-    if let Some(error) = jit_wasm_root_first_error(
-        options.suite,
-        options.jit_mode,
-        options.jit_wasm_root,
-        options.jit_wasm_root_first,
-        options.jit_wasm_root_only,
-    ) {
-        usage(error);
-    }
-    if let Some(error) = jit_wasm_selective_error(
-        options.suite,
-        options.jit_mode,
-        options.jit_wasm_root,
-        options.jit_wasm_root_only,
-        options.jit_wasm_selective,
-    ) {
-        usage(error);
-    }
-    if let Some(error) = jit_wasm_selective_ab_error(&options) {
-        usage(error);
     }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
@@ -1207,53 +1047,22 @@ fn fixture_selection_is_valid(suite: Suite, files: &[PathBuf]) -> bool {
 }
 
 fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
-    let engines = if options.jit_wasm_selective_ab {
-        let [selective_off, selective_on] = quench_selective_ab_pair(options);
-        vec![
-            selective_off,
-            selective_on,
-            bun_engine(options),
-            node_engine(options),
-        ]
-    } else {
-        options
-            .suite
-            .engine_names()
-            .iter()
-            .map(|name| match *name {
-                "quench" => quench_engine(options),
-                "quickjs" => quickjs_engine(options),
-                "bun" => bun_engine(options),
-                "node" => node_engine(options),
-                _ => unreachable!("suites name only known engines"),
-            })
-            .collect()
-    };
-    engines
-        .into_iter()
+    options
+        .suite
+        .engine_names()
+        .iter()
+        .map(|name| match *name {
+            "quench" => quench_engine(options),
+            "quickjs" => quickjs_engine(options),
+            "bun" => bun_engine(options),
+            "node" => node_engine(options),
+            _ => unreachable!("suites name only known engines"),
+        })
         .map(|mut engine| {
             engine.webassembly = probe_webassembly(&engine);
             engine
         })
         .collect()
-}
-
-fn quench_selective_ab_pair(options: &Options) -> [EngineSpec; 2] {
-    let config = &SELECTIVE_HANDOFF_CONFIG;
-    [
-        (config.off_engine, config.off_value),
-        (config.on_engine, config.on_value),
-    ]
-    .map(|(name, value)| {
-        let mut arm = quench_engine(options);
-        arm.name = name;
-        arm.env.insert(config.switch_env.into(), value.into());
-        arm.jit_proof = format!(
-            "{}; diagnostic selective CallKnown handoff A/B arm with {}={value}; not for qualification",
-            arm.jit_proof, config.switch_env
-        );
-        arm
-    })
 }
 
 /// Runs `typeof WebAssembly` with the engine's measurement arguments and environment.
@@ -1366,18 +1175,6 @@ fn quench_engine(options: &Options) -> EngineSpec {
     if options.jit_diagnostics {
         environment.insert("QUENCH_TRACE".into(), "wasm-jit,js-jit".into());
     }
-    let experiments: Vec<String> = [
-        options.jit_wasm_selective.then(|| SELECTIVE_HANDOFF_CONFIG.on_value.into()),
-        options.jit_wasm_root_only.then(|| "wasm-root-only".into()),
-        options.jit_wasm_root_first.then(|| "wasm-root-first".into()),
-        options.jit_wasm_root.map(|root| format!("wasm-root={root}")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    if !experiments.is_empty() {
-        environment.insert(QUENCH_DEV.into(), experiments.join(","));
-    }
     let mut quench = spec("quench", &options.quench, argv, environment);
     let execution_tier = if jit_enabled { "JIT" } else { "interpreter" };
     quench.version = format!(
@@ -1392,30 +1189,6 @@ fn quench_engine(options: &Options) -> EngineSpec {
         } else {
             "the measured Quench process is launched with the default JIT".into()
         };
-        if let Some(root) = options.jit_wasm_root {
-            quench.jit_proof = format!(
-                "{}; bounded experimental root compilation selected residual function {root} via QUENCH_DEV=wasm-root; not qualification mode",
-                quench.jit_proof
-            );
-        }
-        if options.jit_wasm_root_only {
-            quench.jit_proof = format!(
-                "{}; strict experimental single-root compilation enabled with QUENCH_DEV=wasm-root-only; hot callees remain interpreted; not qualification mode",
-                quench.jit_proof
-            );
-        }
-        if options.jit_wasm_root_first {
-            quench.jit_proof = format!(
-                "{}; experimental root-first tiering enabled with QUENCH_DEV=wasm-root-first; starts with the selected root and promotes hot fallback callees; not qualification mode",
-                quench.jit_proof
-            );
-        }
-        if options.jit_wasm_selective {
-            quench.jit_proof = format!(
-                "{}; opt-in selective Wasm hot-root tiering enabled with QUENCH_DEV=wasm-selective; not qualification mode",
-                quench.jit_proof
-            );
-        }
     } else {
         quench.jit_proof =
             "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
@@ -2908,7 +2681,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [--fixed-work] [--tier-invariant [--tier-tolerance FRACTION] [--tier-q-jit]] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--jit-wasm-root ID] [--jit-wasm-root-only] [--jit-wasm-root-first] [--jit-wasm-selective] [--jit-wasm-selective-ab] [engine options]\n       quench-bench --tier-differential --quench PATH [--seed S] [--count N] [--iterations N] [--timeout-ms N] [--out-dir DIR]\n       quench-bench --residuals [--quench PATH] [--kernels NAME,NAME,...] [--ratchet PATH] [--update-ratchet] [--timeout-ms N]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all|--fixtures NAME,NAME,... [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [--fixed-work] [--tier-invariant [--tier-tolerance FRACTION] [--tier-q-jit]] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [--suite v8-v7|jetstream3] [--no-jit] [--jit-diagnostics] [engine options]\n       quench-bench --tier-differential --quench PATH [--seed S] [--count N] [--iterations N] [--timeout-ms N] [--out-dir DIR]\n       quench-bench --residuals [--quench PATH] [--kernels NAME,NAME,...] [--ratchet PATH] [--update-ratchet] [--timeout-ms N]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -2949,255 +2722,6 @@ mod fixture_selection_tests {
         let all = Suite::V8V7.fixtures();
         assert!(fixture_selection_is_valid(Suite::V8V7, &all));
         assert!(!fixture_selection_is_valid(Suite::V8V7, &all[..1]));
-    }
-}
-
-#[cfg(test)]
-mod jit_wasm_root_only_tests {
-    use super::{
-        JitMode, Options, Suite, jit_wasm_root_first_error, jit_wasm_root_only_error,
-        jit_wasm_selective_error, parse_options_from, quench_engine, QUENCH_DEV,
-    };
-
-    #[test]
-    fn root_only_cli_switch_parses_with_its_required_root_configuration() {
-        let options = parse_options_from(
-            [
-                "--fixtures",
-                "HashSet-wasm",
-                "--suite",
-                "jetstream3",
-                "--jit-wasm-root",
-                "19",
-                "--jit-wasm-root-only",
-            ]
-            .map(str::to_string),
-        );
-
-        assert_eq!(options.suite, Suite::JetStream3);
-        assert_eq!(options.jit_mode, JitMode::Jit);
-        assert_eq!(options.jit_wasm_root, Some(19));
-        assert!(options.jit_wasm_root_only);
-    }
-
-    #[test]
-    fn root_first_cli_switch_parses_with_distinct_tiered_mode() {
-        let options = parse_options_from(
-            [
-                "--fixtures",
-                "gcc-loops-wasm",
-                "--suite",
-                "jetstream3",
-                "--jit-wasm-root",
-                "19",
-                "--jit-wasm-root-first",
-            ]
-            .map(str::to_string),
-        );
-
-        assert_eq!(options.suite, Suite::JetStream3);
-        assert_eq!(options.jit_mode, JitMode::Jit);
-        assert_eq!(options.jit_wasm_root, Some(19));
-        assert!(options.jit_wasm_root_first);
-        assert!(!options.jit_wasm_root_only);
-    }
-
-    #[test]
-    fn root_only_requires_the_jetstream_jit_root_configuration() {
-        assert!(
-            jit_wasm_root_only_error(Suite::JetStream3, JitMode::Jit, Some(19), true).is_none()
-        );
-        assert!(jit_wasm_root_only_error(Suite::JetStream3, JitMode::Jit, None, true).is_some());
-        assert!(jit_wasm_root_only_error(Suite::V8V7, JitMode::Jit, Some(19), true).is_some());
-        assert!(
-            jit_wasm_root_only_error(Suite::JetStream3, JitMode::NoJit, Some(19), true).is_some()
-        );
-        assert!(
-            jit_wasm_root_only_error(Suite::JetStream3, JitMode::Jit, Some(19), false).is_none()
-        );
-    }
-
-    #[test]
-    fn root_first_requires_a_root_and_is_mutually_exclusive_with_strict_root_only() {
-        assert!(
-            jit_wasm_root_first_error(Suite::JetStream3, JitMode::Jit, Some(19), true, false)
-                .is_none()
-        );
-        assert!(
-            jit_wasm_root_first_error(Suite::JetStream3, JitMode::Jit, None, true, false).is_some()
-        );
-        assert!(
-            jit_wasm_root_first_error(Suite::V8V7, JitMode::Jit, Some(19), true, false).is_some()
-        );
-        assert!(
-            jit_wasm_root_first_error(Suite::JetStream3, JitMode::NoJit, Some(19), true, false)
-                .is_some()
-        );
-        assert!(
-            jit_wasm_root_first_error(Suite::JetStream3, JitMode::Jit, Some(19), true, true)
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn selective_and_root_only_modes_cannot_be_combined() {
-        assert!(
-            jit_wasm_selective_error(Suite::JetStream3, JitMode::Jit, Some(19), true, true)
-                .is_some()
-        );
-        assert!(
-            jit_wasm_selective_error(Suite::JetStream3, JitMode::Jit, None, false, true).is_none()
-        );
-    }
-
-    #[test]
-    fn root_only_is_injected_and_recorded_as_experimental_provenance() {
-        let executable = std::env::current_exe().expect("test executable path");
-        let options = Options {
-            suite: Suite::JetStream3,
-            jit_mode: JitMode::Jit,
-            jit_diagnostics: false,
-            jit_wasm_root: Some(19),
-            jit_wasm_root_only: true,
-            jit_wasm_root_first: false,
-            jit_wasm_selective: false,
-            jit_wasm_selective_ab: false,
-            fixture: None,
-            fixtures: Some(vec!["HashSet-wasm".into()]),
-            all: false,
-            preflight_only: false,
-            node: executable.clone(),
-            bun: executable.clone(),
-            qjs: executable.clone(),
-            quench: executable,
-            quench_peer: None,
-            rounds: 1,
-            fixed_work: false,
-            timeout_ms: 1000,
-            output: None,
-            checkpoint: None,
-            resume: None,
-        };
-        let engine = quench_engine(&options);
-
-        assert!(engine.env.get(QUENCH_DEV).is_some_and(|dev| dev.split(',').any(|name| name == "wasm-root-only")));
-        assert!(engine.jit_proof.contains("single-root compilation"));
-        assert!(engine.jit_proof.contains("not qualification mode"));
-    }
-
-    #[test]
-    fn root_first_is_injected_and_reported_as_tiered_experimental_mode() {
-        let executable = std::env::current_exe().expect("test executable path");
-        let options = Options {
-            suite: Suite::JetStream3,
-            jit_mode: JitMode::Jit,
-            jit_diagnostics: false,
-            jit_wasm_root: Some(19),
-            jit_wasm_root_only: false,
-            jit_wasm_root_first: true,
-            jit_wasm_selective: false,
-            jit_wasm_selective_ab: false,
-            fixture: None,
-            fixtures: Some(vec!["gcc-loops-wasm".into()]),
-            all: false,
-            preflight_only: false,
-            node: executable.clone(),
-            bun: executable.clone(),
-            qjs: executable.clone(),
-            quench: executable,
-            quench_peer: None,
-            rounds: 1,
-            fixed_work: false,
-            timeout_ms: 1000,
-            output: None,
-            checkpoint: None,
-            resume: None,
-        };
-        let engine = quench_engine(&options);
-
-        assert!(engine.env.get(QUENCH_DEV).is_some_and(|dev| dev.split(',').any(|name| name == "wasm-root-first")));
-        assert!(engine.jit_proof.contains("root-first tiering"));
-        assert!(engine.jit_proof.contains("promotes hot fallback callees"));
-        assert!(engine.jit_proof.contains("not qualification mode"));
-    }
-}
-
-#[cfg(test)]
-mod jit_wasm_selective_ab_tests {
-    use super::{
-        JitMode, SELECTIVE_HANDOFF_CONFIG, Suite, jit_wasm_selective_ab_error, parse_options_from,
-        quench_selective_ab_pair,
-    };
-
-    fn gcc_selective_options() -> super::Options {
-        parse_options_from(
-            [
-                "gcc-loops-wasm",
-                "--suite",
-                "jetstream3",
-                "--jit-wasm-selective-ab",
-                "--runs",
-                "3",
-            ]
-            .map(str::to_string),
-        )
-    }
-
-    #[test]
-    fn diagnostic_mode_is_pinned_to_gcc_and_allows_three_rounds() {
-        let options = gcc_selective_options();
-        assert_eq!(options.suite, Suite::JetStream3);
-        assert_eq!(options.jit_mode, JitMode::Jit);
-        assert!(options.jit_wasm_selective_ab);
-        assert_eq!(options.rounds, 3);
-        assert_eq!(options.fixture.as_deref(), Some("gcc-loops-wasm"));
-        assert!(jit_wasm_selective_ab_error(&options).is_none());
-
-        let mut wrong_fixture = options;
-        wrong_fixture.fixture = Some("quicksort-wasm".into());
-        assert!(jit_wasm_selective_ab_error(&wrong_fixture).is_some());
-
-        let mut too_few_rounds = gcc_selective_options();
-        too_few_rounds.rounds = 2;
-        assert!(jit_wasm_selective_ab_error(&too_few_rounds).is_some());
-
-        let mut no_jit = gcc_selective_options();
-        no_jit.jit_mode = JitMode::NoJit;
-        assert!(jit_wasm_selective_ab_error(&no_jit).is_some());
-    }
-
-    #[test]
-    fn quench_arms_share_binary_and_differ_only_by_selective_handoff_switch() {
-        let mut options = gcc_selective_options();
-        options.quench = std::env::current_exe().expect("test executable path");
-        let [selective_off, selective_on] = quench_selective_ab_pair(&options);
-
-        assert_eq!(selective_off.name, "quench_selective_handoff_off");
-        assert_eq!(selective_on.name, "quench_selective_handoff_on");
-        assert_eq!(selective_off.argv, Vec::<String>::new());
-        assert_eq!(selective_on.argv, selective_off.argv);
-        assert_eq!(selective_off.executable, selective_on.executable);
-        assert_eq!(
-            selective_off.executable_sha256,
-            selective_on.executable_sha256
-        );
-        let mut off_environment = selective_off.env.clone();
-        let mut on_environment = selective_on.env.clone();
-        assert_eq!(
-            off_environment.remove(SELECTIVE_HANDOFF_CONFIG.switch_env).as_deref(),
-            Some(SELECTIVE_HANDOFF_CONFIG.off_value)
-        );
-        assert_eq!(
-            on_environment.remove(SELECTIVE_HANDOFF_CONFIG.switch_env).as_deref(),
-            Some(SELECTIVE_HANDOFF_CONFIG.on_value)
-        );
-        assert_eq!(off_environment, on_environment);
-        assert!(
-            selective_off
-                .jit_proof
-                .contains("selective CallKnown handoff A/B arm")
-        );
-        assert!(selective_on.jit_proof.contains("not for qualification"));
     }
 }
 
@@ -3419,7 +2943,7 @@ mod tests {
     use super::{
         CorpusRecord, FixtureRecord, HostRecord, SuiteRecord, artifact, fixture_artifact,
         is_release_build, measurement_environment_from, now_ns, peak_rss_bytes, read_checkpoint,
-        resume_metadata_matches, validate_resume, wait_child, write_checkpoint,
+        validate_resume, wait_child, write_checkpoint,
     };
     use std::process::Command;
     use std::{
@@ -3516,11 +3040,6 @@ mod tests {
             suite: super::Suite::JetStream3,
             jit_mode: super::JitMode::Jit,
             jit_diagnostics: false,
-            jit_wasm_root: Some(19),
-            jit_wasm_root_only: true,
-            jit_wasm_root_first: false,
-            jit_wasm_selective: false,
-            jit_wasm_selective_ab: false,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,
@@ -3567,31 +3086,6 @@ mod tests {
         let loaded = read_checkpoint(&report_path);
         validate_resume(&loaded, &expected, &[PathBuf::from(&fixture_path)]);
         assert_eq!(loaded.fixtures.len(), 1);
-        assert!(loaded.jit_wasm_root_only);
-        let mut different_mode = expected.clone();
-        different_mode.jit_wasm_root_only = false;
-        assert!(!resume_metadata_matches(&loaded, &different_mode));
-
-        let root_first_path = directory.join("root-first-report.json");
-        let mut root_first = expected.clone();
-        root_first.jit_wasm_root_only = false;
-        root_first.jit_wasm_root_first = true;
-        write_checkpoint(&root_first_path, &root_first);
-        let root_first_loaded = read_checkpoint(&root_first_path);
-        assert!(root_first_loaded.jit_wasm_root_first);
-        assert!(!root_first_loaded.jit_wasm_root_only);
-        assert!(resume_metadata_matches(&root_first_loaded, &root_first));
-        assert!(!resume_metadata_matches(&loaded, &root_first));
-
-        let selective_ab_path = directory.join("selective-ab-report.json");
-        let mut selective_ab = expected;
-        selective_ab.jit_wasm_root_only = false;
-        selective_ab.jit_wasm_selective_ab = true;
-        write_checkpoint(&selective_ab_path, &selective_ab);
-        let selective_ab_loaded = read_checkpoint(&selective_ab_path);
-        assert!(selective_ab_loaded.jit_wasm_selective_ab);
-        assert!(resume_metadata_matches(&selective_ab_loaded, &selective_ab));
-        assert!(!resume_metadata_matches(&loaded, &selective_ab));
         fs::remove_dir_all(directory).expect("remove checkpoint test directory");
     }
 

@@ -581,7 +581,6 @@ node_bindings! {
         method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
         method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
-        method "processIrMark" (0) => crate::modules::process_shared_vm::ir_mark,
         #[cfg(unix)]
         method "processMetricsHrtime" (0) => crate::modules::process_metrics_shared_vm::hrtime,
         #[cfg(unix)]

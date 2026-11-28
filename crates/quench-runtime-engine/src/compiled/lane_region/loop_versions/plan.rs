@@ -87,7 +87,7 @@ struct Counted {
 }
 
 /// The array and index registers of an element access.
-fn access_registers(access: WideInstruction) -> Option<(Register, Register)> {
+pub(super) fn access_registers(access: WideInstruction) -> Option<(Register, Register)> {
     if matches!(crate::compiled::performed(access), Some(quench_runtime::staged::Operation::ElementRead { .. })) { Some((access.operand_b().register_index()?, access.operand_c().register_index()?)) }
     else if matches!(crate::compiled::performed(access), Some(quench_runtime::staged::Operation::ElementWrite { .. })) { Some((access.register_b(), access.register_c())) } else { None }
 }

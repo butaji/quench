@@ -121,11 +121,19 @@ impl std::fmt::Write for Fnv {
 
 /// The predicted tier of `function`'s lane body (design decision 4.9): the one input of every lane tier pick, read from
 /// the program's table (`ProgramStore::predicted_tiers`; `called_by_loop` picks its column). An AOT program's
-/// predicted tier is Ultra for every function, and so is every function under the floor row (`admits_all`), which
-/// compiles every body optimized. A program not running has no table and no body.
+/// predicted tier is Ultra for every function (`tier_policy::body_tier`), as is every function under the floor row
+/// (`admits_all`). A program not running has no table and no body.
 pub(crate) fn body_pick(tiers: &Tiers, aot: bool, predicted: &[[PredictedTier; 2]], function: u32, called_by_loop: bool) -> PredictedTier {
-    if tiers.admits_all || aot { return PredictedTier::Ultra; }
-    predicted.get(function as usize).map_or(PredictedTier::Interpreter, |row| row[usize::from(called_by_loop)])
+    let row = predicted.get(function as usize).map_or(PredictedTier::Interpreter, |row| row[usize::from(called_by_loop)]);
+    quench_runtime::vm::tier_policy::body_tier(tiers.admits_all || aot, row)
+}
+
+/// Whether a field site guards its shapes and exits on a miss (speculates), rather than reading in place through the
+/// VM's cache (`lane_region::field_probe`): the solver proves its receiver's class set, of at most `POLYMORPHISM`
+/// classes (design decision 4.9, a static predicate of the facts; no run count, no posterior).
+pub(crate) fn speculates(classes: quench_runtime::typed_ir::Classes) -> bool {
+    matches!(classes, quench_runtime::typed_ir::Classes::Set { len, proven: true, .. }
+        if usize::from(len) <= quench_runtime::vm::tier_policy::POLYMORPHISM)
 }
 
 /// The calls a plan keeps are its caller's facts and the demand for their callees' bodies: a

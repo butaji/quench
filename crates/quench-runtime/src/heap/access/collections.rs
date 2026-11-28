@@ -20,7 +20,7 @@ impl Heap {
     pub(crate) fn collection_mut(&mut self, value: Value) -> Option<&mut CollectionRecord> {
         let record_id = value.direct_collection_index()?;
         // SAFETY: direct-collection Values name live records; `&mut self` is exclusive.
-        Some(unsafe { self.collection_records.get_live_mut(record_id, &self.properties) })
+        Some(unsafe { self.collection_records.get_live_mut(record_id) })
     }
 
     /// The entries of a Map or Set, mutably, past the write barrier.
@@ -120,7 +120,7 @@ impl Heap {
             return None;
         }
         // SAFETY: a live direct Wasm GC Value names an initialized record; `&mut self` is exclusive.
-        Some(unsafe { self.wasm_gc_records.get_live_mut(record_id, &self.properties) })
+        Some(unsafe { self.wasm_gc_records.get_live_mut(record_id) })
     }
 
     /// A new Map with `object` as its ordinary object part and `entries`.

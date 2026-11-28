@@ -393,19 +393,17 @@ impl Value {
         self.0
     }
 
-    /// A float arithmetic result held in place. A NaN whose bits fall in the
-    /// tag space becomes the canonical NaN: arithmetic may produce any
-    /// arithmetic NaN, and the canonical one is.
+    /// A float bit entry, held in place (decision 4.1, invariant I): every NaN becomes the canonical
+    /// NaN, any other double is its own bits. Every NaN, not only one whose bits fall in the tag space:
+    /// arithmetic quiets a signalling NaN by setting bit 51, which carries a 0x7ff1..0x7ff6 NaN into the
+    /// tag space, so a NaN of any bits must not be stored as it is. A NaN is rare, so the branch is cold
+    /// and keeps the check off the result's dependency chain.
     #[inline(always)] pub fn from_float_bits64(bits: u64) -> Self {
-        let value = Self(bits);
-        if value.is_tagged() {
-            // Only a NaN whose payload collides with a tag: a predicted
-            // branch keeps the check off the result's dependency chain,
-            // where a conditional move would lengthen every float chain.
+        if f64::from_bits(bits).is_nan() {
             std::hint::cold_path();
             Self(CANONICAL_NAN)
         } else {
-            value
+            Self(bits)
         }
     }
 

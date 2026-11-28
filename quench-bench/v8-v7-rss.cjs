@@ -111,11 +111,9 @@ const engines = [
   { name: "quench --no-jit", side: "quench", executable: measuredQuench, argv: ["--no-jit"], env: {} },
   { name: "quench", side: "quench", executable: measuredQuench, argv: [], env: {} },
 ];
-// --all-tiers adds Quench's other measured modes (the stabilization sweep's four): no-jit
-// with QUENCH_DEV=memory-first, the base tier alone and the upper tier.
+// --all-tiers adds Quench's other measured modes: the base tier alone and the upper tier.
 if (process.argv.includes("--all-tiers")) {
   engines.push(
-    { name: "quench --no-jit memory-first", side: "quench", executable: measuredQuench, argv: ["--no-jit"], env: { QUENCH_DEV: "memory-first" } },
     { name: "quench --b-jit", side: "quench", executable: measuredQuench, argv: ["--b-jit"], env: {} },
     { name: "quench --u-jit", side: "quench", executable: measuredQuench, argv: ["--u-jit"], env: {} },
   );

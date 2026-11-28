@@ -3515,17 +3515,10 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
     /// run in this record (`target_run`). Any other `TEST` takes the jump as it always does.
     pub(crate) fn row_jump<OP: u16, BACKWARD: bool, FLAG: u8, PREFIX: u16, COPY: u16, TEST: u16>(cx, r, ip, i, view) {
         let cx: *mut LaneContext = row_context::<OP>(cx);
-        // A loop site's backward jump (`FLAG_LOOP`) warming up takes its jump here, with the fuel
-        // spent here, as the site's body does. Fuel out, or a site past its warm-up, leaves to that
-        // body (`loop_jump_miss`), which spends the fuel and decides the site itself.
+        // A loop site's backward jump (`FLAG_LOOP`) takes its way in `loop_jump_miss`, which
+        // enters the loop's native code where the site enters (`LoopSite::enters`).
         if const { FLAG == FLAG_LOOP } {
-            let site = i.loop_site();
-            if unsafe { (*cx).fuel } == 0 || !site.warm_backedge() {
-                sibling!(crate::dispatch_fast::loop_jump_miss, r, ip, view)
-            }
-            unsafe { (*cx).fuel -= 1 };
-            let header = unsafe { ip.byte_offset(site.jump) };
-            next!(cx, r, header, Carried::script_in(cx, view))
+            sibling!(crate::dispatch_fast::loop_jump_miss, r, ip, view)
         }
         // A comparison jump's operator is a constant of its record: its first run moves the record to
         // the instance whose `FLAG` names the operator (`compare_jump_row`), where the comparison is a

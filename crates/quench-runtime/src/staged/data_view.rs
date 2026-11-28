@@ -130,10 +130,15 @@ pub fn data_view_read<S: NumericStage>(stage: &mut S, view: DataViewWords<S::Wor
     }
     let address = element_address(stage, view, index, element.width(), miss)?;
     match element {
-        DataViewElement::Float64 => Some(stage.load_f64(Region::Elements.mutable(), address, 0)),
+        // Float bit entries: the bytes may hold any bits (decision 4.1).
+        DataViewElement::Float64 => {
+            let number = stage.load_f64(Region::Elements.mutable(), address, 0);
+            Some(stage.canonical_float(number))
+        }
         DataViewElement::Float32 => {
             let single = stage.load_f32(Region::Elements.mutable(), address, 0);
-            Some(stage.f32_to_f64(single))
+            let wide = stage.f32_to_f64(single);
+            Some(stage.canonical_float(wide))
         }
         _ => {
             let width = element.width();

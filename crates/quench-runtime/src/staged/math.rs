@@ -365,7 +365,8 @@ pub fn half_to_f64(bits: u16) -> f64 {
         let (significand, exponent) = half.parts(magnitude);
         significand as f64 * power_of_two(exponent)
     };
-    f64::from_bits(magnitude.to_bits() | sign)
+    // A binary16 NaN's payload can set tag bits of the binary64: a float bit entry (decision 4.1).
+    f64::from_bits(crate::Value::from_f64_raw(f64::from_bits(magnitude.to_bits() | sign)).to_bits())
 }
 
 #[cfg(test)]

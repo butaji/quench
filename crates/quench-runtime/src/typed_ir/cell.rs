@@ -284,6 +284,16 @@ impl Elements {
         }
     }
 
+    /// Whether every array these elements describe is a plain backing whose count of other values (`Header::others`) is zero:
+    /// no hole (`holes` false), every element an int32 (`ty` within `INT32`, so no stored Number or other value), and a plain
+    /// array (`View::Plain`). Each store of the class joins its type into `ty` and each hole-making op sets `holes`, so the
+    /// backing holds no value `others` counts. `others` is exact only while no native path stores an uncounted value
+    /// (`OTHERS_UNKNOWN`); the analysis does not see such stores, so the closed world's gate (`compile/aot_facts/gate.rs`)
+    /// is what keeps this fact true for a program.
+    pub fn int32_backing(self) -> bool {
+        !self.holes && self.view == View::Plain && self.ty.is_subtype(Type::INT32)
+    }
+
     /// The cell an element read takes (γ): the elements' type and classes, the type of a typed array's kind where its
     /// view is one kind, and `undefined` where the read may find a hole: the array has holes, or the index is not within
     /// its length (`in_bounds`, `typing::within_length`).
