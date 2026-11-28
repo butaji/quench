@@ -37,7 +37,11 @@ mod object_state;
 mod object_storage;
 pub use await_state::{AwaitKind, AwaitRole, AwaitState};
 pub use wasm_fields::{TableTarget, TableWords, WasmGcFields, WasmGcRecord, WasmTableElements};
-pub use typed_array_kind::{TYPED_ARRAYS, TypedArrayKind, TypedArrayRow};
+pub use typed_array_kind::{
+    TYPED_ARRAYS, TypedArrayKind, TypedArrayKindTypedArrayKindExt, TypedArrayRow, typed_array_kind_integer_signed,
+    typed_array_kind_is_bigint, typed_array_kind_is_float, typed_array_kind_is_waitable, typed_array_kind_name,
+    typed_array_kind_native,
+};
 pub(crate) use typed_array_kind::for_each_typed_array;
 pub(crate) use modes::{ElementFacts, HelperPhase, ObjectBrand, ViewLength};
 /// A class cell's constant mark retires the readers of its exact shape (`Object::clear_constant_mark`).

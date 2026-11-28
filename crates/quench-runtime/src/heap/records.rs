@@ -415,7 +415,26 @@ struct Sweeper<'v, D, V> {
     visit: &'v mut V,
 }
 
-impl RecordBlock {
+/// The methods of `RecordBlock`, which is defined in `staged::object_encoding` (the layout the
+/// native guards read), so its impl cannot stay inherent here (spec 4.5).
+pub trait RecordBlockRecordsExt: Sized {
+    /// A block with no record occupied, withheld, marked or aged.
+    fn new() -> Self;
+    /// Whether any id of this block is occupied or withheld.
+    fn in_use(&self) -> bool;
+    fn claim(&mut self, index: usize) -> bool;
+    fn is_occupied(&self, index: usize) -> bool;
+    /// The occupancy bits of record indices `from..to` of this block, word by word: the masks
+    /// of one occupancy word at a time. `set` occupies them (none may be occupied yet), else frees them.
+    fn set_occupancy_range(&mut self, from: usize, to: usize, set: bool);
+    /// The first withheld id in `from..to` (block indices), or `to` when none is.
+    fn first_withheld(&self, from: usize, to: usize) -> usize;
+    fn release(&mut self, index: usize);
+    fn mark(&mut self, index: usize) -> bool;
+    fn is_marked(&self, index: usize) -> bool;
+}
+
+impl RecordBlockRecordsExt for RecordBlock {
     fn new() -> Self {
         Self {
             occupied: [0; BLOCK_WORDS],
@@ -425,7 +444,6 @@ impl RecordBlock {
         }
     }
 
-    /// Whether any id of this block is occupied or withheld.
     fn in_use(&self) -> bool {
         self.occupied.iter().chain(self.withheld.iter()).any(|&word| word != 0)
     }
@@ -448,8 +466,6 @@ impl RecordBlock {
         self.occupied[word_index] & (1_u64 << bit) != 0
     }
 
-    /// The occupancy bits of record indices `from..to` of this block, word by word: the masks
-    /// of one occupancy word at a time. `set` occupies them (none may be occupied yet), else frees them.
     fn set_occupancy_range(&mut self, from: usize, to: usize, set: bool) {
         let mut index = from;
         while index < to {
@@ -468,7 +484,6 @@ impl RecordBlock {
         }
     }
 
-    /// The first withheld id in `from..to` (block indices), or `to` when none is.
     fn first_withheld(&self, from: usize, to: usize) -> usize {
         let mut index = from;
         while index < to {

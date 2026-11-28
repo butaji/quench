@@ -268,18 +268,20 @@ impl Vm {
     pub fn fixed_union(&mut self, constructor: Value, start: u32) -> Option<FixedUnion> {
         let (program, class, _) = self.same_realm_user_target(constructor)?;
         let facts = self.programs.aot_facts(program)?;
-        // One fact decides it (`AotFacts::class_fixed_cell`: a union layout of at most MAX_CELL_FIELDS fields whose
-        // instances never depart), the same bit the lane reads for direct addressing.
-        if !facts.class_fixed_cell(class) { return None; }
+        // `AotFacts::class_writable_cell` decides it: slots are stable and no flag transition reaches an instance,
+        // so nothing departs it. A union past one cell region has no spill slot yet (departure-free S2), so it
+        // stays a learned object: that bound is the final form for over-capacity unions until S2 lands.
+        if !facts.class_writable_cell(class) { return None; }
         let layout = facts.class_union_layout(class)?;
-        // `class_fixed_cell` means every instance of the class is a union cell from birth (W35): every `new C()` with
+        if layout.fields.len() > crate::heap::MAX_CELL_FIELDS { return None; }
+        // `class_writable_cell` means every instance of the class is a union cell from birth (W35): every `new C()` with
         // new_target C starts from the empty `Constructed{C, true}` root, and `slot_domain` is Some for every union
         // atom by construction. So the start is that root, and these are invariants, not decisions.
         debug_assert!(!self.shape_is_dictionary(start) && self.shapes[start as usize].storage_len() == 0);
         debug_assert_eq!(super::provenance::shape_names(&self.shapes, start).1, Some((constructor, true)));
         let mut union = FixedUnion::new(start);
         for (slot, &(atom, _)) in layout.fields.iter().enumerate() {
-            // The fact excludes private names and duplicates (union_of), and bounds the count by MAX_CELL_FIELDS.
+            // The fact excludes private names and duplicates (union_of).
             debug_assert!(!self.is_private_name(atom));
             let shape = self.transition_shape(union.shape, atom);
             debug_assert!(!self.shape_is_dictionary(shape) && self.shapes[shape as usize].storage_len() == slot + 1);
