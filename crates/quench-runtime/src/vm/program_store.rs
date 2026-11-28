@@ -653,7 +653,7 @@ impl Default for ProgramStore {
             // TOD-191's correctness oracle may force hot candidates past the payback model so
             // guarded exits can be tested independently of profitability (diagnostic only).
             js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
-            js_jit_lane_methods_enabled: tiers.stress,
+            js_jit_lane_methods_enabled: false,
             warming_ticks: std::cell::Cell::new(0),
             #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
@@ -673,7 +673,7 @@ impl ProgramStore {
         let body = entry.residual.function_get(function as usize)?;
         let cells = entry.js_entry_facts.0.get_or_init(|| zeroed_entry_facts(entry.residual.functions.capacity()));
         Some(Rc::clone(cells.get(function as usize)?.get_or_init(|| {
-            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body, !(self.tiers.stress || cfg!(test))); // tests pin tiny fixtures
+            let facts = crate::vm::engine_types::JsEntryFacts::of(&entry.residual, body, !cfg!(test)); // tests pin tiny fixtures
             #[cfg(any(test, feature = "test-support"))]
             let facts = if self.js_entry_specializations_enabled { facts } else { Default::default() };
             if facts.is_unset() {
@@ -1793,7 +1793,7 @@ impl ProgramStore {
     pub fn tiers(&self) -> &'static Tiers { self.tiers }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { (self.tiers, self.js_jit_lane_methods_enabled) = (tiers, tiers.stress); }
+    pub(super) fn hold_tiers(&mut self, tiers: &'static Tiers) { self.tiers = tiers; }
 
     #[inline]
     pub fn tier_events(&self) -> &super::tier_events::TierEvents {

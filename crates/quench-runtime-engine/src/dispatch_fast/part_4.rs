@@ -125,8 +125,8 @@ pub(super) fn initialize_fields_in_lane(
     let stores = code.function(function as usize).initializer_stores(&code.constants)?;
     let env = vm.same_realm_user_target(callee).map_or(Value::UNDEFINED, |(_, _, env)| env);
     let read = construct_plan::field_reader(vm, callee);
-    initialize_stores_in_lane(vm, callee, constructor, env, |vm, this, nested, each| {
-        add_stores_in_lane(vm, code, this, stores, argument, read, nested, each)
+    initialize_stores_in_lane(vm, callee, constructor, env, |vm, this, fixed, nested, each| {
+        add_stores_in_lane(vm, code, this, stores, argument, read, fixed, nested, each)
     })
 }
 
@@ -139,13 +139,19 @@ pub(super) fn planned_receiver_in_lane(
     vm: &mut Vm,
     callee: Value,
     plan: Option<&ConstructPlan>,
+    union: Option<quench_runtime::vm::engine_types::FixedUnion>,
 ) -> Option<Value> {
     if let Some(plan) = plan.filter(|plan| plan.fields == 0) {
         return Some(plan.allocate(vm, |_| Value::UNDEFINED));
     }
     let template = vm.inline_construct_template(callee)?;
     let (prototype, shape) = (template.proto(), template.shape());
-    let this = vm.allocate_object(template);
+    // A fixed class's receiver is its union cell from birth (R4-F), as `initialize_stores_in_lane` makes it.
+    let fixed = union.map(|union| quench_runtime::vm::engine_types::FixedCellPlan { shape: union.shape, slots: [0; CONSTRUCT_PLAN_FIELDS] });
+    let this = match union {
+        Some(union) => vm.allocate_fixed_cell(union.shape, prototype, &[], &[]),
+        None => vm.allocate_object(template),
+    };
     if let Some(index) = construct_plan_index(callee)
         && let Some(callee_layout) = vm.function_prototype_layout(callee)
     {
@@ -153,14 +159,22 @@ pub(super) fn planned_receiver_in_lane(
             callee,
             callee_layout,
             prototype,
-            shape,
+            shape: fixed.map_or(shape, |fixed| fixed.shape),
             kind: ConstructPlanKind::Forwarding,
+            fixed,
             ..EMPTY_CONSTRUCT_PLAN
         }
         .finish();
         watch_construct_plan(vm, index, true, &[callee, prototype]);
     }
     Some(this)
+}
+
+/// The union of a forwarding constructor's receiver `callee` when its class is fixed (R4-F, `Vm::fixed_union`), from the
+/// template of `callee`'s prototype: the receiver is then the union cell (`planned_receiver_in_lane`).
+pub(super) fn fixed_receiver_union(vm: &mut Vm, callee: Value) -> Option<quench_runtime::vm::engine_types::FixedUnion> {
+    let template = vm.inline_construct_template(callee)?;
+    vm.fixed_union(callee, template.shape())
 }
 
 /// `activate_in_lane` for a target that keeps its passed values, or for values a forwarding

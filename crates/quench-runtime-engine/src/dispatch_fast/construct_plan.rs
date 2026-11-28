@@ -147,6 +147,7 @@ impl ConstructPlan {
             fallbacks: fields.fallbacks,
             nested: fields.nested,
             forwarded: Some(forwarded),
+            fixed: fields.fixed,
             ..*self
         }
         .derive_header()
@@ -337,7 +338,12 @@ pub(crate) fn body_receiver_in_lane(vm: &mut Vm, callee: Value) -> Option<Value>
     if plan.kind != ConstructPlanKind::Forwarding || plan.fields != 0 || plan.forwarded.is_none() {
         return None;
     }
-    let this = vm.allocate_planned_object(plan.header, plan.prototype, &[Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS], 0);
+    let plan = *plan;
+    // A fixed class's receiver is its union cell (R4-F), as `allocate_receiver` makes it.
+    let this = match plan.fixed {
+        Some(_) => plan.allocate(vm, |_| Value::UNDEFINED),
+        None => vm.allocate_planned_object(plan.header, plan.prototype, &[Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS], 0),
+    };
     note_allocation(vm);
     Some(this)
 }
@@ -478,15 +484,18 @@ pub(crate) fn initialize_stores_in_lane(
     callee: Value,
     constructor: Value,
     env: Value,
-    adds: impl FnOnce(&mut Vm, Value, &mut dyn FnMut(&mut Vm, &quench_runtime::bytecode::NestedConstruct) -> Option<Value>, &mut dyn FnMut(&quench_runtime::bytecode::InitializerStore, Value)) -> bool,
+    adds: impl FnOnce(&mut Vm, Value, bool, &mut dyn FnMut(&mut Vm, &quench_runtime::bytecode::NestedConstruct) -> Option<Value>, &mut dyn FnMut(&quench_runtime::bytecode::InitializerStore, Value)) -> bool,
 ) -> Option<(Value, bool)> {
     let plan_index = construct_plan_index(callee);
     let template = vm.inline_construct_template_by(callee, constructor)?;
     let (prototype, source_shape) = (template.proto(), template.shape());
-    let this = vm.allocate_object(template);
-    // A fixed class's union (R4-F, the decision `Vm::fixed_union` makes for the construction's receiver): the plan
-    // then allocates the instance as that union's cell, gathering the fields the adds stored.
+    // A fixed class's union (R4-F, `Vm::fixed_union`): its receiver is the union cell from birth, all slots absent,
+    // and each store is written to its union slot by atom once the adds have made them. No record is made.
     let union = vm.fixed_union(constructor, source_shape);
+    let this = match union {
+        Some(union) => vm.allocate_fixed_cell(union.shape, prototype, &[], &[]),
+        None => vm.allocate_object(template),
+    };
     let mut planned = Some(ConstructPlan {
         callee,
             callee_layout: (0, 0),
@@ -494,30 +503,36 @@ pub(crate) fn initialize_stores_in_lane(
         shape: source_shape,
         ..EMPTY_CONSTRUCT_PLAN
     });
-    // Each plan field's store name and value, in field order.
-    let mut atoms = [0; CONSTRUCT_PLAN_FIELDS];
-    let mut values = [Value::UNDEFINED; CONSTRUCT_PLAN_FIELDS];
+    // Each store's name and value, in store order: the plan's fields while it holds, and a fixed class's slot writes.
+    let mut atoms = [0; quench_runtime::heap::MAX_CELL_FIELDS];
+    let mut values = [Value::UNDEFINED; quench_runtime::heap::MAX_CELL_FIELDS];
+    let mut stored = 0;
     let nested = std::cell::Cell::new(None);
-    let added = adds(vm, this,
+    let added = adds(vm, this, union.is_some(),
         &mut |vm, construct| {
             let (value, field) = nested::nested_construct_in_lane(vm, env, construct)?;
             nested.set(Some(field));
             Some(value)
         },
         &mut |store, value| {
-            planned = planned.and_then(|plan| {
-                let field = usize::from(plan.fields);
-                let plan = match store.value {
-                    quench_runtime::bytecode::InitializerValue::Construct(_) => plan.with_nested(nested.take()?)?,
-                    _ => plan.with_field(store, value)?,
-                };
-                atoms[field] = store.atom;
-                values[field] = value;
-                Some(plan)
+            if let (Some(atom), Some(stored_value)) = (atoms.get_mut(stored), values.get_mut(stored)) {
+                *atom = store.atom;
+                *stored_value = value;
+            }
+            stored += 1;
+            planned = planned.and_then(|plan| match store.value {
+                quench_runtime::bytecode::InitializerValue::Construct(_) => plan.with_nested(nested.take()?),
+                _ => plan.with_field(store, value),
             });
         });
     if !added {
         return Some((this, false));
+    }
+    if let Some(union) = union {
+        for (&atom, &value) in atoms.iter().zip(&values).take(stored) {
+            let slot = union.slot_of(atom).expect("a fixed class's store names one of its union slots");
+            vm.store_fixed_cell_slot(this, slot, atom, value);
+        }
     }
     let Some(mut plan) = planned else {
         return Some((this, true));
@@ -525,14 +540,13 @@ pub(crate) fn initialize_stores_in_lane(
     if let Some(index) = plan_index
         && let Some(layout) = vm.function_prototype_layout(callee)
     {
-        // The fixed cell's slots: each store's union slot, whatever the order of the stores (`FixedUnion::cell_slots`).
-        // A store naming no union slot leaves the plan unheld, and the receiver stays the record the adds made.
+        // The fixed cell's slots: each store's union slot (`FixedUnion::cell_slots`), for the plan's later instances.
         let fixed = match union {
             None => None,
-            Some(union) => match union.cell_slots(&atoms[..usize::from(plan.fields)]) {
-                Some(slots) => Some(FixedCellPlan { shape: union.shape, slots }),
-                None => return Some((this, true)),
-            },
+            Some(union) => Some(FixedCellPlan {
+                shape: union.shape,
+                slots: union.cell_slots(&atoms[..usize::from(plan.fields)]).expect("a fixed class's store names one of its union slots"),
+            }),
         };
         plan.callee_layout = layout;
         plan.shape = match fixed {
@@ -551,9 +565,11 @@ pub(crate) fn initialize_stores_in_lane(
             watch_construct_plan(vm, index, false, nested.held());
         }
         if fixed.is_some() {
-            // The instance is the cell the stored plan allocates, in place of the record the adds grew.
-            let stored = vm.lane_stack.construct_plans[index];
-            return Some((stored.allocate_values(vm, &values), true));
+            // The receiver is the cell already made; its class is recorded as the stored plan records it.
+            let stored_plan = vm.lane_stack.construct_plans[index];
+            if !stored_plan.recorded {
+                stored_plan.record_unrecorded(vm, this);
+            }
         }
     }
     Some((this, true))

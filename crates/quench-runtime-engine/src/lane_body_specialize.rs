@@ -36,7 +36,7 @@ impl LaneView {
         let (outcome, looks) = match std::mem::replace(body, LaneBody::Declined) {
             LaneBody::Unspecialized => {
                 crate::compiled::base_region::count(crate::compiled::base_region::Event::BodyCompile);
-                (work(crate::compiled::LaneBodyWork::Start { called: self.called_by_bodies(), caller: self }), 0)
+                (work(crate::compiled::LaneBodyWork::Start { caller: self }), 0)
             }
             LaneBody::Compiling { pending, looks, .. } =>
                 (work(crate::compiled::LaneBodyWork::Poll(pending)), looks.saturating_add(1)),
@@ -70,7 +70,7 @@ impl LaneView {
             use crate::compiled::{LaneBodyOutcome as O, base_region::{Event, count}};
             count(match &outcome {
                 O::Published(_) => Event::BodyPublished, O::Compiling(_) => Event::BodyCompiling, O::Unpaid => Event::BodyUnpaid,
-                O::Short => Event::BodyShort, O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
+                O::Declined => Event::BodyDeclined, O::Stale => Event::BodyStale, O::Deferred => Event::BodyDeferred,
             });
         }
         match outcome {
@@ -88,10 +88,6 @@ impl LaneView {
             // Its predicted tier is the interpreter (`lane_facts::body_pick`): the interpreter runs it.
             crate::compiled::LaneBodyOutcome::Unpaid => {
                 self.tier().history.set(LaneBodyHistory { unpaid: true, ..self.tier().history.get() });
-                LaneBody::Declined
-            }
-            crate::compiled::LaneBodyOutcome::Short => {
-                self.tier().history.set(LaneBodyHistory { short: true, ..self.tier().history.get() });
                 LaneBody::Declined
             }
             crate::compiled::LaneBodyOutcome::Declined => {

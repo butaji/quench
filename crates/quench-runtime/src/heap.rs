@@ -4601,6 +4601,15 @@ impl Heap {
         Some(unsafe { self.properties.flat_mut_ptr_unchecked(vector, slot) })
     }
 
+    /// The store of `value` to field `slot` of the live class cell `object` (a fixed class's instance, R4-F), in place:
+    /// the word `set_leading_properties` stores for a slot, under the cell's shape, which already names the slot.
+    pub(crate) fn set_fixed_cell_slot(&mut self, object: Value, slot: usize, value: Value) {
+        let granule = self.live_class_cell(object).expect("a fixed class's instance is a live class cell");
+        self.note_value_slot(object, slot, value);
+        let word = self.stored_slot_word(object, slot, value);
+        self.class_cell_store(granule, slot, word);
+    }
+
     /// `property_set` of each of `values` at slot `0..INLINE_PROPERTY_COUNT` of `object`,
     /// whose shape has those slots, with one lookup and one write barrier: one payload store
     /// when they pack there (`Object::store_packed_inline_values`), the arena's slots when

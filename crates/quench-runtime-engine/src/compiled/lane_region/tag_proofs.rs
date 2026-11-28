@@ -67,6 +67,26 @@ impl Lowering<'_, '_> {
         let Some((function, pc, local)) = self.origin_local(unit_pc, register) else { return false };
         facts.function_facts(function).backing_plain(pc, local)
     }
+
+    /// The fixed class (`AotFacts::class_fixed_cell`) every instance of which the receiver `owner` holds just before the unit
+    /// instruction at `pc`: the register's cell (`FunctionFacts::cell_at`) names that one class, proven; `None` names `this`,
+    /// whose class is the function's `this_classes`, the unit's own function only (an inlined frame's `this` is its
+    /// receiver register). None where the solve proves no single class, or the class is not fixed.
+    pub(crate) fn fixed_class(&self, pc: usize, owner: Option<Register>) -> Option<u32> {
+        use super::super::lane_unit::Origin;
+        let facts = self.vm.facts?;
+        let classes = match owner {
+            Some(register) => {
+                let (function, origin_pc, local) = self.origin_local(pc, register)?;
+                facts.function_facts(function).cell_at(origin_pc, local)?.classes
+            }
+            None => match self.unit.origins.get(pc)? {
+                Origin::Caller(_) => facts.function_facts(self.function_id).this_classes(),
+                Origin::Inlined { .. } => return None,
+            },
+        };
+        proven_class(classes).filter(|&class| facts.class_fixed_cell(class))
+    }
 }
 
 /// The one class `classes` proves its objects are instances of: a construction's own result (`proven`), of a single class.

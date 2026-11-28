@@ -122,7 +122,8 @@ pub(super) fn construct_keeping_activation_in_lane(
     // One look at the plan serves the receiver and the forwarding: a plan the receiver's
     // allocation leaves records no resolution yet.
     let plan = holding_construct_plan(vm, callee);
-    let Some(this) = planned_receiver_in_lane(vm, callee, plan.as_ref()) else {
+    let union = fixed_receiver_union(vm, callee);
+    let Some(this) = planned_receiver_in_lane(vm, callee, plan.as_ref(), union) else {
         return Err(Some(exit(ip)));
     };
     note_allocation(vm);
@@ -144,7 +145,7 @@ pub(super) fn construct_keeping_activation_in_lane(
             let code = unsafe { &*(*cx).code };
             let argument = construct_argument_in_lane(r, i);
             let read = construct_plan::field_reader(vm, callee);
-            if let Some(fields) = construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument, read) {
+            if let Some(fields) = construct_plan::finish_forwarded_in_lane(vm, code, forwarded.env, this, forwarded.function, argument, read, union) {
                 if let Some(fields) = fields {
                     record_forwarded_fields_in_lane(vm, callee, (forwarded.program(), forwarded.function), this, &fields);
                 }

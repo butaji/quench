@@ -84,15 +84,6 @@ pub(crate) enum UnitKind {
     Entry,
     /// A Wasm program's module compile (`Vm::wasm_module_unit`): the program is Wasm.
     WasmModule,
-    /// A lane body's plan from an entry, before planning (phase A): the compile bound, the tier predicted
-    /// makes, the compile bound. Its unit is the proof every later lane gate needs.
-    LanePlan,
-    /// A lane body's entry gate during planning (phase B, inside the plan): the plan's unit, the amortization
-    /// of its entry, and the callers that want it anyway.
-    LaneEntry(CompiledUnit),
-    /// A lane body's install gate after planning (phase B, before the plan binds its callees): the plan's
-    /// unit, the callers of regions, and the amortization of its entry.
-    LaneInstall(CompiledUnit),
     /// A JavaScript function claimed by a tier at an entry: the Cranelift tiers, or lane bodies on the
     /// stencil tier, for a function that is not Wasm.
     Claim,
@@ -104,24 +95,12 @@ pub(crate) enum UnitKind {
 pub(crate) struct UnitFacts {
     /// The body's rows cover the stencil tier (`base_region::covers`).
     pub(crate) covers: bool,
-    /// The body amortizes its b-jit entry (`body_may_amortize` for `Tier::Base`).
-    pub(crate) amortizes: bool,
-    /// The caller is native code or a body that calls the function (`LaneView::called_by_bodies`).
-    pub(crate) called_by_bodies: bool,
     /// The body indexes a parameter that is a typed array (`indexes_typed_parameter`).
     pub(crate) indexes_typed: bool,
     /// The Cranelift function tiers run in this VM (`tier_policy::tiers_run`), for `UnitKind::Entry`.
     pub(crate) cranelift_allowed: bool,
     /// The program is a Wasm program (`ProgramKind::Wasm`), for `UnitKind::WasmModule`.
     pub(crate) wasm_program: bool,
-    /// The caller is a loop region, which calls the body from native code (`LaneView::called_by_regions`).
-    pub(crate) called_by_regions: bool,
-    /// The compile is from the function's own entry, not a loop's (`entry.is_none()`).
-    pub(crate) entry_none: bool,
-    /// The function calls itself back through other functions (`recursive`).
-    pub(crate) recursive: bool,
-    /// The body's entry amortizes its work (`lane_facts::amortizes_entry`), or the gate does not ask.
-    pub(crate) amortizes_entry: bool,
     /// A lane body may run on the stencil tier here: lane methods are enabled and b-jit runs (`UnitKind::Claim`).
     pub(crate) base_lane_allowed: bool,
 }
@@ -133,7 +112,7 @@ fn may_compile(kind: UnitKind) -> bool {
         UnitKind::Body => quench_runtime::vm::tier_policy::may_compile(),
         UnitKind::Region(policy) => quench_runtime::vm::tier_policy::by_policy(policy).loop_tier,
         UnitKind::Ahead | UnitKind::Wasm | UnitKind::Base | UnitKind::Regexp => true,
-        UnitKind::Entry | UnitKind::WasmModule | UnitKind::LanePlan | UnitKind::LaneEntry(_) | UnitKind::LaneInstall(_) | UnitKind::Claim =>
+        UnitKind::Entry | UnitKind::WasmModule | UnitKind::Claim =>
             unreachable!("facts decide these kinds, in `specialize`"),
     }
 }
@@ -150,14 +129,10 @@ pub(crate) struct UnitRequest {
     pub(crate) facts: UnitFacts,
 }
 
-/// The outcome of `specialize`: a unit cleared to compile, a body too short to amortize its
-/// entry (`Short`, refused as `NotAmortized`), or declined by the mode, the policy or its facts.
+/// The outcome of `specialize`: a unit cleared to compile, or declined by the mode, the policy or its facts.
 pub(crate) enum Decision<T> {
     Compile(T),
-    Short,
     Declined,
-    /// The body does not repay its compile yet (`LaneBodyOutcome::Unpaid`).
-    Unpaid,
 }
 
 impl<T> Decision<T> {
@@ -208,24 +183,11 @@ pub(crate) fn specialize(request: UnitRequest) -> Decision<CompiledUnit> {
     let cleared = match kind {
         UnitKind::Base => {
             if !facts.covers { return Decision::Declined; }
-            if !facts.amortizes && !facts.called_by_bodies { return Decision::Short; }
             !facts.indexes_typed
         }
         UnitKind::Claim => (facts.cranelift_allowed || facts.base_lane_allowed) && !facts.wasm_program,
         UnitKind::Entry => facts.cranelift_allowed,
         UnitKind::WasmModule => facts.wasm_program,
-        // Phase A: the pick decided the tier before this gate.
-        UnitKind::LanePlan => true,
-        // Phase B, during planning: the entry gate.
-        UnitKind::LaneEntry(_) => {
-            if facts.entry_none && !facts.called_by_bodies && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
-            true
-        }
-        // Phase B, after planning: the install gate.
-        UnitKind::LaneInstall(_) => {
-            if facts.entry_none && !facts.called_by_regions && !facts.recursive && !facts.amortizes_entry { return Decision::Short; }
-            true
-        }
         UnitKind::Body | UnitKind::Region(_) | UnitKind::Ahead | UnitKind::Wasm | UnitKind::Regexp => may_compile(kind),
     };
     if cleared { Decision::Compile(CompiledUnit { ceiling: code_ceiling(kind) }) } else { Decision::Declined }
@@ -279,7 +241,7 @@ pub(crate) enum LaneRoute {
     Base,
     /// It waits for callees that still compile, to call their bodies by their entries.
     Deferred,
-    /// The lane body tier plans it (`LanePlan` and the gates after it).
+    /// The lane body tier plans it, through the policy's pick.
     Lane,
 }
 

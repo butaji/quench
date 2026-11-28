@@ -712,6 +712,8 @@ fn emit_js_cached_field_slot(
             let class_base = emit_js_payload_word(builder, payload, std::mem::offset_of!(JsStepDispatch, head.class_base));
             object_slots::ObjectHeader::prove(builder, base, records, class_base, None, fallback)
         });
+    // A cached field read names a record, whose shape and storage form its header holds (a fixed class's cell takes `fixed_cells`).
+    let (Some(shape), Some(inline)) = (shape, inline) else { unreachable!("a cached field read's header names a record") };
     // The exact shape includes dictionary storage, which cannot match an own-data row.
     let same_shape = object_slots::emit(builder).raw_compare(Relation::Equal, shape, receiver_shape);
     emit_js_guard(builder, same_shape, fallback);
@@ -3198,13 +3200,6 @@ impl LaneMethod {
     /// body's parameter types (`TypeSummary`) may come to back.
     pub(crate) fn entry_param_types(&self) -> Option<&[quench_runtime::typed_ir::Type]> {
         self.proven.as_ref().map(|(_, params)| &params[..])
-    }
-
-    /// Whether an entry, which costs a few hundred instructions the lane's own run of a
-    /// short leaf never pays, has work to amortize it: a loop, an inlined call, or length
-    /// (`Tiers::amortizing_instructions`). A short leaf runs in the lane, or inlined.
-    pub(crate) fn amortizes_entry(&self) -> bool {
-        self.amortizes
     }
 
     /// Whether a direct caller may call it (`LaneMethod::closed`).
@@ -7520,13 +7515,10 @@ impl Vm {
             return false;
         };
         let state = self.programs.js_tier(id, function);
-        // Lane bodies claim only bodies that can amortize an entry (`amortizes_entry`): a claim
-        // costs a short call-free one its leaf calls. A function the numeric tier cannot take
-        // is still theirs to claim.
-        // The claim is at the function's entry, so its pick is the entry's (not a loop's); an interpreted pick claims nothing.
+        // Lane bodies claim every function the policy picks compiled: the pick is the entry's (not a loop's), and an
+        // interpreted pick claims nothing. A function the numeric tier cannot take is still theirs to claim.
         let lane_claims = admission::lane_bodies_enrolled(self)
-            && quench_runtime::vm::tier_policy::lane_body_tier(self.lane_pick(program, function, false)).is_some_and(|tier|
-                program.function_get(function as usize).is_some_and(|body| body_may_amortize(self.programs.tiers(), body, tier)));
+            && quench_runtime::vm::tier_policy::lane_body_tier(self.lane_pick(program, function, false)).is_some();
         if quench_runtime::vm::tier_machine::js_tier_state(state.as_ref()) == quench_runtime::vm::tier_machine::TierState::Declined {
             return lane_claims;
         }
@@ -8820,13 +8812,6 @@ impl Vm {
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
 
-/// Whether a lane body of `body` in `tier` could amortize an entry (`lane_facts::amortizes_entry`): a
-/// loop, a call (which a plan inlines or binds), or length. A short call-free function never
-/// gets a body of its own, so claiming it for the tier would only cost it its leaf calls.
-pub(crate) fn body_may_amortize(tiers: &Tiers, body: &quench_runtime::bytecode::Function, tier: crate::compiled::admission::Tier) -> bool {
-    body.loops() || body.code.len() >= tiers.amortizing_instructions(tier)
-        || body.code.iter().any(|packed| quench_runtime::staged::Operation::<u64, ()>::is_plain_call(body.widened(*packed)))
-}
 
 /// Whether native entries of `body` can pay: a loop-free body shorter than an entry's
 /// overhead (`JS_TIER_LANE_ENTRY_RECORDS`) runs cheaper in the interpreter at each entry.
