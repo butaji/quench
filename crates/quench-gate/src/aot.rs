@@ -94,13 +94,12 @@ pub fn run(config: &Config) -> Verdict {
         return Err(format!("no C analogues in {}", analogue::DIRECTORY));
     }
     let host = config.binary(NODE)?;
-    let compiler = config.aot_binary(NODE)?;
     let path = config.root.join(RATIOS);
     let before = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let mut table = Table::parse(&before)?;
     let mut report = Report::default();
     for analogue in &analogues {
-        match row::measure(config, analogue, &host, &compiler) {
+        match row::measure(config, analogue, &host) {
             Ok(ratio) => report.settle(&mut table, &analogue.row, ratio, config.record),
             Err(error) => report.failures.push(format!("{}: {error}", analogue.row)),
         }

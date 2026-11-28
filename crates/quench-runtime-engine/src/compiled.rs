@@ -3742,7 +3742,7 @@ impl Vm {
     /// every one below it (`region_lend::lend`), so a plain frame here is a direct call's still running (a
     /// stencil call row's push, whose pop restores the plain depth, window and body top it found). Binding
     /// spills it into a record that pop never removes: each such call that allocated left one record more,
-    /// until the walk over them outgrew the activation limit (ai-astar under `--b-jit`).
+    /// until the walk over them outgrew the activation limit (ai-astar under the b-jit tier alone).
     pub(crate) fn refresh_region_bases(&mut self, payload: usize, direct_calls: bool) {
         // SAFETY: a region's payload lives for its run, which the helper that calls this is made from.
         if let Some(payload) = unsafe { (payload as *mut JsStepDispatch).as_mut() } {
@@ -7475,7 +7475,7 @@ impl Vm {
         if self.images_run_in_lane() && self.programs.ahead_images(id, program).is_some() {
             return true;
         }
-        // The Cranelift function tiers claim, and so do lane bodies, which `--b-jit` stitches from stencils (`UnitKind::Claim`).
+        // The Cranelift function tiers claim, and so do lane bodies, which the b-jit tier stitches from stencils (`UnitKind::Claim`).
         if admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Claim, facts: admission::UnitFacts {
             cranelift_allowed: quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), admission::Tier::CRANELIFT),
             base_lane_allowed: admission::lane_bodies_enrolled(self) && quench_runtime::vm::tier_policy::tiers_run(self.execution_mode, self.memory_policy(), &[admission::Tier::Base]),

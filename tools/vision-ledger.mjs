@@ -437,9 +437,9 @@ function budgets(baseDir, dir, branch, owner) {
 function inversions(file) {
   const items = [];
   for (const line of fs.readFileSync(file, "utf8").split("\n")) {
-    const m = /^([a-z0-9_]+)\s+(b-jit|u-jit)\s*$/.exec(line);
+    const m = /^([a-z0-9_]+)\s+(default|aot)\s*$/.exec(line);
     if (m) items.push({ cat: "tier-inversion", owner: m[2], file: "tier_inversions.txt", line: 0, symbol: `${m[1]} ${m[2]}`, branch: "v2-merged",
-      key: `tier-inversion|${m[1]}|${m[2]}`, detail: `${m[1]}: ${m[2]} runs it in more instructions than the tier below (principle 5: tier order by design)` });
+      key: `tier-inversion|${m[1]}|${m[2]}`, detail: `${m[1]}: ${m[2]} runs it in more instructions than the mode above it (principle 5: tier order by design)` });
   }
   return items;
 }
@@ -455,9 +455,9 @@ function gate(file) {
   const own = o => map[o] || o || "unowned";
   // Rows whose fix lives on another branch than the gate's named owner (owners' triage).
   const GATE_OWNER = { bi_set_has: "Builtins", bi_map_get: "Builtins", arr_includes: "Builtins", arr_indexof: "Builtins" };
-  for (const m of txt.matchAll(/^([a-z0-9_]+): --(b-jit|u-jit) ([\d.]+) Ir\/iter, ceiling ([\d.]+) \(budget C \+ 6 = ([\d.]+)\) -> (.+)$/gm))
+  for (const m of txt.matchAll(/^([a-z0-9_]+): (default|aot) ([\d.]+) Ir\/iter, ceiling ([\d.]+) \(budget ([\d.]+)\) -> (.+)$/gm))
     items.push({ cat: "budget-over-c6", owner: GATE_OWNER[m[1]] || m[2], file: `ir-budget ${tag}`, line: 0, symbol: `${m[1]} ${m[2]}`, branch: "v2-merged", key: `budget-over-c6|${m[1]}|${m[2]}`,
-      detail: `${m[1]} ${m[2]}: ${m[3]} Ir/iter vs budget C + 6 = ${m[5]} (${(+m[3] / +m[5]).toFixed(1)}x)` });
+      detail: `${m[1]} ${m[2]}: ${m[3]} Ir/iter vs budget ${m[5]} (${(+m[3] / +m[5]).toFixed(1)}x)` });
   for (const m of txt.matchAll(/^([a-z0-9_]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)x\s+over\s+(.*)$/gm)) {
     const first = (m[7].match(/\d+\s+([A-Za-z_:<>]+)/) || [])[1] || "";
     let o = ownerFor[m[1]];

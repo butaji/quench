@@ -192,7 +192,7 @@ static LEAVES: Mutex<BTreeMap<(u32, u32), (quench_runtime::bytecode::Op, u64)>> 
 static REPORT: std::sync::Once = std::sync::Once::new();
 
 /// What a loop site did in the lane, counted under `QUENCH_TRACE=js-jit` (printed with the totals): the
-/// cost of the tier machinery around the regions, which `--b-jit` pays whether or not a region exists.
+/// cost of the tier machinery around the regions, which the b-jit tier pays whether or not a region exists.
 #[derive(Clone, Copy)]
 pub(crate) enum Event {
     /// A loop site's run entered published code.
@@ -203,7 +203,7 @@ pub(crate) enum Event {
     Declined,
     /// A compilation of a loop region started (`loop_compile_in_lane`).
     Compiled,
-    /// A lane body compile started (a Cranelift function tier; none under `--b-jit`).
+    /// A lane body compile started (a Cranelift function tier; none under the b-jit tier).
     BodyCompile,
     /// A body plan built its IR (`Lowered::of`), whatever the attempt came to.
     BodyPlanned,

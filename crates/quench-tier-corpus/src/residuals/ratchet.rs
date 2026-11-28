@@ -1,13 +1,13 @@
-//! The ratchet: the counts each kernel and tier currently emit, which may only go down. A line is
-//! `kernel tier boxes guards spills calls instructions`; `#` starts a comment. A pair with no line
+//! The ratchet: the counts each kernel and mode currently emit, which may only go down. A line is
+//! `kernel mode boxes guards spills calls instructions`; `#` starts a comment. A pair with no line
 //! has no ratchet yet: nothing it emits regresses until `--update-ratchet` records it. The spec is the target
 //! the report shows, not a ceiling.
 
-use super::{CATEGORY_COUNT, Counts, Kernel, Tier};
+use super::{CATEGORY_COUNT, Counts, Kernel, Mode};
 use std::{collections::BTreeMap, fmt::Write};
 
 #[derive(Debug, Default)]
-pub struct Ratchet(BTreeMap<(String, Tier), Counts>);
+pub struct Ratchet(BTreeMap<(String, Mode), Counts>);
 
 impl Ratchet {
     pub fn parse(text: &str) -> Result<Self, String> {
@@ -18,10 +18,10 @@ impl Ratchet {
             .filter(|line| !line.is_empty())
         {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            let [kernel, tier, counts @ ..] = fields.as_slice() else {
+            let [kernel, mode, counts @ ..] = fields.as_slice() else {
                 return Err(format!("short ratchet line `{line}`"));
             };
-            let tier = Tier::from_name(tier).ok_or_else(|| format!("unknown tier in `{line}`"))?;
+            let mode = Mode::from_name(mode).ok_or_else(|| format!("unknown mode in `{line}`"))?;
             let counts: Vec<u32> = counts
                 .iter()
                 .map(|count| count.parse().map_err(|_| format!("bad count in `{line}`")))
@@ -31,34 +31,34 @@ impl Ratchet {
                     .try_into()
                     .map_err(|_| format!("`{line}` needs {CATEGORY_COUNT} counts"))?,
             );
-            entries.insert((kernel.to_string(), tier), counts);
+            entries.insert((kernel.to_string(), mode), counts);
         }
         Ok(Self(entries))
     }
 
-    /// Whether `kernel` has compiled a loop on `tier` before, which it must keep doing.
-    pub fn has(&self, kernel: &Kernel, tier: Tier) -> bool {
-        self.0.contains_key(&(kernel.name.to_string(), tier))
+    /// Whether `kernel` has compiled a loop in `mode` before, which it must keep doing.
+    pub fn has(&self, kernel: &Kernel, mode: Mode) -> bool {
+        self.0.contains_key(&(kernel.name.to_string(), mode))
     }
 
-    /// The categories in which `counts` is above the recorded entry of `kernel` on `tier`: the
+    /// The categories in which `counts` is above the recorded entry of `kernel` in `mode`: the
     /// regressions. A pair with no entry has none.
-    pub fn regressions(&self, kernel: &Kernel, tier: Tier, counts: Counts) -> Vec<&'static str> {
+    pub fn regressions(&self, kernel: &Kernel, mode: Mode, counts: Counts) -> Vec<&'static str> {
         self.0
-            .get(&(kernel.name.to_string(), tier))
+            .get(&(kernel.name.to_string(), mode))
             .map(|recorded| counts.exceeding(*recorded).collect())
             .unwrap_or_default()
     }
 
-    /// The ratchet after `measured` (kernel, tier, counts): each entry the lower of its old value
+    /// The ratchet after `measured` (kernel, mode, counts): each entry the lower of its old value
     /// and the measurement, a new entry the measurement.
     pub fn tightened(
         &self,
-        measured: impl IntoIterator<Item = (&'static str, Tier, Counts)>,
+        measured: impl IntoIterator<Item = (&'static str, Mode, Counts)>,
     ) -> Self {
         let mut entries = self.0.clone();
-        for (kernel, tier, counts) in measured {
-            let slot = entries.entry((kernel.to_string(), tier)).or_insert(counts);
+        for (kernel, mode, counts) in measured {
+            let slot = entries.entry((kernel.to_string(), mode)).or_insert(counts);
             *slot = slot.min(counts);
         }
         Self(entries)
@@ -66,11 +66,11 @@ impl Ratchet {
 
     pub fn render(&self) -> String {
         let mut text = String::from(
-            "# kernel tier boxes guards spills calls instructions: current values, shrink-only\n",
+            "# kernel mode boxes guards spills calls instructions: current values, shrink-only\n",
         );
-        for ((kernel, tier), counts) in &self.0 {
+        for ((kernel, mode), counts) in &self.0 {
             let counts: Vec<String> = counts.0.iter().map(u32::to_string).collect();
-            let _ = writeln!(text, "{kernel} {} {}", tier.name(), counts.join(" "));
+            let _ = writeln!(text, "{kernel} {} {}", mode.name(), counts.join(" "));
         }
         text
     }
@@ -82,14 +82,14 @@ mod tests {
 
     #[test]
     fn render_round_trips_and_tightening_only_lowers() {
-        let ratchet = Ratchet::default().tightened([("k", Tier::UJit, Counts([1, 2, 3, 4, 5]))]);
+        let ratchet = Ratchet::default().tightened([("k", Mode::Aot, Counts([1, 2, 3, 4, 5]))]);
         let tighter = Ratchet::parse(&ratchet.render()).unwrap().tightened([(
             "k",
-            Tier::UJit,
+            Mode::Aot,
             Counts([9, 1, 3, 4, 6]),
         )]);
         assert_eq!(
-            tighter.0[&("k".to_string(), Tier::UJit)],
+            tighter.0[&("k".to_string(), Mode::Aot)],
             Counts([1, 1, 3, 4, 5])
         );
     }

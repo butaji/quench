@@ -1,5 +1,5 @@
-//! The tier order of a suite (TOD-2152, user: interpreter < b-jit < u-jit at every level): for each
-//! bench and case, going up the ladder no-jit -> b-jit -> default must not make it slower (5% band
+//! The tier order of a suite (TOD-2152, user: interpreter < default < AOT at every level): for each
+//! bench and case, going up the ladder no-jit -> default -> aot must not make it slower (5% band
 //! for time noise) or run more instructions per op (2% band). RSS order is reported, not judged,
 //! since a JIT holds its code.
 //!
@@ -15,8 +15,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The ladder, lowest tier first.
-const LADDER: [&str; 3] = ["no-jit", "b-jit", "default"];
+/// The ladder, slowest mode first.
+const LADDER: [&str; 3] = ["no-jit", "default", "aot"];
 const TIME_BAND: f64 = 0.05;
 const IR_BAND: f64 = 0.02;
 
@@ -115,7 +115,7 @@ pub fn render_debt(header: &str, debt: &Debt) -> String {
 }
 
 pub fn default_header(step: &str) -> String {
-    format!("# Tier order (quench-gate step `{step}`, TOD-2152): no-jit -> b-jit -> default must not get slower (5% band) or run more Ir per op (2% band).\n\
+    format!("# Tier order (quench-gate step `{step}`, TOD-2152): no-jit -> default -> aot must not get slower (5% band) or run more Ir per op (2% band).\n\
 # `<bench>/<case> <from>-<to> <time|ir> <ratio>`: an inversion, the ratio upper/lower recorded when it inverted.\n\
 # Shrink-only: an unlisted inversion fails, a listed one that no longer inverts fails (\"remove it\"), a ratio that grew past its band fails.\n\
 # Seeded by `QUENCH_DEBT_WRITE=1 quench-gate --only {step}` on a finished sweep. Never add a line by hand.\n")
@@ -210,13 +210,13 @@ mod tests {
 
     #[test]
     fn an_ordered_ladder_passes() {
-        let judged = judge("f", &cells(&[("a/x", "no-jit", 100.0, Some(50.0)), ("a/x", "b-jit", 60.0, Some(30.0)), ("a/x", "default", 61.0, Some(30.5))]), &Debt::new());
+        let judged = judge("f", &cells(&[("a/x", "no-jit", 100.0, Some(50.0)), ("a/x", "default", 60.0, Some(30.0)), ("a/x", "aot", 61.0, Some(30.5))]), &Debt::new());
         assert!(judged.failures.is_empty(), "{:?}", judged.failures);
     }
 
     #[test]
     fn an_unlisted_inversion_fails_and_seeds() {
-        let measured = cells(&[("a/x", "no-jit", 100.0, None), ("a/x", "b-jit", 120.0, None)]);
+        let measured = cells(&[("a/x", "no-jit", 100.0, None), ("a/x", "default", 120.0, None)]);
         let judged = judge("f", &measured, &Debt::new());
         assert_eq!(judged.failures.len(), 1);
         let seeded = shrink(&Debt::new(), &judged);
@@ -225,11 +225,11 @@ mod tests {
 
     #[test]
     fn a_fixed_inversion_must_leave_the_list_and_a_worse_one_fails() {
-        let debt = parse_debt("f", "a/x no-jit-b-jit time 1.2\n").unwrap();
-        let fixed = judge("f", &cells(&[("a/x", "no-jit", 100.0, None), ("a/x", "b-jit", 90.0, None)]), &debt);
+        let debt = parse_debt("f", "a/x no-jit-default time 1.2\n").unwrap();
+        let fixed = judge("f", &cells(&[("a/x", "no-jit", 100.0, None), ("a/x", "default", 90.0, None)]), &debt);
         assert!(fixed.failures[0].contains("remove it"));
         assert!(shrink(&debt, &fixed).is_empty());
-        let worse = judge("f", &cells(&[("a/x", "no-jit", 100.0, None), ("a/x", "b-jit", 140.0, None)]), &debt);
+        let worse = judge("f", &cells(&[("a/x", "no-jit", 100.0, None), ("a/x", "default", 140.0, None)]), &debt);
         assert!(worse.failures[0].contains("worse than the recorded"));
     }
 }

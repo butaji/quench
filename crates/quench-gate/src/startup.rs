@@ -1,5 +1,6 @@
 //! Step `startup`: what starting the JavaScript host costs, in each execution mode (`--no-jit`,
-//! `--b-jit`, and the default with no flag). For each mode it measures the instructions of three runs under callgrind
+//! the default with no flag, and AOT: the program compiled ahead of time, run as its own executable).
+//! For each mode it measures the instructions of three runs under callgrind
 //! (an empty script, `console.log("hi")`, and a CommonJS `require` of a generated 200-function
 //! module, written into the scratch directory by this step), and the peak resident set of the
 //! first two: `wait4`'s `ru_maxrss` of the child (Linux, in kilobytes).
@@ -31,15 +32,16 @@ use std::{
     process::{Command, ExitStatus},
 };
 
-use crate::{build::NODE, config::Config, process, step::Verdict, tiers::INTERPRETER};
+use std::ffi::OsString;
+
+use crate::{build::NODE, config::Config, process, step::Verdict, tiers::{AOT, DEFAULT, INTERPRETER, launch}};
 
 const BUDGETS: &str = "crates/quench-tier-corpus/startup_budgets.txt";
 /// The scratch directory under the cargo target directory: generated scripts, callgrind output.
 const SCRATCH: &str = "startup";
-/// The three shipped modes (user, 2026-11-22): interpreter only, b-jit only, and the default
-/// (no flag: every tier on), keyed in the budget file by flag, `default` for the default.
-const MODES: [&str; 3] = [INTERPRETER, "--b-jit", DEFAULT];
-const DEFAULT: &str = "default";
+/// The three shipped modes (user, 2026-11-22): interpreter only, the default (no flag: every tier
+/// on), and AOT, keyed in the budget file by flag, `default` for the default and `aot` for AOT.
+const MODES: [&str; 3] = [INTERPRETER, DEFAULT, AOT];
 /// The cases measured under callgrind, and the cases whose peak resident set is measured.
 const CASES: [&str; 3] = ["empty", "hello", "module"];
 const RSS_CASES: [&str; 2] = ["empty", "hello"];
@@ -229,23 +231,21 @@ fn environment(command: &mut Command, scratch: &Path) {
     command.env("QUENCH_COMPILE_CACHE", "").env("QUENCH_STARTUP_SNAPSHOT", "off").env("XDG_CACHE_HOME", scratch);
 }
 
-/// The instructions of one run of `host mode script`, under callgrind.
-fn instructions(config: &Config, host: &Path, mode: &str, script: &Path, scratch: &Path) -> Result<u64, String> {
+/// The instructions of one run of `argv` (a script's launch in `mode`, see `tiers::launch`), under callgrind.
+fn instructions(config: &Config, argv: &[OsString], mode: &str, scratch: &Path) -> Result<u64, String> {
     let out = scratch.join("callgrind.out");
     let mut command = config.command("valgrind");
     command
         .arg("--tool=callgrind")
         .arg("--dump-instr=no")
         .arg(format!("--callgrind-out-file={}", out.display()))
-        // JIT tiers patch the code they emit: valgrind must see each write.
+        // The JIT modes patch the code they emit: valgrind must see each write.
         .args((mode != INTERPRETER).then_some("--smc-check=all"))
-        .arg(host)
-        .args((mode != DEFAULT).then_some(mode))
-        .arg(script);
+        .args(argv);
     environment(&mut command, scratch);
     let run = process::run(&mut command)?;
     if !run.success {
-        return Err(format!("{} {mode} {} failed under callgrind\n{}", host.display(), script.display(), run.excerpt()));
+        return Err(format!("{} {mode} failed under callgrind\n{}", launched(argv), run.excerpt()));
     }
     let text = fs::read_to_string(&out).map_err(|error| format!("{}: {error}", out.display()))?;
     let _ = fs::remove_file(&out);
@@ -288,8 +288,8 @@ fn executed_functions(text: &str) -> std::collections::BTreeSet<&str> {
     executed
 }
 
-/// The kilobytes of `host`'s own functions one run of `host mode script` executes, under cachegrind.
-fn touched_text_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch: &Path, sizes: &BTreeMap<String, u64>) -> Result<u64, String> {
+/// The kilobytes of the host's own functions one run of `argv` executes, under cachegrind.
+fn touched_text_kb(config: &Config, argv: &[OsString], mode: &str, scratch: &Path, sizes: &BTreeMap<String, u64>) -> Result<u64, String> {
     let out = scratch.join("cachegrind.out");
     let mut command = config.command("valgrind");
     command
@@ -298,13 +298,11 @@ fn touched_text_kb(config: &Config, host: &Path, mode: &str, script: &Path, scra
         .arg("--demangle=no")
         .arg(format!("--cachegrind-out-file={}", out.display()))
         .args((mode != INTERPRETER).then_some("--smc-check=all"))
-        .arg(host)
-        .args((mode != DEFAULT).then_some(mode))
-        .arg(script);
+        .args(argv);
     environment(&mut command, scratch);
     let run = process::run(&mut command)?;
     if !run.success {
-        return Err(format!("{} {mode} {} failed under cachegrind\n{}", host.display(), script.display(), run.excerpt()));
+        return Err(format!("{} {mode} failed under cachegrind\n{}", launched(argv), run.excerpt()));
     }
     let text = fs::read_to_string(&out).map_err(|error| format!("{}: {error}", out.display()))?;
     let _ = fs::remove_file(&out);
@@ -329,20 +327,20 @@ unsafe extern "C" {
 /// write its peak to and the command.
 pub(crate) const MEASURE_RSS: &str = "--measure-rss";
 
-/// The peak resident set of one run of `host mode script`, in kilobytes. A child's `ru_maxrss`
+/// The peak resident set of one run of `argv`, in kilobytes. A child's `ru_maxrss`
 /// starts at the high-water mark of the process that spawned it (Linux carries it through `exec`),
 /// and this gate grows past the runs it measures (35 MB after reading cachegrind output), so a fresh
 /// copy of this binary spawns the run (`measure_child`). The output goes to files in `scratch`.
-fn peak_rss_kb(config: &Config, host: &Path, mode: &str, script: &Path, scratch: &Path) -> Result<u64, String> {
+fn peak_rss_kb(config: &Config, argv: &[OsString], mode: &str, scratch: &Path) -> Result<u64, String> {
     let open = |name: &str| File::create(scratch.join(name)).map_err(|error| format!("{}: {error}", scratch.join(name).display()));
     let out = scratch.join("peak_rss_kb");
     let gate = env::current_exe().map_err(|error| format!("current_exe: {error}"))?;
     let mut command = config.command(gate);
-    command.arg(MEASURE_RSS).arg(&out).arg(host).args((mode != DEFAULT).then_some(mode)).arg(script).stdout(open("stdout")?).stderr(open("stderr")?);
+    command.arg(MEASURE_RSS).arg(&out).args(argv).stdout(open("stdout")?).stderr(open("stderr")?);
     environment(&mut command, scratch);
-    let status = command.status().map_err(|error| format!("cannot run {}: {error}", host.display()))?;
+    let status = command.status().map_err(|error| format!("cannot run {}: {error}", launched(argv)))?;
     if !status.success() {
-        return Err(format!("{} {mode} {} exited with {status}", host.display(), script.display()));
+        return Err(format!("{} {mode} exited with {status}", launched(argv)));
     }
     let text = fs::read_to_string(&out).map_err(|error| format!("{}: {error}", out.display()))?;
     text.trim().parse().map_err(|error| format!("{}: {error}", out.display()))
@@ -367,6 +365,11 @@ pub fn measure_child() -> Option<std::process::ExitCode> {
     Some(std::process::ExitCode::from(if ExitStatus::from_raw(status).success() { 0 } else { 1 }))
 }
 
+/// The program a launch runs, for a failure report.
+fn launched(argv: &[OsString]) -> String {
+    argv.iter().map(|part| part.to_string_lossy()).collect::<Vec<_>>().join(" ")
+}
+
 /// The measurements as a table: name, measured value, ceiling.
 fn table(measured: &Ceilings, ceilings: &Ceilings) -> String {
     let head = format!("{:<8}{:<9}{:<8}{:>12}{:>12}", "case", "mode", "metric", "measured", "ceiling");
@@ -386,24 +389,25 @@ pub fn run(config: &Config) -> Verdict {
     let mut measured = Ceilings::new();
     for mode in MODES {
         for case in CASES {
-            let instructions = instructions(config, &host, mode, &scripts[case], &scratch)?;
-            measured.insert(key(case, mode, IR), instructions);
-        }
-        for case in RSS_CASES {
-            let kilobytes = peak_rss_kb(config, &host, mode, &scripts[case], &scratch)?;
-            measured.insert(key(case, mode, RSS), kilobytes);
+            // Each script's launch is built once: AOT compiles the script here.
+            let argv = launch(config, &host, mode, &scripts[case], &scratch, &[])?;
+            measured.insert(key(case, mode, IR), instructions(config, &argv, mode, &scratch)?);
+            if RSS_CASES.contains(&case) {
+                measured.insert(key(case, mode, RSS), peak_rss_kb(config, &argv, mode, &scratch)?);
+            }
         }
     }
     let sizes = function_sizes(config, &host)?;
     for (case, script) in write_v8_scripts(&config.root, &scratch)? {
         for mode in V8_MODES {
+            let argv = launch(config, &host, mode, &script, &scratch, &[])?;
             if TEXT_FIXTURES.contains(&case.as_str()) {
-                measured.insert(key(&case, mode, TEXT), touched_text_kb(config, &host, mode, &script, &scratch, &sizes)?);
+                measured.insert(key(&case, mode, TEXT), touched_text_kb(config, &argv, mode, &scratch, &sizes)?);
             }
             // The default mode's peak moves 3-4% with its background compile's timing: no ceiling can hold it
             // without a band, so its code creep is held by touched text and its peak by the scoreboard.
             if mode == INTERPRETER {
-                let mut runs = (0..V8_RUNS).map(|_| peak_rss_kb(config, &host, mode, &script, &scratch)).collect::<Result<Vec<_>, _>>()?;
+                let mut runs = (0..V8_RUNS).map(|_| peak_rss_kb(config, &argv, mode, &scratch)).collect::<Result<Vec<_>, _>>()?;
                 runs.sort_unstable();
                 measured.insert(key(&case, mode, RSS), runs[V8_RUNS / 2]);
             }
@@ -464,10 +468,10 @@ mod tests {
 
     #[test]
     fn budget_rows_parse_and_render_back() {
-        let text = "# header line\n\nempty --no-jit ir 1000\nhello --b-jit rss_kb 2048\n";
+        let text = "# header line\n\nempty --no-jit ir 1000\nhello aot rss_kb 2048\n";
         let parsed = parse_budgets(text).unwrap();
-        assert_eq!(parsed, rows(&[("empty", "--no-jit", "ir", 1000), ("hello", "--b-jit", "rss_kb", 2048)]));
-        assert_eq!(render(&header(text), &parsed), "# header line\nempty --no-jit ir 1000\nhello --b-jit rss_kb 2048\n");
+        assert_eq!(parsed, rows(&[("empty", "--no-jit", "ir", 1000), ("hello", "aot", "rss_kb", 2048)]));
+        assert_eq!(render(&header(text), &parsed), "# header line\nempty --no-jit ir 1000\nhello aot rss_kb 2048\n");
     }
 
     #[test]

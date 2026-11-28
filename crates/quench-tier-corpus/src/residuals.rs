@@ -4,7 +4,8 @@
 //! A kernel's counts are taken over the innermost hot loop of the compiled artifact:
 //! `boxes` (tag stores of numbers), `guards` (checks that leave the loop, the loop's own test
 //! excluded), `spills` (loop-variable traffic through the frame or the stack), `calls`, and
-//! `instructions` (CLIF instructions for u-jit, stencil rows for b-jit).
+//! `instructions` (CLIF instructions for the Cranelift tier, which AOT runs everywhere, and stencil
+//! rows for the b-jit tier, which the default mode may pick for a function).
 
 mod ratchet;
 mod spec;
@@ -17,26 +18,29 @@ pub const CATEGORIES: [&str; CATEGORY_COUNT] =
     ["boxes", "guards", "spills", "calls", "instructions"];
 pub const CATEGORY_COUNT: usize = 5;
 
-/// The tiers a kernel is judged on, in the order `Kernel::expect` stores them.
+/// The modes a kernel is judged in, in the order `Kernel::expect` stores them: the interpreter
+/// (which compiles no loop), the default mode, and AOT.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Tier {
-    UJit,
-    BJit,
+pub enum Mode {
+    NoJit,
+    Default,
+    Aot,
 }
 
-impl Tier {
-    pub const ALL: [Self; 2] = [Self::UJit, Self::BJit];
+impl Mode {
+    pub const ALL: [Self; 3] = [Self::NoJit, Self::Default, Self::Aot];
 
-    /// The name in reports and the ratchet, which is also the tier's command-line flag without `--`.
+    /// The name in reports and the ratchet (`no-jit` is the interpreter's flag without `--`).
     pub const fn name(self) -> &'static str {
         match self {
-            Self::UJit => "u-jit",
-            Self::BJit => "b-jit",
+            Self::NoJit => "no-jit",
+            Self::Default => "default",
+            Self::Aot => "aot",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|tier| tier.name() == name)
+        Self::ALL.into_iter().find(|mode| mode.name() == name)
     }
 }
 
@@ -70,15 +74,15 @@ impl Counts {
 }
 
 /// A kernel: JavaScript source defining `function kernel` and running it hot, with the counts
-/// its C equivalent needs per tier.
+/// its C equivalent needs per mode.
 pub struct Kernel {
     pub name: &'static str,
     pub source: &'static str,
-    pub expect: [Counts; Tier::ALL.len()],
+    pub expect: [Counts; Mode::ALL.len()],
 }
 
 impl Kernel {
-    pub fn expected(&self, tier: Tier) -> Counts {
-        self.expect[tier as usize]
+    pub fn expected(&self, mode: Mode) -> Counts {
+        self.expect[mode as usize]
     }
 }

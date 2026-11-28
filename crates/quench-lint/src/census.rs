@@ -59,7 +59,7 @@ const OPCODE_TABLE: &str = "crates/quench-opcodes/src/table.rs";
 const ENGINE: &str = "crates/quench-runtime-engine/src";
 const TIER_ORDER: &str = "crates/quench-tier-corpus/tier_order.txt";
 const TIER_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions.txt";
-const DEFAULT_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions_default.txt";
+const AOT_INVERSIONS: &str = "crates/quench-tier-corpus/tier_inversions_aot.txt";
 const LANE_DISPATCH: &str = "crates/quench-runtime-engine/src/dispatch_fast";
 
 const METRICS: &[Metric] = &[
@@ -222,18 +222,18 @@ const METRICS: &[Metric] = &[
         sources: &[Source::File(TIER_ORDER)],
         extract: Extract::Text(extract::text_lines),
     },
-    // The per-op tier ladder (quench-gate step `ir-budget`): ops b-jit runs in more than the
-    // interpreter, and ops the default mode runs in more than b-jit.
+    // The per-op tier ladder (quench-gate step `ir-budget`): ops the default mode runs in more than
+    // the interpreter, and ops AOT runs in more than the default mode.
     Metric {
-        name: "tier_inversions_b_jit",
+        name: "tier_inversions",
         direction: Direction::Down,
         sources: &[Source::File(TIER_INVERSIONS)],
         extract: Extract::Text(extract::text_lines),
     },
     Metric {
-        name: "tier_inversions_default",
+        name: "tier_inversions_aot",
         direction: Direction::Down,
-        sources: &[Source::File(DEFAULT_INVERSIONS)],
+        sources: &[Source::File(AOT_INVERSIONS)],
         extract: Extract::Text(extract::text_lines),
     },
     Metric {

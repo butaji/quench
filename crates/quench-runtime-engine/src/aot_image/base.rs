@@ -1,6 +1,6 @@
 //! The base body of an AOT function: the whole function stitched from BaseJIT stencils
-//! (`base_region::function`, as `--b-jit` builds it) but emitted relocatable, every hole that
-//! names a run-time address a `Symbol`. A record with no stencil row leaves, as a `--b-jit` body's
+//! (`base_region::function`, as the b-jit tier builds it) but emitted relocatable, every hole that
+//! names a run-time address a `Symbol`. A record with no stencil row leaves, as a b-jit body's
 //! does, and the lane's interpreter runs it: the image is the projection's first body, not a second
 //! semantics. The records it leaves at are counted (`generic`) so the AOT gate drives them to zero
 //! by staging the opcodes they stand for.

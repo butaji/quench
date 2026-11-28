@@ -5,14 +5,14 @@
 use crate::ext_traits::*;
 use super::*;
 
-/// Whether the mode compiles function bodies at all (Cranelift's tiers or `--b-jit`'s stencils): `--no-jit` compiles none.
+/// Whether the mode compiles function bodies at all (Cranelift's tiers or the b-jit tier's stencils): `--no-jit` compiles none.
 fn mode_compiles_bodies() -> bool {
     crate::compiled::admission::specialize(crate::compiled::admission::UnitRequest { kind: crate::compiled::admission::UnitKind::Body, facts: Default::default() }).is_some()
 }
 
 #[quench_macros::ext(LaneViewSpecializeOps)]
 impl LaneView {
-    /// A mode with neither Cranelift function tiers nor `--b-jit`'s stencil bodies compiles no
+    /// A mode with neither Cranelift function tiers nor the b-jit tier's stencil bodies compiles no
     /// function body: the view's body is declined, once.
     fn declined_by_mode(&self) -> bool {
         let declined = !mode_compiles_bodies();
