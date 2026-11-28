@@ -25,6 +25,22 @@ fn for_each_promotion_age(mut scenario: impl FnMut(&mut Heap, PromotionAge)) {
     }
 }
 
+/// Registers the shapes the field tests use: shape 1 holds one field, shape 2 two (it extends shape 1).
+fn register_field_shapes(heap: &mut Heap) {
+    heap.register_shape_layouts(&[(0, None), (1, None), (2, Some((1, 1)))]);
+}
+
+/// An ordinary object with one field: a class cell whose slot 0 holds `Value::UNDEFINED`. Shape 1 must be
+/// registered (`register_field_shapes`).
+fn one_field_object(heap: &mut Heap) -> Value {
+    heap.alloc_object_with_properties(Value::NULL, 1, &[Value::UNDEFINED])
+}
+
+/// The owners the write barriers logged, in every record family and class cell region.
+fn logged_owners(heap: &Heap) -> usize {
+    heap.record_families().iter().map(|family| family.remembered_count()).sum()
+}
+
 #[test]
 #[cfg(not(feature = "profile-aggregate"))]
 fn direct_array_record_base_resolves_the_current_live_array_value() {
@@ -159,7 +175,8 @@ fn minor_collection_keeps_records_written_into_old_records_and_frees_young_garba
 }
 
 fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age: PromotionAge) {
-    let owner = heap.alloc_object(plain_object());
+    register_field_shapes(heap);
+    let owner = one_field_object(heap);
     let array = heap.alloc_array(ArrayObject::new(plain_object(), vec![Value::UNDEFINED]));
     assert!(owner.direct_object_index().is_some());
     assert!(array.direct_array_index().is_some());
@@ -168,7 +185,7 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
 
     // Young records reachable only through stores into old records.
     let child = heap.alloc_object(plain_object());
-    heap.object_record_mut(owner).unwrap().set_inline_property(0, child);
+    heap.property_set(owner, 0, child);
     let element = heap.alloc_object(plain_object());
     heap.array_elements_mut(array).unwrap().make_mut().set(0, element);
     let garbage = heap.alloc_object(plain_object());
@@ -189,7 +206,7 @@ fn minor_collection_keeps_records_written_into_old_records(heap: &mut Heap, age:
     }
 
     // An old record that loses its last reference survives minors and dies at a full one.
-    heap.object_record_mut(owner).unwrap().set_inline_property(0, Value::UNDEFINED);
+    heap.property_set(owner, 0, Value::UNDEFINED);
     collect_minor(heap, [owner, array]);
     assert!(heap.is_live(child));
     heap.collect([owner, array]);
@@ -203,16 +220,17 @@ fn records_written_twice_are_logged_once_per_cycle() {
 }
 
 fn records_written_twice_are_logged_once(heap: &mut Heap) {
-    let owner = heap.alloc_object(plain_object());
+    register_field_shapes(heap);
+    let owner = one_field_object(heap);
     heap.collect([owner]);
-    for value in 0..4 {
-        heap.object_record_mut(owner)
-            .unwrap()
-            .set_inline_property(0, Value::number(f64::from(value)));
+    // Only a heap reference is an edge the barrier logs, so the writes store a young object.
+    let child = heap.alloc_object(plain_object());
+    for _ in 0..4 {
+        heap.property_set(owner, 0, child);
     }
-    assert_eq!(heap.object_records.remembered_count(), 1);
+    assert_eq!(logged_owners(heap), 1);
     collect_minor(heap, [owner]);
-    assert_eq!(heap.object_records.remembered_count(), 0);
+    assert_eq!(logged_owners(heap), 0);
     assert!(heap.is_old(owner));
 }
 
@@ -654,7 +672,7 @@ fn direct_array_records_trace_and_remove_sparse_elements() {
 fn object_integrity_metadata_survives_collection() {
     let mut heap = Heap::new();
     let object = heap.alloc_object(plain_object());
-    if let Some(data) = heap.object_record_mut(object) {
+    if let Some(mut data) = heap.object_mut(object) {
         data.set_extensible(false);
         data.set_frozen(true);
     }
@@ -663,7 +681,7 @@ fn object_integrity_metadata_survives_collection() {
         .collect::<Vec<_>>();
     heap.collect([object]);
     assert!(
-        heap.object_record(object)
+        heap.object(object)
             .is_some_and(|data| !data.is_extensible() && data.is_frozen())
     );
     assert!(garbage.iter().all(|value| !heap.is_live(*value)));
@@ -675,8 +693,9 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let mut heap = Heap::new();
     let object = heap.alloc_object(plain_object());
     let before = heap.memory_stats().3;
-    // An object lives in its record family or a legacy cell; `Heap::object_record_mut` finds either.
-    let data = heap.object_record_mut(object).unwrap();
+    // An ordinary object is a class cell; its out-of-line metadata lives in the extras its header names.
+    heap.ensure_cell_extras(object);
+    let mut data = heap.object_mut(object).unwrap();
     data.set_arguments_object();
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();
@@ -1019,10 +1038,7 @@ fn wide_environment_clones_store_only_the_slots_they_do_not_share() {
 /// The old owners the next minor collection traces: those the barriers logged, and those the
 /// last minor collection carried (`Heap::carried_owners`).
 fn remembered_owners(heap: &Heap) -> usize {
-    heap.remembered.len()
-        + heap.object_records.remembered_count()
-        + heap.array_records.remembered_count()
-        + heap.carried_owners.len()
+    heap.remembered.len() + logged_owners(heap) + heap.carried_owners.len()
 }
 
 #[test]
@@ -1063,6 +1079,7 @@ fn promoted_owner_remembers_its_young_child(
     store: impl FnOnce(&mut Heap, Value, Value),
 ) {
     let mut heap = heap_at(PromotionAge::Second);
+    register_field_shapes(&mut heap);
     let owner = owner(&mut heap);
     collect_minor(&mut heap, [owner]);
     assert!(heap.is_live(owner) && !heap.is_old(owner));
@@ -1104,11 +1121,11 @@ fn promoted_cells_remember_their_young_children() {
 }
 
 #[test]
-fn promoted_object_records_remember_their_young_children() {
+fn promoted_ordinary_objects_remember_their_young_children() {
     promoted_owner_remembers_its_young_child(
+        one_field_object,
         |heap| heap.alloc_object(plain_object()),
-        |heap| heap.alloc_object(plain_object()),
-        |heap, owner, child| heap.object_record_mut(owner).unwrap().set_inline_property(0, child),
+        |heap, owner, child| heap.property_set(owner, 0, child),
     );
 }
 
@@ -1126,16 +1143,17 @@ fn promoted_array_records_remember_their_young_string_elements() {
 #[test]
 fn old_owners_stay_remembered_until_their_aged_children_are_promoted_or_freed() {
     let mut heap = heap_at(PromotionAge::Second);
-    let [keeper, dropper] = [(); 2].map(|()| heap.alloc_object(plain_object()));
+    register_field_shapes(&mut heap);
+    let [keeper, dropper] = [(); 2].map(|()| one_field_object(&mut heap));
     heap.collect([keeper, dropper]);
     let [kept, dropped] = [(); 2].map(|()| heap.alloc_object(plain_object()));
-    heap.object_record_mut(keeper).unwrap().set_inline_property(0, kept);
-    heap.object_record_mut(dropper).unwrap().set_inline_property(0, dropped);
+    heap.property_set(keeper, 0, kept);
+    heap.property_set(dropper, 0, dropped);
     collect_minor(&mut heap, [keeper, dropper]);
     assert!(heap.is_live(kept) && heap.is_live(dropped));
     assert_eq!(remembered_owners(&heap), 2, "both owners hold an aged child");
 
-    heap.object_record_mut(dropper).unwrap().set_inline_property(0, Value::UNDEFINED);
+    heap.property_set(dropper, 0, Value::UNDEFINED);
     collect_minor(&mut heap, [keeper, dropper]);
     assert!(heap.is_live(kept) && heap.is_old(kept));
     assert!(!heap.is_live(dropped), "an aged child no owner holds dies at a minor collection");
@@ -1401,10 +1419,11 @@ fn slot_type_admission_reads_live_storage_and_rebuilds_after_remapping() {
     let packed = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::NULL]);
     let arena = heap.alloc_object_with_properties(Value::NULL, 2, &[link, Value::number(0.5)]);
     let extras = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::UNDEFINED]);
-    heap.object_record_mut(extras).unwrap().set_extensible(false);
+    heap.object_mut(extras).unwrap().set_extensible(false);
     let deleted = heap.alloc_object_with_properties(Value::NULL, 1, &[Value::DELETED]);
-    assert!(heap.object(packed).unwrap().record_only().unwrap().inline_properties().is_some());
-    assert!(heap.object(arena).unwrap().record_only().unwrap().inline_properties().is_none());
+    // Every ordinary object is a class cell, so its fields are read through the cell view.
+    assert_eq!(heap.property_get_ref(heap.object(packed).unwrap(), 0), Some(Value::NULL));
+    assert_eq!(heap.property_get_ref(heap.object(arena).unwrap(), 1), Some(Value::number(0.5)));
     heap.track_slot_representations(&layouts);
     let nullable = Type::DIRECT_OBJECT_FAMILY.join(Type::NULLISH);
     assert_eq!(heap.slot_type(1, 0), nullable);
@@ -1483,6 +1502,53 @@ fn unfilled_object_records_only_the_values_that_fill_it() {
     assert_eq!(heap.slot_type(1, 0), Type::immediate(Value::NULL));
     assert_eq!(heap.unrepresented_slots(), 0);
     assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 0), Some(Value::NULL));
+}
+
+#[test]
+fn a_cell_past_the_largest_region_spills_and_round_trips_its_fields() {
+    // The largest region holds 31 fields inline (`class_space::region_capacity`); the rest spill into a run.
+    const FIELDS: usize = 40;
+    let mut heap = Heap::new();
+    let layouts: Vec<(usize, Option<(u32, usize)>)> = (0..=FIELDS)
+        .map(|length| (length, length.checked_sub(1).map(|parent| (parent as u32, parent))))
+        .collect();
+    heap.register_shape_layouts(&layouts);
+    let values: Vec<Value> = (0..FIELDS).map(|slot| Value::integer(slot as i32)).collect();
+    let object = heap.alloc_object_with_properties(Value::NULL, FIELDS as u32, &values);
+    heap.collect([object]);
+    assert!(heap.is_live(object));
+    for (slot, value) in values.iter().enumerate() {
+        assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), slot), Some(*value), "slot {slot}");
+    }
+    // A store to the last field, which is past the region's inline capacity, reads back.
+    heap.property_set(object, FIELDS - 1, Value::integer(-1));
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), FIELDS - 1), Some(Value::integer(-1)));
+}
+
+#[test]
+fn deleting_the_last_added_key_returns_a_cell_to_its_parent_class() {
+    let mut heap = Heap::new();
+    register_field_shapes(&mut heap);
+    let object = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(1), Value::integer(2)]);
+    let granule = heap.live_class_cell(object).unwrap();
+    heap.class_cell_drop_last(granule, 1);
+    assert_eq!(heap.object(object).unwrap().shape(), 1);
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 0), Some(Value::integer(1)));
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 1), None);
+}
+
+#[test]
+fn a_dictionary_cell_reads_its_table() {
+    let mut heap = Heap::new();
+    register_field_shapes(&mut heap);
+    let object = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(1), Value::integer(2)]);
+    let granule = heap.live_class_cell(object).unwrap();
+    // The transition keeps the shape's length and moves the fields into the cell's table.
+    heap.cell_to_dictionary(granule, 2);
+    assert!(heap.live_dictionary_cell(object).is_some());
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 0), Some(Value::integer(1)));
+    heap.property_set(object, 1, Value::integer(5));
+    assert_eq!(heap.property_get_ref(heap.object(object).unwrap(), 1), Some(Value::integer(5)));
 }
 
 #[test]

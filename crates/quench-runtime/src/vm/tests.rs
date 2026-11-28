@@ -5560,7 +5560,9 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 super::property_key::PropertyKey::string(atom),
                 attributes,
             );
-            let object = vm.heap.object_record_mut(namespace).unwrap();
+            // A namespace is a class cell; its module data lives in the extras its header names.
+            vm.heap.ensure_cell_extras(namespace);
+            let mut object = vm.heap.object_mut(namespace).unwrap();
             object.set_proto(Value::NULL);
             object.set_module_namespace();
             object.set_module_bindings(vec![(
@@ -7466,9 +7468,8 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
                 vm.embedding_builtin_data(root),
                 Ok(Some(crate::BuiltinData::Error))
             ));
-            let clone = vm
-                .heap
-                .alloc_object(vm.heap.object(error).unwrap().record_only().unwrap().clone());
+            // A second error of the same kind: an ordinary object is a class cell, so it has no record to copy.
+            let clone = vm.construct_error_native(&program, kind, &[]).unwrap();
             assert!(vm.error_is_error(clone));
             vm.heap.release_root(root);
             vm.collect_now(&program);
@@ -22900,7 +22901,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
             assert_eq!(vm.own_property(object, left), Some(child));
             assert!(!marked(&vm, object), "the shared barrier records and unmarks its owner");
             vm.collect_slow(&program, false);
-            assert!(vm.heap.object_record(child).is_some(), "the stored young value survives collection");
+            assert!(vm.heap.is_live(child), "the stored young value survives collection");
             // Restore the Number fixture for the next function's oracle.
             vm.call_value(&program, function, Value::UNDEFINED, &[object, Value::integer(7)]).unwrap();
         }
@@ -22910,7 +22911,7 @@ fn native_own_stores_share_barriers_and_exact_fallback() {
         // This frontend's Call site uses its lane cache. Install a valid legacy
         // method entry explicitly to exercise the shared atom-admission policy.
         let original = vm.own_property(object, left).unwrap();
-        let shape = vm.heap.object_record(object).unwrap().shape();
+        let shape = vm.heap.object(object).unwrap().shape();
         let target = vm.call_target(original).unwrap();
         let slot = vm.shape_slot(shape, left).unwrap() as u16;
         let site = vm.method_caches.len();

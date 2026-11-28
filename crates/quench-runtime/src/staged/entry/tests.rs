@@ -31,18 +31,15 @@ fn object_of(heap: &mut Heap, count: usize) -> (Value, u32) {
 }
 
 #[test]
-fn an_entry_read_matches_the_hinted_read_in_both_storage_forms_and_misses_on_the_rest() {
+fn an_entry_read_reads_the_cell_field_at_every_slot_and_misses_on_the_rest() {
     let mut heap = Heap::new();
     let count = crate::value_vec::INLINE_PROPERTY_COUNT + 2;
     let (object, shape) = object_of(&mut heap, count);
-    let record = heap.object(object).unwrap().record_only().unwrap();
+    // Every ordinary object is a class cell, so the entry reads the cell's field at every slot, inline or spilled.
     for slot in 0..count as u16 {
         let entry = stored(shape, ENTRY.own_holder, u32::from(slot));
         let by_entry = concrete_read_entry(&heap, object, &entry);
-        // SAFETY: the hint's shape and slot are the record's own.
-        let by_hint = unsafe { crate::staged::concrete_own_field_hit(record, &heap, shape, slot) };
-        assert_eq!(by_entry, by_hint, "slot {slot}");
-        assert_eq!(by_entry, Some(Value::integer(10 * (i32::from(slot) + 1))));
+        assert_eq!(by_entry, Some(Value::integer(10 * (i32::from(slot) + 1))), "slot {slot}");
     }
     let read = |entry: [u32; 4]| concrete_read_entry(&heap, object, &entry);
     assert_eq!(read(stored(shape + 1, ENTRY.own_holder, 0)), None, "another shape");
