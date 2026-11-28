@@ -849,7 +849,7 @@ struct AccessorFieldCache {
     /// The prototype holding the accessor, or `OWN_ACCESSOR` for the receiver itself, whose
     /// own slot each receiver of the shape fills with its own accessor.
     holder: Value,
-    slot: u16,
+    slot: u32,
     /// Where the holder's shape keeps the accessor at `slot` (`SlotAccessor`): the shape the
     /// entry proves (the receiver's for `OWN_ACCESSOR`, else the prototype holder's, which the
     /// cell covers) fixes it.
@@ -4213,9 +4213,6 @@ impl Vm {
     }
 }
 
-/// A program string constant's text as written, the key under which equal constants share a
-/// cell (`Vm::materialize_program_constants`).
-#[derive(PartialEq, Eq, Hash)]
 /// The atom each name of `program` interns to, by text: the program's atoms are the VM's prefix, so an atom is its index.
 pub(crate) fn program_atoms(program: &ResidualProgram) -> FxHashMap<&str, Atom> {
     program.atoms.iter().enumerate().map(|(index, name)| {
@@ -4235,6 +4232,9 @@ pub(crate) fn constant_atom(atoms: &FxHashMap<&str, Atom>, constant: &Constant) 
     }
 }
 
+/// A program string constant's text as written, the key under which equal constants share a
+/// cell (`Vm::materialize_program_constants`).
+#[derive(PartialEq, Eq, Hash)]
 enum StringConstantKey<'a> {
     Text(&'a str),
     Units(&'a [u16]),

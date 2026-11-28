@@ -213,7 +213,6 @@ impl EngineVm for Vm {
     #[inline(always)]
     fn record_native_execution_rejection(&mut self) -> () { if let Some(record) = self.execution.record_native_execution_rejection { record(self) } }
     #[inline(always)]
-    #[inline(always)]
     fn wasm_table_step(&mut self, f: usize, i: WideInstruction) -> Result<(), super::JsError> {
         match self.execution.wasm_table_step {
             Some(step) => step(self, f, i),
