@@ -1106,3 +1106,46 @@ fn a_computed_store_while_the_global_object_is_a_value_takes_the_global_shape() 
     let program = program("var k = 'x'; globalThis[k] = 1;");
     assert!(analyze(&program).global_shape().is_none(), "the store may write any global name the global object holds");
 }
+
+#[test]
+/// The pc of function `name`'s last instruction (its return) and its register count.
+fn last_pc_and_registers(program: &ResidualProgram, name: &str) -> (u32, usize) {
+    let id = function_named(program, name);
+    program.with_record(id, |function| (function.code.len() as u32 - 1, usize::from(function.registers)))
+}
+
+#[test]
+fn a_string_literal_concat_under_the_threshold_is_flat() {
+    let program = program("function f() { return 'ab' + 'cd'; } f();");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!((0..registers).any(|register| function.string_flat(last, register as u16)));
+}
+
+#[test]
+fn a_string_from_an_unknown_value_is_not_flat() {
+    let program = program("function f(s) { return s + 'cd'; } f(globalThis.hostInput);");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!(!(0..registers).any(|register| function.string_flat(last, register as u16)));
+}
+
+#[test]
+fn an_int_array_filled_in_a_loop_is_a_plain_int32_backing() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { a[i] = i; } return a; } f();");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!((0..registers).any(|register| function.backing_plain(last, register as u16)));
+}
+
+#[test]
+fn an_int_array_with_a_delete_is_not_a_plain_int32_backing() {
+    let program = program("function f() { var a = [0, 0, 0]; for (var i = 0; i < a.length; i++) { a[i] = i; } delete a[0]; return a; } f();");
+    let facts = analyze(&program);
+    let (last, registers) = last_pc_and_registers(&program, "f");
+    let function = facts.function_facts(function_named(&program, "f") as u32);
+    assert!(!(0..registers).any(|register| function.backing_plain(last, register as u16)));
+}
