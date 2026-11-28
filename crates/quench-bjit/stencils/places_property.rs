@@ -155,7 +155,7 @@ impl<'a, const N: usize> Frame<Concrete> for PlannedPlaces<'a, N> {
     }
 
     #[inline(always)]
-    fn heap_records(&mut self, stage: &mut Concrete) -> Option<(u64, u64, u64)> { self.places.heap_records(stage) }
+    fn heap_records(&mut self, stage: &mut Concrete) -> Option<(u64, u64)> { self.places.heap_records(stage) }
 }
 
 impl<'a, const N: usize> NumericFrame<Concrete> for PlannedPlaces<'a, N> {

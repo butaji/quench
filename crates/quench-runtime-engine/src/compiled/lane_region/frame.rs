@@ -234,7 +234,7 @@ impl quench_runtime::staged::Frame<Emit<'_, '_>> for EmitFrame<'_> {
     /// records. S7f DESIGN: the object table is gone, so no triple is offered and a row that needs
     /// the tables takes its call-out (the same choice `places.rs` `heap_records` makes in bjit).
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value, ir::Value)> { None }
+    fn heap_records(&mut self, _stage: &mut Emit<'_, '_>) -> Option<(ir::Value, ir::Value)> { None }
 
     #[inline(always)]
     fn truthiness(&mut self, stage: &mut Emit<'_, '_>, register: Register) -> Option<ir::Value> {

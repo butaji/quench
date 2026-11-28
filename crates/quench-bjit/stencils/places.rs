@@ -528,11 +528,10 @@ impl Frame<Concrete> for Places {
 
     /// The array and object record tables and the collection epoch the for-in fast arm reads (the lane
     /// frame's `heap_records`). The object table left the payload with the object records.
-    // S7f DESIGN: the fast for-in arm declines (`None`, the call-out) until the `heap_records` trait drops
-    // its object element (quench-runtime `staged/register_frame/frame_trait.rs`); the array table and epoch
-    // are no longer read here because no tuple can be returned without the object one.
+    // S7f DESIGN: the fast for-in arm declines (`None`, the call-out); the trait now carries the array table
+    // and epoch alone, so restoring the arm is reading those two payload words here.
     #[inline(always)]
-    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64, u64)> { None }
+    fn heap_records(&mut self, _stage: &mut Concrete) -> Option<(u64, u64)> { None }
 
     #[inline(always)]
     fn store_local(&mut self, _stage: &mut Concrete, slot: u16, value: u64, _miss: Option<()>) -> bool {

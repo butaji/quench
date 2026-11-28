@@ -107,7 +107,7 @@ impl<'a> Frame<Concrete> for PlacesView<'a> {
     }
 
     #[inline(always)]
-    fn heap_records(&mut self, stage: &mut Concrete) -> Option<(u64, u64, u64)> { self.places.heap_records(stage) }
+    fn heap_records(&mut self, stage: &mut Concrete) -> Option<(u64, u64)> { self.places.heap_records(stage) }
 }
 
 impl<'a> NumericFrame<Concrete> for PlacesView<'a> {

@@ -36,8 +36,8 @@ impl Places {
         match operation {
             CallOut::ForInNext { state } => {
                 let state = self.tagged(stage, state);
-                let (arrays, objects, epoch) = self.heap_records(stage)?;
-                iteration::for_in_next(stage, (arrays, objects), state, epoch, ()).map(|key| (key, Representation::Tagged))
+                let (arrays, epoch) = self.heap_records(stage)?;
+                iteration::for_in_next(stage, arrays, state, epoch, ()).map(|key| (key, Representation::Tagged))
             }
             _ => None,
         }
