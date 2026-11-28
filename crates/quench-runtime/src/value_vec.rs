@@ -981,6 +981,14 @@ impl ValueArena {
         self.values[vector.start() + len] = value;
     }
 
+    /// The storage of an object in dictionary mode whose table is `slots` (slot index to stored word): a dictionary-mode
+    /// class cell's table, which a departure hands to its record (`heap::departure`). The table is the arena's now.
+    pub(crate) fn with_dictionary(&mut self, shape: u32, slots: FxHashMap<u32, Value>) -> ValueVec {
+        let mut vector = ValueVec { start: EMPTY_START, auxiliary: shape };
+        vector.use_dictionary(self.insert_dictionary(slots));
+        vector
+    }
+
     pub(crate) fn with_values(&mut self, shape: u32, values: &[Value]) -> ValueVec {
         self.assert_shape_length(shape, values.len());
         // The arena's words: a Number-typed slot's value is its raw double (`stored_words`).

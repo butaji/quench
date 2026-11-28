@@ -6,8 +6,9 @@
 //! are copied into an arena run for the record; the cell keeps its inline field words, which the sweep frees
 //! with the object, and its slack is `Value::DELETED`.
 //!
-//! Departure is the final form only for delete, dictionary storage, extras and record-only views. A class
-//! whose shape outgrows its cell spills instead (`heap::spill`), so a field store, add or initialization never departs.
+//! Departure is the final form only for delete, extras and record-only views. A class whose shape outgrows its cell
+//! spills instead (`heap::spill`), and a dictionary-mode cell keeps its class and takes its fields in a table
+//! (`heap::dictionary_cell`), so a field store, add, initialization or dictionary transition never departs.
 //!
 //! A departed object takes its dictionary class from the VM (`Vm::mark_object_dictionary`), because a
 //! dictionary shape lives in the VM's shape table. The record's class is the cell's class until then.
@@ -18,7 +19,7 @@ use super::{Heap, OrdinaryRecord, layouts};
 use crate::staged::field_cache_layout::CLASS_KEY;
 use crate::staged::object_encoding::{DEPARTED_CLASS, DICTIONARY_STORAGE, departed_header};
 use crate::value::Value;
-use crate::value_vec::{CONSTANT_FORM, INLINE_PROPERTY_COUNT};
+use crate::value_vec::{CONSTANT_FORM, INLINE_PROPERTY_COUNT, ValueVec};
 
 impl Heap {
     /// The granule of `value` when it names a live class cell: one in a cell region whose header
@@ -39,7 +40,8 @@ impl Heap {
     pub(crate) fn live_class_header(&self, value: Value) -> Option<u64> {
         let granule = self.live_class_cell(value)?;
         let header = self.class_space.header(granule);
-        (layouts::class_region(header_class(header)) == 1).then_some(header)
+        let class = header_class(header);
+        (layouts::class_region(class) == 1 && !layouts::class_is_dictionary(class)).then_some(header)
     }
 
     /// The receiver key of a field entry for `value` when it is a live class cell outside dictionary
@@ -62,7 +64,7 @@ impl Heap {
     /// never a global constant.
     #[inline(always)]
     pub(crate) fn class_spill_from(&self, class: u32) -> Option<u32> {
-        layouts::spill_from(layouts::class_region(class), self.properties.shape_length(layouts::class_shape(class)))
+        layouts::class_spill(class, self.properties.shape_length(layouts::class_shape(class)))
     }
 
     /// The field `slot` of the live class cell `value` names (`live_class_cell`), `None` otherwise.
@@ -90,8 +92,7 @@ impl Heap {
         let shape = layouts::class_shape(class);
         let length = self.properties.shape_length(shape);
         let spill = self.class_spill_from(class);
-        let fields: Vec<Value> = (0..length).map(|slot| self.class_space.word(granule, spill, slot)).collect();
-        let properties = self.properties.with_values(shape, &fields);
+        let (fields, properties) = self.departure_storage(granule, shape, length, spill);
         let mut object = Object::with_property_storage(
             layouts::class_link(class).prototype(),
             properties,
@@ -119,6 +120,24 @@ impl Heap {
             self.request_collection();
         }
         Some(record_id)
+    }
+
+    /// The fields of live cell `granule` (`length` of them, under `shape`) and the record storage that holds them, for a
+    /// departure. A dictionary cell's table becomes the record's dictionary, and the cell's table is released; any other
+    /// cell's words are the record's values.
+    fn departure_storage(&mut self, granule: u32, shape: u32, length: usize, spill: Option<u32>) -> (Vec<Value>, ValueVec) {
+        match self.dictionary_id_of_cell(granule) {
+            Some(id) => {
+                let table = self.dictionary_cell_release(id);
+                let fields: Vec<Value> = (0..length).map(|slot| table.get(&(slot as u32)).copied().unwrap_or(Value::DELETED)).collect();
+                (fields, self.properties.with_dictionary(shape, table))
+            }
+            None => {
+                let fields: Vec<Value> = (0..length).map(|slot| self.class_space.word(granule, spill, slot)).collect();
+                let properties = self.properties.with_values(shape, &fields);
+                (fields, properties)
+            }
+        }
     }
 
     /// Marks the live class cell `holder` as the holder of a field entry, so its departure is an edge
@@ -173,6 +192,9 @@ impl Heap {
     /// A store of `value` to field `slot` of live cell `granule`, in place (`Heap::property_set`), through its run
     /// where the slot spills.
     pub(crate) fn class_cell_store(&mut self, granule: u32, slot: usize, value: Value) {
+        if let Some(id) = self.dictionary_id_of_cell(granule) {
+            return self.dictionary_cell_store(granule, id, slot, value);
+        }
         let spill = self.live_spill_from(granule);
         self.class_cell_put(granule, spill, spill, slot, value);
     }
@@ -183,6 +205,9 @@ impl Heap {
     pub(crate) fn class_cell_initialize(&mut self, granule: u32, shape: u32, values: &[Value]) {
         // The fields' words under `shape`: a Number-typed field holds its raw double (`stored_words`).
         let words = self.properties.stored_words(shape, values);
+        if let Some(id) = self.dictionary_id_of_cell(granule) {
+            return self.dictionary_cell_initialize(granule, id, shape, &words);
+        }
         if words.iter().any(|word| word.heap_index().is_some()) {
             self.class_space.barrier(granule);
         }
@@ -200,6 +225,9 @@ impl Heap {
     /// for live cell `granule`: the cell keeps its link and flags, takes the after-shape's class, and the readers of
     /// the old shape retire (`Heap::set_class`). A field past the region spills into the cell's run (`class_cell_put`).
     pub(crate) fn class_cell_add(&mut self, granule: u32, before: u32, after: u32, slot: usize, value: Value) {
+        if let Some(id) = self.dictionary_id_of_cell(granule) {
+            return self.dictionary_cell_add(granule, id, after, slot, value);
+        }
         // The add observes its value under the after-shape, the shape the add's slot belongs to, before the
         // field's word is taken: a widening rewrites the words already held, then this one is converted.
         self.properties.note_shape_value(after, slot, value);

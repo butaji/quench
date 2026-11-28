@@ -12,6 +12,7 @@
 
 #![allow(dead_code)]
 
+use super::dictionary_space::DictionarySpace;
 use super::layouts::class_region;
 use super::pacing::PromotionAge;
 use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
@@ -156,6 +157,8 @@ pub(super) struct ClassSpace {
     holder_departed: bool,
     /// The spill arena: the runs of the cells whose class spills (`heap::spill`).
     pub(super) spill: SpillSpace,
+    /// The dictionary tables of the cells in dictionary storage (`heap::dictionary_space`).
+    pub(super) dictionaries: DictionarySpace,
     /// The range the regions are cut from. It is the last field, so it unmaps after them.
     range: Option<AddressRange>,
 }
@@ -411,17 +414,17 @@ impl ClassSpace {
     }
 
     /// Sweeps the cell regions (`RecordSpace::sweep`): an unmarked cell is freed, and a dead cell that spilled frees its
-    /// run (`dispose_dead_runs`). `spill_of` gives the spill slot of a class (`layouts::spill_from` over its shape).
-    /// Region 0's stubs die with their records and are not swept here.
+    /// run, and a dead dictionary cell its table (`dispose_dead_runs`). `spill_of` gives the spill slot of a class
+    /// (`layouts::class_spill` over its shape). Region 0's stubs die with their records and are not swept here.
     pub(super) fn sweep_cells(&mut self, full: bool, age: PromotionAge, spill_of: impl Fn(u32) -> Option<u32>) -> (usize, usize) {
-        let ClassSpace { regions, spill, base, .. } = self;
+        let ClassSpace { regions, spill, base, dictionaries, .. } = self;
         let base = *base;
         let sweeps = [
-            regions.1.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell1, _>(&mut *spill, base, 1, &spill_of), |_| {}),
-            regions.2.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell2, _>(&mut *spill, base, 2, &spill_of), |_| {}),
-            regions.3.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell3, _>(&mut *spill, base, 3, &spill_of), |_| {}),
-            regions.4.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell4, _>(&mut *spill, base, 4, &spill_of), |_| {}),
-            regions.5.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell5, _>(&mut *spill, base, 5, &spill_of), |_| {}),
+            regions.1.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell1, _>(&mut *spill, &mut *dictionaries, base, 1, &spill_of), |_| {}),
+            regions.2.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell2, _>(&mut *spill, &mut *dictionaries, base, 2, &spill_of), |_| {}),
+            regions.3.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell3, _>(&mut *spill, &mut *dictionaries, base, 3, &spill_of), |_| {}),
+            regions.4.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell4, _>(&mut *spill, &mut *dictionaries, base, 4, &spill_of), |_| {}),
+            regions.5.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell5, _>(&mut *spill, &mut *dictionaries, base, 5, &spill_of), |_| {}),
         ];
         sweeps.into_iter().fold((0, 0), |(live, freed), (swept_live, swept_freed)| (live + swept_live, freed + swept_freed))
     }
@@ -449,7 +452,7 @@ impl ClassSpace {
     }
 
     /// The parallel mark's views of the cell regions, taken with the record families' (`ParallelMarkView::new`).
-    pub(super) fn parallel_marks(&mut self) -> (ClassCellMarks<'_>, &SpillSpace) {
+    pub(super) fn parallel_marks(&mut self) -> (ClassCellMarks<'_>, &SpillSpace, &DictionarySpace) {
         let regions = &mut self.regions;
         let marks = ClassCellMarks {
             regions: (
@@ -460,7 +463,7 @@ impl ClassSpace {
                 regions.5.parallel_marks(),
             ),
         };
-        (marks, &self.spill)
+        (marks, &self.spill, &self.dictionaries)
     }
 
     /// The mark blocks of region `region` and their count (`RecordSpace::native_mark_blocks`), which a native

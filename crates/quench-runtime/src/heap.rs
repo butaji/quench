@@ -229,6 +229,8 @@ pub use records::RecordBlockRecordsExt;
 mod class_space;
 mod departure;
 mod spill;
+mod dictionary_space;
+mod dictionary_cell;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
 pub use object_view::{ObjectMut, ObjectRef};
@@ -3156,7 +3158,7 @@ impl Heap {
                 // After the records: a departed cell dies with its record (its stub released in `dispose`), so
                 // the cell regions sweep only the cells whose Value is dead and not released yet.
                 class_space.sweep_cells(full, age, |class| {
-                    layouts::spill_from(layouts::class_region(class), properties.shape_length(layouts::class_shape(class)))
+                    layouts::class_spill(class, properties.shape_length(layouts::class_shape(class)))
                 });
                 // A function's own properties may take a young run too (`Heap::finished_run_object`):
                 // after one did, its sweep shows its survivors and lists those it keeps.
@@ -4118,8 +4120,8 @@ impl Heap {
             self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
         }
         let spill = self.class_spill_from(class);
-        let (fields, run) = self.class_space.cell_words(granule, spill);
-        Self::cell_children_marking(value, class, fields, run, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
+        let (fields, run, table) = self.class_space.marking_parts(granule, class, spill);
+        Self::cell_children_marking(value, class, fields, run, table, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
         self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
     }
 
@@ -4982,6 +4984,13 @@ impl Heap {
     /// is disjoint from the owner.
     #[inline(always)]
     pub fn property_add(&mut self, object: Value, value: Value, shape: u32) {
+        if let Some((granule, id)) = self.live_dictionary_cell(object) {
+            // A dictionary cell's add is its table's: the new slot is the one after its shape's last.
+            let class = class_space::header_class(self.class_space.header(granule));
+            let slot = self.properties.shape_length(layouts::class_shape(class));
+            self.dictionary_cell_add(granule, id, shape, slot, value);
+            return;
+        }
         let _slot = if let Some(object_ref) = object.direct_object_index() {
             // An add appends to the record's arena run: a live class cell departs first.
             self.depart_for_mutation(object);
@@ -5023,6 +5032,9 @@ impl Heap {
         let Some(object_ref) = object.direct_object_index() else {
             return self.property_add(object, value, shape);
         };
+        if self.live_dictionary_cell(object).is_some() {
+            return self.property_add(object, value, shape);
+        }
         // An add appends to the record's arena run: a live class cell departs first.
         self.depart_for_mutation(object);
         let record_id = self.stub_record(object_ref.granule());
@@ -5238,6 +5250,7 @@ impl Heap {
         class: u32,
         fields: &[Value],
         run: &[Value],
+        table: Option<&dictionary_space::DictionaryTable>,
         mut mark_leaf: impl FnMut(Value, &mut Vec<Value>, &mut PushedProtos) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
@@ -5252,7 +5265,8 @@ impl Heap {
             }
         }
         object_roots(trace_kind, owner, class_shape(class), false, work);
-        for &value in fields.iter().chain(run) {
+        let table_values = table.into_iter().flat_map(|table| table.values());
+        for &value in fields.iter().chain(run).chain(table_values) {
             if value.is_heap() && !value.is_deleted() && !mark_leaf(value, work, last_proto) {
                 work.push(value);
             }
