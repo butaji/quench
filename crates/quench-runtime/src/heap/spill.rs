@@ -12,6 +12,7 @@
 
 use super::Heap;
 use super::class_space::{ClassSpace, granule, header_class, region_capacity};
+use super::dictionary_space::{DictionarySpace, dictionary_id_of};
 use super::layouts;
 use super::records::RecordId;
 use crate::staged::field_cache_layout::{field_index_of, is_spilled_slot, spill_from_of};
@@ -128,10 +129,11 @@ impl SpillSpace {
 }
 
 /// The disposal of a dead cell region's records (`RecordSpace::sweep_disposing`): a dead cell that spilled frees its
-/// run. The cell's class is read from its header, which still names it, and `spill_of` says where that class spills.
-/// The record is forgotten: a cell's words own nothing else.
+/// run, and a dead dictionary cell frees its table. The cell's class is read from its header, which still names it, and
+/// `spill_of` says where that class spills. The record is forgotten: a cell's words own nothing else.
 pub(super) fn dispose_dead_runs<'a, T, F: Fn(u32) -> Option<u32>>(
     arena: &'a mut SpillSpace,
+    tables: &'a mut DictionarySpace,
     base: usize,
     region: u32,
     spill_of: &'a F,
@@ -142,7 +144,11 @@ pub(super) fn dispose_dead_runs<'a, T, F: Fn(u32) -> Option<u32>>(
         // SAFETY: a dead cell of the reserved space keeps its header and fields until its record is forgotten here.
         let class = header_class(unsafe { *cell });
         if class != DEPARTED_CLASS {
-            if let Some(from) = spill_of(class) {
+            if layouts::class_is_dictionary(class) {
+                // SAFETY: a dictionary cell's slot 0 is the one word after its header, the dictionary word.
+                let word = unsafe { *cell.add(1) };
+                drop(tables.take(dictionary_id_of(word)));
+            } else if let Some(from) = spill_of(class) {
                 // SAFETY: the spill word is the cell's field `from`, one word past its header.
                 let word = unsafe { *cell.add(1 + from as usize) };
                 arena.free_run(spill_offset_of(word));
@@ -178,12 +184,25 @@ impl ClassSpace {
         }
     }
 
-    /// The header and the inline and run words of cell `g` under spill slot `spill`, exclusively.
-    pub(super) fn cell_parts_mut(&mut self, g: u32, spill: Option<u32>) -> (&mut u64, &mut [Value], &mut [Value]) {
-        // SAFETY: the header is the cell's first word, disjoint from its fields (`cell_words_mut`).
-        let header = unsafe { &mut *self.cell_ptr(g) };
-        let (words, run) = self.cell_words_mut(g, spill);
-        (header, words, run)
+    /// The header, the inline and run words of cell `g` under spill slot `spill`, and the dictionary space, all
+    /// exclusively: a split borrow, so a dictionary cell's view can take its table with its words.
+    pub(super) fn cell_parts_mut(&mut self, g: u32, spill: Option<u32>) -> (&mut u64, &mut [Value], &mut [Value], &mut DictionarySpace) {
+        let ptr = self.cell_ptr(g);
+        let capacity = region_capacity(g) as usize;
+        let ClassSpace { spill: arena, dictionaries, .. } = self;
+        // SAFETY: the header and the capacity fields lie inside the cell at `ptr`, disjoint from each other; the arena and
+        // the dictionaries are other fields, and `self` is exclusive.
+        let header = unsafe { &mut *ptr };
+        let inline = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<Value>().add(1), capacity) };
+        let (words, run): (&mut [Value], &mut [Value]) = match spill {
+            None => (inline, &mut []),
+            Some(from) => {
+                let offset = spill_offset_of(inline[from as usize]);
+                let (words, _) = inline.split_at_mut(from as usize);
+                (words, arena.run_mut(offset))
+            }
+        };
+        (header, words, run, dictionaries)
     }
 
     /// The offset of cell `g`'s run, read from its spill word `spill`.
@@ -331,7 +350,11 @@ impl Heap {
     /// The field `slot` of live class cell `granule`, read through its run where it spills.
     #[inline(always)]
     pub(crate) fn class_slot_value(&self, granule: u32, slot: usize) -> Value {
-        self.class_space.word(granule, self.live_spill_from(granule), slot)
+        let class = header_class(self.class_space.header(granule));
+        match self.class_space.dictionary_of(granule, class) {
+            Some(table) => table.get(&(slot as u32)).copied().unwrap_or(Value::DELETED),
+            None => self.class_space.word(granule, layouts::class_spill(class, self.properties.shape_length(layouts::class_shape(class))), slot),
+        }
     }
 
     /// The field a class-keyed entry's slot word `slot` names, of live class cell `granule`. An inline slot is the

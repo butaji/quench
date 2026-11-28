@@ -651,6 +651,10 @@ impl Heap {
     #[quench_macros::test_visible]
     /// Changes a published object's shape, retiring target-shape readers first.
     pub(crate) fn set_object_shape(&mut self, value: Value, shape: u32) {
+        // A dictionary cell keeps its table and takes the shape in its class word; no departure (`dictionary_cell`).
+        if self.dictionary_set_shape(value, shape) {
+            return;
+        }
         let (object, arena) = self.object_and_arena_mut(value).expect("shape owner is an object");
         object.set_shape(shape, arena);
     }

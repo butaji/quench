@@ -215,6 +215,19 @@ pub(crate) fn spill_from(region: u32, fields: usize) -> Option<u32> {
     (fields > capacity).then(|| capacity as u32 - 1)
 }
 
+/// Whether class `id` is dictionary storage (`DICTIONARY_STORAGE`): its cell's slot 0 holds the dictionary word, and
+/// its fields are the table's (`heap::dictionary_space`).
+#[inline(always)]
+pub(crate) fn class_is_dictionary(id: u32) -> bool {
+    class_flags(id) & DICTIONARY_STORAGE as u64 != 0
+}
+
+/// The spill slot of a live cell of class `class` holding `fields` fields: `None` for a dictionary class, whose slot 0
+/// is the dictionary word and whose fields are the table's, else `spill_from` of the class's region.
+pub(crate) fn class_spill(class: u32, fields: usize) -> Option<u32> {
+    if class_is_dictionary(class) { None } else { spill_from(class_region(class), fields) }
+}
+
 /// The prototype link of class `id`: the index bits of its meta word.
 pub(crate) fn class_link(id: u32) -> ProtoLink {
     ProtoLink::from_bits((word(id) >> u32::BITS) as u32 & PROTO_INDEX_BITS)
