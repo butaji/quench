@@ -362,6 +362,8 @@ pub(crate) const JS_STEP_OBJECT_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(
 /// (`ElementFrame::array_store_gate`).
 pub(crate) const JS_STEP_ARRAY_MARK_BLOCKS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_mark_blocks);
 pub(crate) const JS_STEP_ARRAY_MARK_BLOCK_COUNT: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, array_mark_block_count);
+/// The class cells' mark lists by region (`JsStepHead::class_mark_lists`): (blocks, count) pairs, 16 bytes a region.
+pub(crate) const JS_STEP_CLASS_MARK_LISTS: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, class_mark_lists);
 pub(crate) const JS_STEP_STORE_WATCH: usize = core::mem::offset_of!(super::js_step_head::JsStepHead<u8>, store_watch);
 /// The `store_watch` bit set while the property arena records its slots' value classes.
 pub(crate) const STORE_WATCH_TRACKS: u64 = 1;
