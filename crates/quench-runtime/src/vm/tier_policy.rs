@@ -15,7 +15,6 @@ use crate::staged::Operation;
 pub struct Tiers {
     pub loops: Loops,
     pub lane_body: LaneBody,
-    pub(crate) js_function: JsFunction,
     pub wasm: Wasm,
     pub stitch: Stitch,
     pub priors: Priors,
@@ -138,15 +137,6 @@ pub struct LaneBody {
     pub compile_poll_interval: u16,
 }
 
-/// The per-function JavaScript tier: the numeric optimizing tier.
-pub(crate) struct JsFunction {
-    /// Prespecified looks for the Number-entry profile. Critical counts are the exact
-    /// one-sided Binomial( n, 0.80 ) cutoffs at alpha = 0.05 / 4 per look. A union bound caps
-    /// false promotion at 5% across looks for one function under a stationary Bernoulli model;
-    /// it is not a VM-wide multiple-test bound.
-    pub(crate) promotion_looks: [(u8, u8); 4],
-}
-
 /// The Wasm function and module tiers.
 pub struct Wasm {
     /// Promote a Wasm function only after repeated interpreter entries, or the loop work of as
@@ -232,7 +222,6 @@ impl crate::vm::Vm {
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
     lane_body: LaneBody { site_executions: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
-    js_function: JsFunction { promotion_looks: [(1, 1), (2, 2), (3, 3), (4, 4)] },
     wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
     priors: MEASURED.priors,
@@ -303,7 +292,6 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         compile_poll_interval: 64,
     },
-    js_function: JsFunction { promotion_looks: [(32, 31), (64, 59), (128, 113), (255, 219)] },
     wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
     stitch: Stitch {
         max_total_instructions: 96,
@@ -817,9 +805,6 @@ mod tests {
     fn the_tier_table_is_consistent() {
         let lane = &TierRows::PROCESS.table().lane_body;
         assert!(lane.site_executions > 0);
-        let looks = TierRows::PROCESS.table().js_function.promotion_looks;
-        assert!(looks.windows(2).all(|pair| pair[0].0 < pair[1].0), "looks grow");
-        assert!(looks.iter().all(|(observations, minimum)| minimum <= observations));
         for policy in crate::MemoryPolicy::ALL {
             let row = by_policy(policy);
             // The loop tier's site analysis belongs to the function tiers.
