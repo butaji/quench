@@ -337,7 +337,7 @@ impl Vm {
         if self.heap.array(target).is_some()
             && !self
                 .heap.object(target)
-                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object())) // record-only: arguments flag
+                .is_some_and(|object| object.is_arguments_object()) // record-only: arguments flag
         {
             atoms.push(self.length_atom);
         }
@@ -350,7 +350,7 @@ impl Vm {
         }
         if self
             .heap.object(target)
-            .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object())) // record-only: arguments flag
+            .is_some_and(|object| object.is_arguments_object()) // record-only: arguments flag
         {
             return true;
         }

@@ -181,6 +181,18 @@ impl Heap {
         }
     }
 
+    /// The notes of a write to slot `slot` of live cell `granule` (`Object::note_value_write`, for a cell): the
+    /// constant mark clears (`note_cell_write`), a marked prototype's readers retire, and a global object's table
+    /// notes the write. Only the cell's extras hold the last two, so a cell without extras has neither.
+    pub(super) fn note_cell_value_write(&mut self, granule: u32, slot: usize) {
+        self.note_cell_write(granule);
+        let object = Object::of_class(header_class(self.class_space.header(granule)));
+        let extras = self.class_space.extras_id(granule);
+        if let Some(extras) = self.extras.get_mut(extras) {
+            extras.note_value_write(&object, slot);
+        }
+    }
+
     /// A store or add of `value` at slot `slot` of live cell `granule`, whose spill slot is `from` before and `to`
     /// after (`ClassSpace::put_word`): the store gate's barrier for a heap reference, the constant mark's clear, then
     /// the word. A moved run (allocated or grown) fires the holder edge. A field holds the one Value word, which is
@@ -189,7 +201,7 @@ impl Heap {
         if value.heap_index().is_some() {
             self.class_space.barrier(granule);
         }
-        self.note_cell_write(granule);
+        self.note_cell_value_write(granule, slot);
         if self.class_space.put_word(granule, from, to, slot, value) {
             self.holder_fields_moved(granule);
         }

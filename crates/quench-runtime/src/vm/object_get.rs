@@ -149,7 +149,7 @@ impl Vm {
 
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         // record-only: module bindings are record state
-        let (program, slot) = self.heap.object(object)?.record_only()?.module_binding(atom)?;
+        let (program, slot) = self.heap.object(object)?.module_binding(atom)?;
         if let Some(value) =
             self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot))
         {

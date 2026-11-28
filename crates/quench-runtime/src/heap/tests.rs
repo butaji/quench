@@ -1517,8 +1517,7 @@ fn shape_departures_retire_readers_through_each_storage_path() {
                 Change::Replace => heap.initialize_object_properties(object, 2, &[Value::integer(3)]),
                 Change::Copy => {
                     let source = heap.alloc_object_with_properties(Value::NULL, 2, &[Value::integer(3)]);
-                    let source = heap.object(source).unwrap().record_only().unwrap().clone();
-                    assert!(heap.copy_property_storage(&source, object));
+                    assert!(heap.copy_property_storage(source, object));
                 }
                 Change::Append => heap.property_add(object, Value::integer(3), 3),
                 Change::Remap => heap.remap_live_object_shapes(&[0, 2, 1, 3],

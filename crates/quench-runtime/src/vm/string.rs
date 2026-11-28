@@ -296,7 +296,9 @@ impl Vm {
         let prototype = self
             .heap
             .alloc_object(Self::empty_object(object_proto));
-        self.heap.object_record_mut(prototype)
+        self.heap.ensure_cell_extras(prototype);
+        self.heap
+            .object_mut(prototype)
             .expect("primitive prototype")
             .set_boxed_primitive(empty);
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;

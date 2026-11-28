@@ -882,7 +882,7 @@ impl Vm {
                 return false;
             };
             if data.has_exotic_access()
-                || data.record_only().is_some_and(|record| record.boxed_primitive().is_some())
+                || data.boxed_primitive().is_some()
                 || !self.lacks_own_index(holder, index)
             {
                 return false;
@@ -934,7 +934,7 @@ impl Vm {
                 return false;
             };
             if data.has_exotic_access()
-                || data.record_only().is_some_and(|record| record.boxed_primitive().is_some())
+                || data.boxed_primitive().is_some()
                 || data.record_only().is_some_and(|record| record.has_indexed_descriptors())
                 || self.shape_has_index_key(data.shape())
                 || self.heap.sparse_length(holder).is_some()
@@ -4500,7 +4500,7 @@ impl Vm {
         if atom == self.length_atom
             && !self
                 .heap.object(receiver)
-                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object()))
+                .is_some_and(|object| object.is_arguments_object())
         {
             return self.set_array_length(p, receiver, value).map(Some);
         }
@@ -5013,7 +5013,7 @@ impl Vm {
             && self.heap.array(object).is_some()
             && !self
                 .heap.object(object)
-                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object()))
+                .is_some_and(|object| object.is_arguments_object())
         {
             let succeeded = self.set_array_length(p, object, value)?;
             return if succeeded || !strict {

@@ -927,7 +927,7 @@ impl Vm {
         if self.heap.array(object).is_some()
             && !self
                 .heap.object(object)
-                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object())) // record-only: arguments flag
+                .is_some_and(|object| object.is_arguments_object()) // record-only: arguments flag
         {
             if self
                 .property_attributes(object, PropertyKey::string(atom))

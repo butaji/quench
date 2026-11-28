@@ -172,7 +172,7 @@ impl Vm {
                     return false;
                 };
                 // The arguments-object flag is record data.
-                if !self.shape_lists_enumerable_keys(holder) || data.record_only().is_some_and(|record| record.is_arguments_object()) || data.is_frozen() {
+                if !self.shape_lists_enumerable_keys(holder) || data.is_arguments_object() || data.is_frozen() {
                     return false;
                 }
                 if let Some(attributes) = self.property_attributes(holder, PropertyKey::string(atom)) {

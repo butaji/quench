@@ -38,8 +38,7 @@ impl Vm {
     }
 
     pub(super) fn boxed_primitive_value(&self, value: Value) -> Option<Value> {
-        // record-only: boxed primitive state
-        self.heap.object(value)?.record_only()?.boxed_primitive()
+        self.heap.object(value)?.boxed_primitive()
     }
 
     pub(super) fn boxed_primitive_data(
@@ -327,7 +326,7 @@ impl Vm {
             B::External => self
                 .heap
                 .object(value)
-                .and_then(|object| object.record_only().and_then(|record| record.external_address()))
+                .and_then(|object| object.external_address())
                 .is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
@@ -348,7 +347,7 @@ impl Vm {
             }
             B::ArgumentsObject => self
                 .heap.object(value)
-                .is_some_and(|object| object.record_only().is_some_and(|record| record.is_arguments_object())), // record-only: arguments flag
+                .is_some_and(|object| object.is_arguments_object()),
             B::AsyncFunction | B::GeneratorFunction => match self.heap.function(value) {
                 Some(FunctionRecord {
                     kind:
@@ -467,7 +466,7 @@ impl Vm {
         // Proxy objects deliberately do not expose their target's captured metadata.
         if let Some(crate::heap::StackData::Captured { records, source }) = self
             .heap.object(value)
-            .and_then(|object| object.record_only().and_then(|record| record.stack_data())) // record-only: stack data
+            .and_then(|object| object.stack_data())
             && let Some(record) = records
                 .iter()
                 .find(|record| matches!(record.location, CallSiteLocation::Source { .. }))
@@ -823,11 +822,7 @@ impl Vm {
             value = *target;
         }
 
-        if self
-            .heap
-            .object_record(value)
-            .is_some_and(Object::has_error_data)
-        {
+        if self.heap.object(value).is_some_and(|object| object.has_error_data()) {
             let name = self
                 .own_data_string(value, "name")
                 .filter(|name| !name.is_empty())
@@ -839,7 +834,7 @@ impl Vm {
                 format!("{name}: {message}")
             };
         }
-        if self.heap.object_record(value).is_some() {
+        if self.heap.ordinary_view(value).is_some() {
             return "#<Object>".into();
         }
         if self.heap.array(value).is_some() {
@@ -1233,8 +1228,9 @@ impl Vm {
 
     pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
         let value = self.create_embedding_null_object()?;
+        self.heap.ensure_cell_extras(value);
         self.heap
-            .object_record_mut(value)
+            .object_mut(value)
             .expect("new native object")
             .set_external_address(address);
         Ok(value)
@@ -1242,7 +1238,7 @@ impl Vm {
 
     pub(crate) fn embedding_external_address(&self, root: RootId) -> Option<usize> {
         let value = self.root_value(root)?;
-        self.heap.object(value)?.record_only()?.external_address()
+        self.heap.object(value)?.external_address()
     }
 
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {
