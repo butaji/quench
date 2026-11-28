@@ -173,7 +173,7 @@ impl ObjectHeader {
     /// `prove` for a read, which a function's own fields answer too: a direct function's
     /// record holds its `Object` at `NATIVE_FUNCTION_LAYOUT.object_offset`, of the same words.
     /// A store must not take this proof: its barrier reads object record marks.
-    pub(crate) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
+    pub(crate) fn prove_readable(builder: &mut FunctionBuilder<'_>, bits: ir::Value, known: Option<typed_ir::VerifiedFact>,
         records: ir::Value, class_base: ir::Value, functions: ir::Value, miss: ir::Block) -> Self {
         let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
         let function = quench_runtime::tier_surface::NATIVE_FUNCTION_LAYOUT;
@@ -191,9 +191,12 @@ impl ObjectHeader {
         let object_record = emit(builder).raw_binary(Binary::Add, records, offset);
         emit(builder).goto(join, &[object_record]);
         builder.switch_to_block(function_block);
-        let is_function = quench_runtime::staged::value::is_direct_function(&mut emit(builder), bits);
+        // A solver type that proves a function proves the function tag too: only the table's reservation is tested.
         let reserved = emit(builder).raw_compare_imm(Relation::NotEqual, functions, 0);
-        let readable = emit(builder).raw_binary(Binary::And, is_function, reserved);
+        let readable = if known.is_some_and(|fact| proves_function(fact.ty)) { reserved } else {
+            let is_function = quench_runtime::staged::value::is_direct_function(&mut emit(builder), bits);
+            emit(builder).raw_binary(Binary::And, is_function, reserved)
+        };
         emit_js_guard(builder, readable, miss);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, id, function.record_size as i64);
         let function_record = emit(builder).raw_binary(Binary::Add, functions, offset);
@@ -203,6 +206,11 @@ impl ObjectHeader {
         let (shape, word, inline, auxiliary) = shape_and_inline(builder, record);
         Self { record: ObjectRecord::Address(record), address: record, shape: Some(shape), inline: Some(inline), word: Some(word), auxiliary: Some(auxiliary), shape_fact: None }
     }
+}
+
+/// Whether every value of solver type `ty` is a function (and the type is not empty): its direct-function tag is proved.
+fn proves_function(ty: typed_ir::Type) -> bool {
+    ty != typed_ir::Type::NEVER && ty.only_languages(typed_ir::Type::language(quench_runtime::ValueType::Function))
 }
 
 /// The stage whose residual `staged` operations that address no arena emit into `builder`.
@@ -399,175 +407,10 @@ impl NativeFieldLoad {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod record_tests;
 
-    #[test]
-    fn direct_field_plans_reject_dictionary_and_missing_receiver_shapes() {
-        let field = NativeFieldLoad { shape: 0, holder: None, slot: 0, storage_len: 1, storage: None, ty: quench_runtime::typed_ir::Type::ANY, inherited: None, function_shape: false, formed: None, holder_cell: None, class: None };
-        assert!(field.valid());
-        for shape in [quench_runtime::vm::NO_FIELD_RECEIVER,
-            quench_runtime::value_vec::DICTIONARY_STORAGE, quench_runtime::value_vec::DICTIONARY_STORAGE | 1] {
-            assert!(!NativeFieldLoad { shape, ..field }.valid());
-        }
-    }
-
-    #[cfg(feature = "jit")]
-    #[test]
-    fn checked_table_admits_once_without_admitting_receiver_handles() {
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        let mut signature = Signature::new(isa.default_call_conv());
-        signature.params.extend([AbiParam::new(types::I64); 4]);
-        signature.returns.push(AbiParam::new(types::I64));
-        let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-        let mut context = FunctionBuilderContext::new();
-        let mut builder = FunctionBuilder::new(&mut native, &mut context);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        let parameters = builder.block_params(entry).to_vec();
-        let miss = builder.create_block();
-        let table = CheckedObjectTable::prove(&mut builder, parameters[0], miss);
-        // The second receiver retains its own family and range checks, even
-        // after the first receiver has proved both against this same table.
-        ObjectRecord::prove(&mut builder, parameters[1], table, parameters[3], None, miss);
-        let record = ObjectRecord::prove(&mut builder, parameters[2], table, parameters[3], None, miss);
-        let address = record.address(&mut builder);
-        builder.ins().return_(&[address]);
-        builder.switch_to_block(miss);
-        let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-        builder.ins().return_(&[deleted]);
-        builder.seal_all_blocks();
-        builder.finalize(isa.frontend_config());
-        let guards = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-            .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::Brif).count();
-        // A receiver's family alone: a direct object's id names a record of the reservation.
-        const TABLE_GUARDS: usize = 1;
-        const RECEIVER_GUARDS: usize = 1;
-        assert_eq!(guards, TABLE_GUARDS + 2 * RECEIVER_GUARDS, "{native}");
-        let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
-        // SAFETY: the compiled function only checks bits and computes an
-        // address; it dereferences neither table nor supplied receiver.
-        let run = unsafe { std::mem::transmute::<*mut u8,
-            unsafe extern "C" fn(u64, u64, u64, u64) -> u64>(memory.pointer()) };
-        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
-        let records = vec![0_u8; layout.record_size * 2];
-        let base = records.as_ptr() as u64;
-        // Granule 1's class cell names record 1 in its header's high half.
-        let mut classes = vec![0_u64; 2];
-        classes[1] = 1 << u32::BITS;
-        let class_base = classes.as_ptr() as u64;
-        let object = Value::direct_object(1).to_bits();
-        assert_eq!(unsafe { run(base, object, object, class_base) }, base + layout.record_size as u64);
-        for (table, first, second) in [
-            (0, object, object), (base, Value::NULL.to_bits(), object), (base, object, Value::NULL.to_bits()),
-        ] {
-            assert_eq!(unsafe { run(table, first, second, class_base) }, Value::DELETED.to_bits());
-        }
-    }
-
-    #[cfg(feature = "jit")]
-    #[test]
-    fn direct_family_admission_tests_the_family_alone() {
-        use quench_runtime::typed_ir::{BindingTime, Fact, Projection, Proof, Representation, Type};
-        let isa = quench_runtime::vm::jit_backend::target_isa().unwrap();
-        let layout = quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT;
-        // A direct object's id names a record of the reservation, whose base every native
-        // entry reads: only the family needs a test, and none where a fact proves it.
-        for (ty, expected_guards) in [
-            (None, 1),
-            (Some(Type::language(quench_runtime::ValueType::Object)), 1),
-            (Some(Type::DIRECT_OBJECT_FAMILY), 0),
-            (Some(Type::direct_object(0)), 0),
-            (Some(Type::direct_object(0).join(Type::language(quench_runtime::ValueType::Null))), 1),
-            (Some(Type::direct_object(0).join(Type::language(quench_runtime::ValueType::Null).join(Type::language(quench_runtime::ValueType::Undefined)))), 1),
-        ] {
-            let mut signature = Signature::new(isa.default_call_conv());
-            signature.params.extend([AbiParam::new(types::I64); 3]);
-            signature.returns.push(AbiParam::new(types::I64));
-            let mut native = ir::Function::with_name_signature(UserFuncName::user(0, 0), signature);
-            let mut context = FunctionBuilderContext::new();
-            let mut builder = FunctionBuilder::new(&mut native, &mut context);
-            let entry = builder.create_block();
-            builder.append_block_params_for_function_params(entry);
-            builder.switch_to_block(entry);
-            let parameters = builder.block_params(entry).to_vec();
-            let miss = builder.create_block();
-            let known = ty.map(|ty| Fact { ty, representation: Representation::Tagged,
-                binding: BindingTime::Dynamic, proof: Proof::Definition, projection: Projection::Exact }
-                .verified().unwrap());
-            let record = ObjectRecord::prove(&mut builder, parameters[1], parameters[0], parameters[2], known, miss);
-            let address = record.address(&mut builder);
-            builder.ins().return_(&[address]);
-            builder.switch_to_block(miss);
-            let deleted = builder.ins().iconst(types::I64, Value::DELETED.to_bits() as i64);
-            builder.ins().return_(&[deleted]);
-            builder.seal_all_blocks();
-            builder.finalize(isa.frontend_config());
-            let guards = native.layout.blocks().flat_map(|block| native.layout.block_insts(block))
-                .filter(|inst| native.dfg.insts[*inst].opcode() == ir::Opcode::Brif).count();
-            assert_eq!(guards, expected_guards, "{ty:?}: {native}");
-            if ty.is_some_and(|ty| ty.is_direct_object_family()) { continue; }
-            let memory = compile_native_function(native, &*isa, usize::MAX, CodeMemory::new).unwrap();
-            // SAFETY: the entry takes two u64 words and performs guarded address
-            // arithmetic only; it never dereferences the supplied table address.
-            let run = unsafe { std::mem::transmute::<*mut u8,
-                unsafe extern "C" fn(u64, u64, u64) -> u64>(memory.pointer()) };
-            let records = vec![0_u8; layout.record_size * 2];
-            let base = records.as_ptr() as u64;
-            let mut classes = vec![0_u64; 2];
-            classes[1] = 1 << u32::BITS;
-            let class_base = classes.as_ptr() as u64;
-            let bits = Value::direct_object(1).to_bits();
-            assert_eq!(unsafe { run(base, bits, class_base) }, base + layout.record_size as u64);
-            assert_eq!(unsafe { run(base, Value::NULL.to_bits(), class_base) }, Value::DELETED.to_bits(), "{ty:?}");
-            assert_eq!(unsafe { run(base, Value::UNDEFINED.to_bits(), class_base) }, Value::DELETED.to_bits(), "{ty:?}");
-        }
-    }
-}
-
-use quench_runtime::staged::{Layout, ShapeFact, Slots};
+use quench_runtime::staged::ShapeFact;
+mod checked;
+pub(crate) use checked::CheckedObject;
 pub(crate) mod emit;
 pub(crate) use emit::Emit;
-
-/// A projection for a guarded receiver and exact shape: `staged::own_layout`'s residual. It may
-/// only be reused while no admitted effect can change its layout, arena base or object lifetime.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CheckedObject(Layout<ir::Value, ir::Value>, ShapeFact);
-
-impl CheckedObject {
-    /// The proof of a layout a staged read established, under the shape fact its guard made.
-    pub(crate) fn of(layout: Layout<ir::Value, ir::Value>, fact: ShapeFact) -> Self { Self(layout, fact) }
-
-    /// The shape fact the layout's guard made.
-    pub(crate) fn fact(self) -> ShapeFact { self.1 }
-
-    /// A flat store can reuse the range proof; packed writes use the VM's
-    /// narrow-value encoder and layout-preserving barrier helper instead.
-    pub(crate) fn arena_address(self, builder: &mut FunctionBuilder<'_>, slot: u16, miss: ir::Block) -> Option<ir::Value> {
-        debug_assert!(usize::from(slot) < self.0.storage_len);
-        let base = match self.0.slots {
-            Slots::Packed(_) | Slots::Narrow(_) => return None,
-            Slots::Flat(base) => base,
-            Slots::Either { inline, flat, .. } => {
-                let is_flat = emit(builder).raw_compare_imm(Relation::Equal, inline, 0);
-                emit_js_guard(builder, is_flat, miss);
-                flat
-            }
-        };
-        Some(emit(builder).raw_binary_imm(Binary::Add, base, i64::from(slot) * quench_runtime::tier_surface::NATIVE_OBJECT_LAYOUT.property_value_size as i64))
-    }
-
-    /// The projection of the record `record` whose `storage_len` values the arena at `base` holds
-    /// behind its extras (`staged::arena_extras_layout`), as a global object by name does: its
-    /// shape is held by a dependency (`fact`, `HeldLayouts::hold`), so only the representation is tested.
-    pub(crate) fn prove_arena_extras(builder: &mut FunctionBuilder<'_>, (record, fact): (ir::Value, ShapeFact), inline: ir::Value,
-        base: ir::Value, storage_len: usize, miss: ir::Block) -> Option<Self> {
-        let mut stage = Emit { builder, property_values: Some(base), gate: None, payload: None, facts: Default::default(), fresh: false };
-        quench_runtime::staged::arena_extras_layout(&mut stage, record, inline, storage_len, miss)
-            .map(|layout| Self(layout, fact))
-    }
-
-    /// The layout this proof carries, for a staged read of fresh contents through it.
-    pub(crate) fn layout(self) -> Layout<ir::Value, ir::Value> { self.0 }
-}

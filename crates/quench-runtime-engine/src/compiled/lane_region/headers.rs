@@ -111,7 +111,7 @@ pub(crate) fn object_header(builder: &mut FunctionBuilder<'_>, registers: &mut R
             let records = object_table_base(builder, entry, payload);
             let functions = emit_js_record_base(builder, payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
             let class_base = class_table_base(builder, payload);
-            ObjectHeader::prove_readable(builder, bits, records, class_base, functions, exit)
+            ObjectHeader::prove_readable(builder, bits, fact, records, class_base, functions, exit)
         } else {
             let records = object_table(builder, entry, payload);
             let class_base = class_table_base(builder, payload);

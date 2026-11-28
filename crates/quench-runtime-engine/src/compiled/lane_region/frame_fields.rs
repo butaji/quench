@@ -187,7 +187,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
             let records = headers::object_table_base(stage.builder, entry, self.payload);
             let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
             let class_base = headers::class_table_base(stage.builder, self.payload);
-            let header = ObjectHeader::prove_readable(stage.builder, this, records, class_base, functions, miss);
+            let header = ObjectHeader::prove_readable(stage.builder, this, None, records, class_base, functions, miss);
             // A readable proof names a record or a function's object, whose shape and storage form it reads.
             let (shape, inline) = (header.shape.expect("a readable header names a record"), header.inline.expect("a readable header names a record"));
             stage.goto(join, &[header.address, shape, inline]);
@@ -199,7 +199,7 @@ impl<'a, 'b, 'c> PropertyFrame<Emit<'b, 'c>> for EmitFrame<'a> {
                 let records = headers::object_table_base(stage.builder, entry, self.payload);
                 let functions = emit_js_record_base(stage.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.function_record_base));
                 let class_base = headers::class_table_base(stage.builder, self.payload);
-                ObjectHeader::prove_readable(stage.builder, object, records, class_base, functions, miss)
+                ObjectHeader::prove_readable(stage.builder, object, None, records, class_base, functions, miss)
             }
             Owner::This => self.object_header(stage.builder, entry, None, readable, miss),
             Owner::Register(register) => self.object_header(stage.builder, entry, Some(register), readable, miss),

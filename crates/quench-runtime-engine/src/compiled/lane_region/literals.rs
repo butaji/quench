@@ -103,13 +103,16 @@ impl Lowering<'_, '_> {
     /// Guards a string or BigInt fact an edge does not prove (`Lowering::conform`) by the VM's
     /// own `typeof` test (`compiled::typeof_is_in_lane`); `false` for any other fact.
     pub(crate) fn guard_heap_primitive(&mut self, state: &mut State, register: Register, ty: Type, exit: ir::Block) -> bool {
-        let Some(name) = [(quench_runtime::ValueType::String, "string"), (quench_runtime::ValueType::BigInt, "bigint")].into_iter()
-            .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))).map(|(_, name)| name) else { return false };
+        let Some((kind, name)) = [(quench_runtime::ValueType::String, "string"), (quench_runtime::ValueType::BigInt, "bigint")].into_iter()
+            .find(|(kind, _)| ty != Type::NEVER && ty.is_subtype(Type::language(*kind))) else { return false };
         let bits = self.tagged(state, register);
-        let index = self.raw_const(Lane::I64, quench_runtime::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
-        let named = self.helper_call(LaneHelper::TypeofIs, &[bits, index]);
-        let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
-        emit_js_guard(&mut self.builder, holds, exit);
+        // The register's solver type already names the typeof name: its `typeof` holds, so no test is made.
+        if !state.values[usize::from(register)].value.ty.is_subtype(Type::language(kind)) {
+            let index = self.raw_const(Lane::I64, quench_runtime::bytecode::typeof_name_index(name).expect("a typeof name") as i64);
+            let named = self.helper_call(LaneHelper::TypeofIs, &[bits, index]);
+            let holds = self.raw_compare_imm(Relation::NotEqual, named, 0);
+            emit_js_guard(&mut self.builder, holds, exit);
+        }
         self.define(state, register, bits, RegisterFact::narrowest(ty));
         true
     }
