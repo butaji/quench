@@ -3,6 +3,9 @@
 //! the shared staged semantics) or a catalog trait, never the opcode's name.
 
 #[cfg(not(stencil_build))]
+#[allow(unused_imports)]
+use crate::staged::allocation::AllocationAllocationExt;
+#[cfg(not(stencil_build))]
 #[allow(unused_imports)] use crate::staged::{OperationOperationExt};
 use crate::bytecode::{Register, Traits, WideInstruction};
 use super::protocol_literals::LiteralStep;
