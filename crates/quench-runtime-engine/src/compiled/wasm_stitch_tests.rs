@@ -93,7 +93,7 @@ fn stitched(vm: &Vm, module: &quench_runtime::WasmModule, index: usize) -> (Code
         vector_constant: &no_vector,
         vector_move: &no_move,
     };
-    let bytes = stitch(function, params, true, &world).expect("rows for every instruction");
+    let (bytes, _) = stitch_naming(function, params, true, &world, &|_| false).expect("rows for every instruction");
     let memory = CodeMemory::new(&bytes).expect("code memory");
     // SAFETY: the code begins with the entry routine, which takes the `WasmEntry` ABI.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(memory.pointer()) };
