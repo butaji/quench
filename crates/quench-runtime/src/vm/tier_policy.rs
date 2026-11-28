@@ -268,45 +268,40 @@ pub const UJIT_IR_PER_OP: u64 = 4;
 pub const BJIT_COMPILE_IR_PER_OP: u64 = 60;
 /// IR instructions the u-jit's one-time compile of a body spends per bytecode of the body.
 pub const UJIT_COMPILE_IR_PER_OP: u64 = 3000;
-/// IR instructions an interpreted call of a function spends on its frame, per call.
+/// IR instructions an interpreted call of a function spends on its frame, per call. Not re-derived: the interpreter's
+/// push is the `push_in_loop_call` chain (`vm/dispatch.rs`, `push_general_user_frame`), too long to count by reading,
+/// so this keeps its earlier value until the first build measures it.
 pub const ENTRY_IR_INTERPRETER: u64 = 40;
-/// IR instructions a b-jit body's entry spends per call: the stencil crossing and its lane frame.
-pub const ENTRY_IR_BJIT: u64 = 150;
-/// IR instructions a u-jit body's entry spends per call: its entry record and its prologue.
-pub const ENTRY_IR_UJIT: u64 = 300;
+/// The b-jit entry's fixed IR per call of a body from a b-jit direct row (one IR per machine instruction, read off the
+/// code; the row's stage counts are read, not measured): the row's `entry_rows` hop (`stencils/entry.rs`: sub, call,
+/// add, ret = 4), and the direct row's room check (~4), header, tops, depth and register stores (~8), and settle: pop,
+/// result store and ended check (~8). 4 + 20 = 24.
+pub const ENTRY_IR_BJIT_BASE: u64 = 24;
+/// The b-jit entry's IR per register of the callee: the window's registers past the arguments are written `undefined`
+/// at the push (`DirectFrame`'s fill), one store each. The callee's `registers` bounds them.
+pub const ENTRY_IR_BJIT_PER_REGISTER: u64 = 1;
+/// The u-jit entry's fixed IR per call: every native entry to a u-jit body passes the body shim (`lane_body_abi::body_shim`:
+/// its prologue, `call_indirect` and return, 6 instructions), then the body's prologue (stack check 3, frame 2), its
+/// epilogue (3), and the caller's status test (2). 6 + 3 + 2 + 3 + 2 = 16.
+pub const ENTRY_IR_UJIT_BASE: u64 = 16;
+/// The u-jit entry's IR per register of the callee: one save and one restore per register, the upper bound on the
+/// callee-saved registers its body keeps live across a call. Conservative, not measured.
+pub const ENTRY_IR_UJIT_PER_REGISTER: u64 = 2;
+/// The IR of a call that enters a b-jit body from a u-jit caller through the body ABI (`entry_body`, 20 instructions),
+/// over the `entry_rows` hop a b-jit direct call pays (4): 20 - 4 = 16.
+pub const CROSSING_IR_INTO_BJIT: u64 = 16;
 
 // The tier order is locked: each compiled tier runs a bytecode for less IR than the one before it, and compiles for more.
 const _: () = assert!(INTERPRETER_IR_PER_OP > BJIT_IR_PER_OP && BJIT_IR_PER_OP > UJIT_IR_PER_OP);
 const _: () = assert!(BJIT_COMPILE_IR_PER_OP < UJIT_COMPILE_IR_PER_OP);
 
-/// The tier a function runs in: the argmin over the three tiers of its predicted IR. Its entries are its static frequency
-/// (`CallGraph::frequency`), which already weighs each call site `LOOP_WEIGHT` per loop it sits in: a run of the
-/// function costs its work per activation (`CallGraph::loop_work`, its bytecodes each weighed by the loops it sits in)
-/// times the tier's cost per bytecode, for each entry; each entry pays its tier's entry cost (`ENTRY_IR_*`); a compiled
-/// tier adds its one-time compile over the bytecodes, once for the body. Ties go to the tier that compiles less: the
-/// interpreter, then the b-jit. Pure: no count and no clock.
-pub fn predicted_tier(graph: &CallGraph, program: &ResidualProgram, function: u32) -> PredictedTier {
-    let bytecodes = program.function_get(function as usize).map_or(0, |body| body.instructions().count() as u64);
-    let entries = graph.frequency(function);
-    let work = graph.loop_work(function);
-    let run = |per_op: u64| entries.saturating_mul(work).saturating_mul(per_op);
-    let compile = |per_op: u64| bytecodes.saturating_mul(per_op);
-    let entry = |per_call: u64| entries.saturating_mul(per_call);
-    let interpreter = run(INTERPRETER_IR_PER_OP).saturating_add(entry(ENTRY_IR_INTERPRETER));
-    let base = run(BJIT_IR_PER_OP).saturating_add(compile(BJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_BJIT));
-    let ultra = run(UJIT_IR_PER_OP).saturating_add(compile(UJIT_COMPILE_IR_PER_OP)).saturating_add(entry(ENTRY_IR_UJIT));
-    if interpreter <= base && interpreter <= ultra {
-        PredictedTier::Interpreter
-    } else if base <= ultra {
-        PredictedTier::Base
-    } else {
-        PredictedTier::Ultra
-    }
-}
+// The solver that picks every function's tier from the call graph (`predicted_tiers`, `predicted_cost`).
+mod cost;
+pub use cost::{predicted_cost, predicted_tiers};
 
 
 /// The predicted tier of a lane body (design decision 4.9): the u-jit in an AOT program (`aot`), whose
-/// image compiles every function, otherwise the argmin `predicted` (`predicted_tier`).
+/// image compiles every function, otherwise the fixed-point pick `predicted` (`predicted_tiers`).
 pub fn body_tier(aot: bool, predicted: PredictedTier) -> PredictedTier {
     if aot { PredictedTier::Ultra } else { predicted }
 }

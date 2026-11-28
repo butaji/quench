@@ -196,7 +196,7 @@ fn vm_running(compiled: bool) -> Vm {
 }
 
 /// Installs the compiled root of each function of `instance`'s module that has none yet. The
-/// argmin of `tier_policy::predicted_tier` decides first calls; these tests need the tier.
+/// argmin of `tier_policy::predicted_tiers` decides first calls; these tests need the tier.
 fn install_roots(vm: &mut Vm, instance: &WasmInstance) {
     let program = vm
         .programs

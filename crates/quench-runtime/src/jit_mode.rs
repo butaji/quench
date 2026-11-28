@@ -1,6 +1,6 @@
 //! The JIT modes a process can run in, and the tiers each one enables: the one place the flag
 //! `--no-jit` is defined. The default mode runs every tier, and the tier policy
-//! (`tier_policy::predicted_tier`) picks each function's tier.
+//! (`tier_policy::predicted_tiers`) picks each function's tier.
 use crate::ExecutionMode;
 
 /// Which tiers run: the interpreter alone, or every tier with the policy's pick (the default).
