@@ -49,8 +49,6 @@ pub(crate) enum NameRead {
     Native(Native),
     /// An intrinsic name's value (`Vm::intrinsic_name_value`).
     Intrinsic,
-    /// The global object's own data field the record's hint named (S7g: the record hint is gone).
-    Field,
     /// The active realm's global lexical binding the record's hint locates by index (`slot`), taken
     /// only while it is the name's and initialized (`Vm::global_lexical_at`). Subsumes the hand
     /// `lane_load_name_lexical`.
@@ -188,27 +186,6 @@ fn instance_decision(context: *mut (), value: Value, constructor: Value) -> Opti
     machine.record_instanceof(value, constructor).or_else(|| machine.proved_instanceof(value, constructor)).or_else(|| machine.ordinary_instanceof(value, constructor))
 }
 
-/// The lane context's own-field store and add hits, erased of its host so the frame names no `H`:
-/// what `StorePlan::Layout` joins to (`field_store_host`), and what `StorePlan::Add` joins to
-/// (`field_add`).
-#[derive(Clone, Copy)]
-struct FieldStores {
-    context: *mut (),
-    /// The VM's own-field store of `value` to `atom` through `site`, which takes the form hint it
-    /// leaves for the record (`primary_own_field_store_hit`); `None` where the VM declines.
-    own: fn(*mut (), Value, u32, u16, Value) -> Option<quench_runtime::vm::FieldCache>,
-    /// The VM's add the proved chain makes (`proved_field_add_hit`), noting its allocation.
-    proved: fn(*mut (), Value, u32, u16, Value) -> bool,
-    /// The VM's cached add (`primary_field_add_hit`), noting its allocation.
-    primary: fn(*mut (), Value, u32, u16, Value) -> bool,
-    /// The VM's general cached write (`cached_field_write_hit`) of a public name, noting its
-    /// allocation; a private name leaves to its own path.
-    general: fn(*mut (), Value, u32, u16, Value) -> bool,
-    /// The VM's own-field store a sinking read makes to `this` (`primary_own_field_store_hit`
-    /// without widening); a refusal is the general path's.
-    sink: fn(*mut (), Value, u32, u16, Value) -> bool,
-}
-
 /// The VM's Math calls of Number arguments a Math row computes in place, erased of its host
 /// so the frame names no `H` (`PropertyFrame::math_call`).
 #[derive(Clone, Copy)]
@@ -228,65 +205,6 @@ impl MathCalls {
             let Some(FunctionRecord { kind: FunctionKind::Native(native), .. }) = vm.function_record(callee) else { return None };
             super::number::math_inline_call(*native, arguments)
         } }
-    }
-}
-
-impl FieldStores {
-    /// The stores and adds of the running lane's `cx`.
-    #[inline(always)]
-    fn of(cx: *mut LaneContext) -> Self {
-        Self { context: cx.cast(),
-            own: |context, object, atom, site, value| {
-                let cx = context.cast::<LaneContext>();
-                let vm = unsafe { vm(cx) };
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                if !vm.primary_own_field_store_hit::<true>(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::MayWiden) {
-                    return None;
-                }
-                Some(vm.form_hint(vm.field_cache_entry(site), object))
-            },
-            proved: |context, object, atom, site, value| {
-                let vm = unsafe { vm(context.cast::<LaneContext>()) };
-                let added = vm.proved_field_add_hit(object, atom, value, site);
-                if added {
-                    // Adding a property can allocate.
-                    note_allocation(vm);
-                }
-                added
-            },
-            primary: |context, object, atom, site, value| {
-                let cx = context.cast::<LaneContext>();
-                let vm = unsafe { vm(cx) };
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                let added = vm.primary_field_add_hit(code, object, atom, value, site);
-                if added {
-                    note_allocation(vm);
-                }
-                added
-            },
-            general: |context, object, atom, site, value| {
-                let cx = context.cast::<LaneContext>();
-                let vm = unsafe { vm(cx) };
-                if vm.is_private_name(atom) { return false; }
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                let stored = vm.cached_field_write_hit(code, object, atom, value, site);
-                if stored {
-                    // Adding a property can allocate.
-                    note_allocation(vm);
-                }
-                stored
-            },
-            sink: |context, object, atom, site, value| {
-                let cx = context.cast::<LaneContext>();
-                let vm = unsafe { vm(cx) };
-                // SAFETY: the context's program outlives the lane run.
-                let code = unsafe { &*(*cx).code };
-                vm.primary_own_field_store_hit::<false>(code, object, atom, value, site, quench_runtime::tier_surface::PropertyStoreLayout::Preserve)
-            },
-        }
     }
 }
 
@@ -382,9 +300,6 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     scope: Option<ScopeReads>,
     /// The running frame's captured environment, for a staged environment row (`Decoder::Names`).
     environment: Option<EnvironmentReads>,
-    /// The global object's own data field a global-name store writes through the record's hint,
-    /// where the row is a `StoreName` (`global_name_store`).
-    global_store: Option<GlobalStore>,
     /// The lane's pure binary operation (`binary_values`), which answers a `Binary` or an
     /// `Equality` call-out a row makes where its words do not decide it (`vm_step`).
     binary: Option<(*mut (), unsafe fn(*mut (), u32, Value, Value) -> Option<Value>)>,
@@ -436,11 +351,6 @@ pub(crate) struct LaneFrame<const ACC: u8> {
     /// The VM's geometry and length reads a host read row runs (`GeometrySteps`), where the row is
     /// one that reads a view's geometry or a length (`TYPED_LENGTH_SITE`).
     geometry: Option<GeometrySteps>,
-    /// The VM's stores and adds a named store row joins to, for a store record (`FieldStores`).
-    stores: Option<FieldStores>,
-    /// The form hint the VM's own-field store left for the store record, which the row writes to
-    /// the record once the store completes (`PropertyFrame::field_store_host`).
-    stored: Option<quench_runtime::vm::FieldCache>,
     /// The element kind a typed element row (`TYPED_KIND_SITES`) serves, and the typed array record
     /// pages the view proof reads (`Heap::typed_view_directory`); none elsewhere.
     typed: Option<(quench_runtime::staged::typed_elements::NativeKind, (*const usize, usize))>,
@@ -588,14 +498,6 @@ struct IteratorCleanups {
     pop: unsafe fn(*mut ()) -> bool,
 }
 
-/// A row's global-name store: the lane context and the record's own hint, which the store
-/// writes through (`global_name_store`).
-#[derive(Clone, Copy)]
-struct GlobalStore {
-    cx: *mut (),
-    hint: quench_runtime::vm::FieldCache,
-    store: unsafe fn(*mut (), quench_runtime::vm::FieldCache, u32, Value) -> bool,
-}
 
 
 /// A named read's plan as a lane record holds it: the ops the record's own-field hint proves
@@ -607,7 +509,6 @@ pub(crate) struct RecordPlan {
     ops: [quench_runtime::staged::ic::IcOp<'static>; 2],
     /// How many of `ops` the plan runs.
     len: usize,
-    records: u64,
     /// Whether the plan starts from the receiver's word rather than its object record (`length`).
     word: bool,
     /// The store the record's hint proves (`StorePlan::Layout`), or the add it proves
@@ -632,58 +533,11 @@ impl RecordPlan {
         Self::host_read(quench_runtime::staged::property::FieldPlan::Private { atom })
     }
 
-    /// The own-slot read of the hint `(layout, slot)`: one compare of the record's layout id,
-    /// whose storage form the site fixed where it fixed one (`own_formed_handler`).
-    #[inline(always)]
-    pub(crate) fn own_word(layout: u32, slot: u16, records: u64) -> Self {
-        let none = quench_runtime::staged::ic::IcOp::GuardLayout(layout);
-        Self { ops: [none, none], len: 0, records, word: false, store: None, nested: None, host: None, own: Some((layout, slot)) }
-    }
-
     /// The `length` of the receiver's word read by `length` (`IcOp::ArrayLength` or
     /// `IcOp::StringLength`), no record addressed before it.
     #[inline(always)]
     pub(crate) fn length(length: quench_runtime::staged::ic::IcOp<'static>) -> Self {
-        Self { ops: [length, length], len: 1, records: 0, word: true, store: None, nested: None, host: None, own: None }
-    }
-
-    /// The own-field store of the hint `(layout, slot)`: one compare of the record's layout id,
-    /// whose entry names the storage form (`StorePlan::Layout`); what it refuses is the VM's.
-    #[inline(always)]
-    pub(crate) fn own_store(layout: u32, slot: u16, records: u64) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        use quench_runtime::staged::property::{StoreJoin, StorePlan};
-        let none = IcOp::GuardLayout(layout);
-        let store = StorePlan::Layout { id: layout, slot, join: StoreJoin::Host };
-        Self { ops: [none, none], len: 0, records, word: false, store: Some(store), nested: None, host: None, own: None }
-    }
-
-    /// The tracked store the hint `(layout, slot)` proves (`StorePlan::Hinted`, not narrow), a refusal leaving
-    /// to the VM's own-field store.
-    #[inline(always)]
-    pub(crate) fn own_hinted(layout: u32, slot: u16, records: u64) -> Self {
-        use quench_runtime::staged::property::{StoreJoin, StorePlan};
-        let store = StorePlan::Hinted { id: layout, slot, narrow: false, join: StoreJoin::Host };
-        Self { store: Some(store), ..Self::own_store(layout, slot, records) }
-    }
-
-    /// The general cached write of a public name (`StorePlan::Host`): the VM's cached store or
-    /// add, which a refusal leaves to the lane's general store.
-    #[inline(always)]
-    pub(crate) fn general_store(records: u64) -> Self {
-        Self { store: Some(quench_runtime::staged::property::StorePlan::Host), ..Self::own_store(0, 0, records) }
-    }
-
-    /// The nested read `a.b.c` of two own hops, the sinking read's: `first` the record's hint (the layout and slot
-    /// of the first object), `second` the site's entry for the intermediate object, each with the storage form its
-    /// site fixed, and `base` the base the first hop reads. One shape compare and one slot load per hop.
-    #[inline(always)]
-    pub(crate) fn nested(first: (u32, u16, Form), second: (u32, u16, Form), base: quench_runtime::bytecode::FieldBase,
-        records: u64) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        let none = IcOp::GuardLayout(first.0);
-        let hops = [(IcOp::GuardShape(first.0), first.1, first.2), (IcOp::GuardShape(second.0), second.1, second.2)];
-        Self { ops: [none, none], len: 0, records, word: false, store: None, nested: Some((hops, base)), host: None, own: None }
+        Self { ops: [length, length], len: 1, word: true, store: None, nested: None, host: None, own: None }
     }
 
     /// The nested read `a.b.c` of two proven fixed cells (`FieldPlan::FixedChain`, `trusted_read`): `first` and `second`
@@ -705,7 +559,7 @@ impl RecordPlan {
     #[inline(always)]
     pub(crate) fn host_read(plan: quench_runtime::staged::property::FieldPlan<'static>) -> Self {
         let none = quench_runtime::staged::ic::IcOp::GuardShape(0);
-        Self { ops: [none, none], len: 0, records: 0, word: false, store: None, nested: None, host: Some(plan), own: None }
+        Self { ops: [none, none], len: 0, word: false, store: None, nested: None, host: Some(plan), own: None }
     }
 }
 
@@ -743,7 +597,7 @@ impl<const ACC: u8> LaneFrame<ACC> {
     #[inline(always)]
     pub(crate) fn new(registers: Registers, view: Carried) -> Self {
         Self { registers, view, accumulated: NO_ACCUMULATOR, this: Value::DELETED, trust_this: false, locals: None, host: None, captures: None, decisions: None,
-            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, global_store: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, elements: None, geometry: None, stores: None, stored: None, typed: None, math: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
+            capture_slots: None, heap: None, frame_this: None, arguments: None, kept_binding: None, kept: 0, scope: None, environment: None, binary: None, unary: None, names: None, gc_values: None, clones: None, cleanups: None, string_cases: None, callee: None, globals: None, memory: None, memories: None, element_span: None, vectors: None, reads: Reads::NONE, window: None, plan: None, elements: None, geometry: None, typed: None, math: None, wasm_return: None, raw_result: false, operands_int: false, suspends: None, entry: None, call: None, returns: None }
     }
 
     /// A frame whose allocation and deletion rows make their values in the lane context `cx`.
@@ -1680,23 +1534,6 @@ impl<const ACC: u8> quench_runtime::staged::GlobalFrame<Concrete> for LaneFrame<
         self.registers.set(destination, value);
         Some(())
     }
-    #[inline(always)]
-    fn global_write(&mut self, _stage: &mut Concrete, _source: Register, atom: u32, _site: u16, value: u64, _initialize: bool) -> Option<()> {
-        let GlobalStore { cx, hint, store } = self.global_store?;
-        // SAFETY: the store was made for the lane context this frame runs in.
-        unsafe { store(cx, hint, atom, Value::from_bits(value)) }.then_some(())
-    }
-}
-
-/// The store of `value` to the global object's own writable data field `atom` that `hint` names
-/// (`GlobalFrame::global_write`): it runs no guest code, and `false` where the hint misses.
-///
-/// # Safety
-/// `cx` is the running lane's context.
-// S7f DESIGN: the global object's hinted store (`hinted_own_field_store_hit`) is gone; the store declines until a
-// class-keyed global store is the row's store.
-unsafe fn global_name_store(_cx: *mut (), _hint: quench_runtime::vm::FieldCache, _atom: u32, _value: Value) -> bool {
-    false
 }
 
 impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFrame<ACC> {
@@ -1739,29 +1576,15 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         self.load_local(stage, slot, None).map(|(word, _)| word)
     }
 
-    /// A direct object's record in the table, or, where the plan runs over any object part
-    /// (`RecordPlan::other`), the object part of an array, function or builtin, out of line.
+    /// The receiver's record for a record plan. A word plan (`length`) reads the word itself; every other receiver
+    /// is a class cell, which no record-keyed plan reads any more, so the read takes its general path.
     #[inline(always)]
-    fn receiver_record(&mut self, stage: &mut Concrete, _owner: quench_runtime::staged::property::Owner, object: u64, _readable: bool,
-        miss: ()) -> Option<quench_runtime::staged::ic::Reached<u64, bool>> {
+    fn receiver_record(&mut self, _stage: &mut Concrete, _owner: quench_runtime::staged::property::Owner, object: u64, _readable: bool,
+        _miss: ()) -> Option<quench_runtime::staged::ic::Reached<u64, bool>> {
         if let Some(RecordPlan { word: true, .. }) = self.plan {
             return Some(quench_runtime::staged::ic::Reached::bare(object));
         }
-        let Some(RecordPlan { other: Some(heap), functions, .. }) = self.plan else {
-            return quench_runtime::staged::property::receiver(stage, self, object, miss);
-        };
-        // SAFETY: the heap is the lane's, live for the read.
-        if functions && let Some(record) = unsafe { &*heap }.heap_reads().function_receiver(Value::from_bits(object)) {
-            return Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64));
-        }
-        // S7f DESIGN: a direct object has no record in the table any more; it declines here until the class cell's
-        // receiver read replaces the record walk.
-        if Value::from_bits(object).direct_object_index().is_some() {
-            return None;
-        }
-        // SAFETY: as above.
-        let record = unsafe { &*heap }.heap_reads().held_other_receiver(Value::from_bits(object))?;
-        Some(quench_runtime::staged::ic::Reached::bare(record as *const quench_runtime::tier_surface::Object as u64))
+        None
     }
 
     /// `base[key]` past the dense and any-backing reads: the VM's element read at the row's site
@@ -1789,61 +1612,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         (steps.length)(steps.context, Value::from_bits(object)).map(Value::to_bits)
     }
 
-    /// The VM's own-field store of `value` to `atom` through `site` (`LaneHelper::FieldSet`): the
-    /// form hint it leaves is the record's, which the row writes once the store completes.
-    #[inline(always)]
-    fn field_store_host(&mut self, _stage: &mut Concrete, object: u64, atom: u32, site: u16, value: u64, _miss: ()) -> Option<()> {
-        let stores = self.stores?;
-        let object = Value::from_bits(object);
-        // An unbound `this` is no object: the store leaves to the general path.
-        if object.is_deleted() { return None; }
-        let value = Value::from_bits(value);
-        match self.plan.and_then(|plan| plan.store)? {
-            quench_runtime::staged::property::StorePlan::Layout { .. } | quench_runtime::staged::property::StorePlan::Hinted { .. } => {
-                self.stored = Some((stores.own)(stores.context, object, atom, site, value)?);
-                Some(())
-            }
-            quench_runtime::staged::property::StorePlan::Host => (stores.general)(stores.context, object, atom, site, value).then_some(()),
-            _ => None,
-        }
-    }
-
-    /// The store through the record's hint, tracked or narrow (`StorePlan::Hinted`).
-    // S7f DESIGN: the record's hint store (`hinted_primary_field_store_hit`) is gone; a hinted store declines
-    // until the class cell's store (`class_store`) is the row's store.
-    #[inline(always)]
-    fn field_store_hinted(&mut self, _stage: &mut Concrete, _object: u64, _atom: u32, _site: u16, _value: u64,
-        _hint: (u32, u16), _narrow: bool) -> Option<()> {
-        None
-    }
-
-    /// The store through the record's hint, the site's polymorphic entries, or the proved add
-    /// (`StorePlan::Polymorphic`). The record's hint and the polymorphic entry hit are gone (S7f/S7g), so the
-    /// proved add answers alone.
-    // S7f DESIGN: a polymorphic store's own-entry hit is retargeted at the class cell; until then only the proved add.
-    #[inline(always)]
-    fn field_store_polymorphic(&mut self, _stage: &mut Concrete, object: u64, atom: u32, site: u16, value: u64,
-        _hint: (u32, u16)) -> Option<()> {
-        let stores = self.stores?;
-        let object = Value::from_bits(object);
-        if object.is_deleted() { return None; }
-        let value = Value::from_bits(value);
-        (stores.proved)(stores.context, object, atom, site, value).then_some(())
-    }
-
-    /// The VM's add of `value` to `atom` of `object` through `site` (`LaneHelper::FieldAdd`): the
-    /// proved add, else the cached one; a refused add leaves to the general path.
-    #[inline(always)]
-    fn field_add(&mut self, _stage: &mut Concrete, object: u64, atom: u32, site: u16, value: u64, _miss: ()) -> Option<()> {
-        let stores = self.stores?;
-        let object = Value::from_bits(object);
-        if object.is_deleted() { return None; }
-        let value = Value::from_bits(value);
-        let added = (stores.proved)(stores.context, object, atom, site, value)
-            || (stores.primary)(stores.context, object, atom, site, value);
-        added.then_some(())
-    }
-
     /// The VM's Math call of `callee` on the first `count` of `arguments` (`MathCalls`), which a
     /// Math row runs past its field read; a callee or argument the VM does not compute leaves
     /// the call to its record.
@@ -1852,16 +1620,6 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         let MathCalls { context, call } = self.math?;
         let arguments = [Value::from_bits(arguments[0]), Value::from_bits(arguments[1])];
         call(context, Value::from_bits(callee), &arguments[..count]).map(Value::to_bits)
-    }
-
-    /// The VM's own-field store of `value` to `atom` on `this` through `site` (`FieldStores`'s
-    /// `sink`), the store a sinking read makes after its read; an unbound `this` leaves it to the
-    /// general path.
-    #[inline(always)]
-    fn sink_store(&mut self, _stage: &mut Concrete, atom: u32, site: u16, value: u64) -> Option<()> {
-        let stores = self.stores?;
-        if self.this.is_deleted() { return None; }
-        (stores.sink)(stores.context, self.this, atom, site, Value::from_bits(value)).then_some(())
     }
 
     #[inline(always)]
@@ -2110,8 +1868,8 @@ pub(crate) const FLAG_SET: u8 = 2;
 pub(crate) const FLAG_NAME_NATIVE: u8 = 3;
 /// `FLAG` of a by-name load resolved to the global `undefined` (`NameBinding::Undefined`).
 pub(crate) const FLAG_NAME_UNDEFINED: u8 = 4;
-/// `FLAG` of a by-name load resolved to the global object's own data field its record's hint
-/// names (`NameRead::Field`).
+/// `FLAG` of a by-name load resolved to the global object's own data field: no row reads it in the lane, so
+/// its miss (`global_name_refresh_miss`) answers the read.
 pub(crate) const FLAG_NAME_GLOBAL: u8 = 5;
 /// `FLAG` of a by-name load resolved to an intrinsic name (`NameRead::Intrinsic`).
 pub(crate) const FLAG_NAME_INTRINSIC: u8 = 6;
@@ -2271,7 +2029,6 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             // The native is the record's immediate, its discriminant (`name_native_operand`), read by index.
             FLAG_NAME_NATIVE => Some(NameBinding::Read(NameRead::Native(Native::ALL[i.imm() as usize]))),
             FLAG_NAME_UNDEFINED => Some(NameBinding::Undefined),
-            FLAG_NAME_GLOBAL | FLAG_NAME_GLOBAL_SCOPED => Some(NameBinding::Read(NameRead::Field)),
             FLAG_NAME_LEXICAL => Some(NameBinding::Read(NameRead::Lexical(i.field_hint()))),
             FLAG_NAME_INTRINSIC => Some(NameBinding::Read(NameRead::Intrinsic)),
             _ => None,
@@ -2304,13 +2061,6 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         };
         let environment = EnvironmentReads { context: cx.cast(), read: environment_read, write: environment_write_storage,
             slot_read: environment_slot_read, slot_write: environment_slot_write };
-        // A global-name store writes through the record's own hint (`global_name_store`), which a window's
-        // store does not take: its scope answers the name (`ScopeReads::store`).
-        let global_store = if const { OP == quench_runtime::staged::GLOBAL_WRITE_ROW } && FLAG != FLAG_SCOPE {
-            Some(GlobalStore { cx: cx.cast(), hint: i.field_hint(), store: global_name_store })
-        } else {
-            None
-        };
         let names: NamesStep = fast_names_step;
         // A clone names the window its record carries above its plan (`specialize_environment_window`).
         let clones = if const { OP == quench_runtime::staged::CLONE_ENV_ROW } {
@@ -2323,7 +2073,7 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
         let cleanups = IteratorCleanups { context: cx.cast(), push: iterator_push_in_lane, pop: iterator_pop_in_lane };
         // An element read names the running function's register count, which its kept values follow.
         let kept = if const { OP == quench_runtime::staged::ARGUMENT_GET_ROW } { i.c } else { 0 };
-        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), kept, environment: Some(environment), global_store, names: Some((cx.cast(), names)),
+        return LaneFrame::<ACC> { heap: Some(heap), arguments: Some((cx.cast(), count)), kept, environment: Some(environment), names: Some((cx.cast(), names)),
             clones, cleanups: Some(cleanups), scope: scope_reads::<FLAG>(cx, ip, i), ..LaneFrame::<ACC>::hosted(r, view, cx) };
     }
     if const { OP == quench_runtime::bytecode::TIER_PROLOGUE as u16 || OP == quench_runtime::bytecode::BODY_ENTRY as u16 } {
@@ -2481,8 +2231,7 @@ pub(crate) fn checked_local_hand(op: Op) -> Handler {
 }
 
 /// Where opcode `op`'s row leaves when its words do not decide it: the VM's general step, or for
-/// a capture read the lane's walk (`load_capture_walk_miss`), for a global store the global object's
-/// store (`store_global_name_miss`).
+/// a capture read the lane's walk (`load_capture_walk_miss`), for a by-name store the general step (`exit_lane`).
 pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     // A numeric local target's result is the general step's to complete (`Vm::run_row_completed`).
     if local_result_site(op as u16, FLAG) {
@@ -2494,11 +2243,8 @@ pub(crate) const fn row_miss<const FLAG: u8>(op: Op) -> Handler {
     }
     match quench_runtime::staged::miss(op) {
         quench_runtime::staged::Miss::WalkScopes => super::load_capture_walk_miss,
-        quench_runtime::staged::Miss::StoreNameFirst => match FLAG {
-            // A window's store the scope does not take leaves to the general step.
-            FLAG_SCOPE => super::exit_lane as Handler,
-            _ => super::store_global_name_miss as Handler,
-        },
+        // A by-name store the scope does not take leaves to the general step.
+        quench_runtime::staged::Miss::StoreNameFirst => super::exit_lane as Handler,
         quench_runtime::staged::Miss::NameLoad(load) => name_load_miss::<FLAG>(load),
         quench_runtime::staged::Miss::General | quench_runtime::staged::Miss::CompareChain => general_step_in_lane,
     }
@@ -3397,8 +3143,8 @@ sharded_handler! { view_handler, row_jump_shards, row_jump_handler, [OP];
 }
 
 view_handler! {
-    /// Where a generated row's planned named read misses (`generated_row`'s `property_miss!`): the own
-    /// read past its record's hint, which reads through the site's cache and rebinds the hint. Out of the
+    /// Where a generated row's planned named read misses (`generated_row`'s `property_miss!`): the general
+    /// read the site's record names, which keeps the record. Out of the
     /// row's body, so each row instance holds one jump here rather than this chain at each of its misses.
     #[inline(never)]
     pub(crate) fn property_miss_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
@@ -3433,10 +3179,8 @@ view_handler! {
             // A receiver the host read does not answer: an array's or a string's length is the array row's.
             sibling!(generated_row!(OP, ACC, crate::dispatch_fast::ARRAY_LENGTH_SITE), r, ip, Carried::script_in(script, view))
         }
-        if const { crate::dispatch_fast::own_site_this(FLAG) } {
-            sibling!(row_get_field_own_refresh::<true, true>, r, ip, Carried::script_in(script, view))
-        }
-        sibling!(row_get_field_own_refresh::<false, true>, r, ip, Carried::script_in(script, view))
+        // The own read past its record's hint: the general read, which keeps the record.
+        sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
     }
 }
 
@@ -4139,9 +3883,6 @@ unsafe fn name_value_in_lane(cx: *mut (), read: NameRead, atom: u32) -> Option<V
     match read {
         NameRead::Native(native) => Some(vm.native_value(native)),
         NameRead::Intrinsic => vm.intrinsic_name_value(atom),
-        // S7f DESIGN: the global object is a class cell and its record hint is gone (S7g); a global name read
-        // declines to the resolve until a class-keyed global read names its value.
-        NameRead::Field => None,
         NameRead::Lexical(hint) => vm.global_lexical_at(atom, hint.slot),
     }
 }

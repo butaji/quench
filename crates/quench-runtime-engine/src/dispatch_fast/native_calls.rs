@@ -437,15 +437,6 @@ in_place_rows!(
     16 => StringStartsWith, 17 => StringIncludes,
 );
 
-/// The handlers of a Math call's field read: `GetField` rows (`generated_row`) at the three Math call
-/// sites (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`). `FieldHit` reads a record
-/// of these as an own-field read.
-pub(crate) fn math_field_call_handlers() -> [*const (); 3] {
-    [generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL_SITE) as *const (),
-        generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_SITE) as *const (),
-        generated_row!(FIELD_LEAF_READ, ACC_NONE, MATH_CALL2_CONST_SITE) as *const ()]
-}
-
 script_handler! {
     /// A `Call` site whose callee was the Math function of row `ROW` (`native_call_handler`): the shared
     /// in-place call (`in_place_call`) of its staged row of Number arguments (`staged::call_native::math_call`).
