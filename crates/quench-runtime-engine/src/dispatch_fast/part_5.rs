@@ -482,7 +482,7 @@ pub(crate) fn derive_lane_view<'live>(
     // The fused records are script handlers; Wasm bodies run none.
     if !wasm {
         specialize_constant_returns(&mut records);
-        specialize_script_calls(&mut records, function.undefined_register, admits_returns, &planned, facts, function_id);
+        specialize_script_calls(&mut records, function.undefined_register, admits_returns, &planned, vm, facts, function_id);
         specialize_constructs(&mut records, function_id, vm.programs.residual(program), facts);
         specialize_proved_arrays(&decoded, &mut records);
     }

@@ -360,9 +360,11 @@ fn targets_entry(facts: &quench_runtime::compile::aot_facts::AotFacts, function:
 /// the function's strictness), of a returning record (`RETURN_REGISTER`), whose completion the row admits. A record of
 /// a planned site (`planned`, sorted by pc) takes `planned_call_row` instead, which reads its site from the record's `mode`.
 /// A call whose entry the facts name (`targets_entry`) takes that entry's row (`entry_call_row`), except an activating
-/// entry, which keeps the row that proves the call on its first run.
+/// entry, which keeps the row that proves the call on its first run. A call whose callee the facts prove is a builtin the
+/// realm binds to a native takes that native's row (`builtin_calls::builtin_call_row`).
 pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined: Option<quench_runtime::bytecode::Register>, admits_returns: bool,
-    planned: &[quench_runtime::vm::engine_types::PlannedSite], facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32) {
+    planned: &[quench_runtime::vm::engine_types::PlannedSite], vm: &quench_runtime::vm::Vm,
+    facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function: u32) {
     let general = script_call_row(ANY_ARGC, false, false) as *const ();
     for (pc, record) in records.iter_mut().enumerate().filter(|(_, record)| record.handler == general) {
         if let Ok(index) = planned.binary_search_by_key(&(pc as u32), |site| site.pc) {
@@ -377,7 +379,7 @@ pub(super) fn specialize_script_calls(records: &mut [LaneInstruction], undefined
         let entry = facts.and_then(|facts| targets_entry(facts, function, pc as u32)).filter(|entry| *entry != CallEntry::framed(Framed::Activates));
         let handler = match entry {
             Some(entry) => entry_call_row(entry, record),
-            None => script_call_row(argc, plain, returns),
+            None => super::builtin_calls::builtin_call_row(vm, facts, function, pc as u32, record).unwrap_or_else(|| script_call_row(argc, plain, returns)),
         };
         record.handler = handler as *const ();
     }
