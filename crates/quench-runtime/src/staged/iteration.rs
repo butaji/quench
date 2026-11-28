@@ -7,7 +7,7 @@
 
 use super::region::Region;
 use super::field_cache_layout::CLASS_KEY;
-use super::{Concrete, Frame, Stage, Step, elements, entry, value};
+use super::{Concrete, Frame, Stage, Step, elements, value};
 use crate::bytecode::Register;
 use crate::heap::NATIVE_OBJECT_LAYOUT as OBJECT;
 
@@ -160,53 +160,6 @@ pub fn for_in_next<S: Stage>(stage: &mut S, arrays: S::Word, state: S::Word, epo
     elements::replace_element(stage, backing.values, address, cursor, next);
     Some(key)
 }
-
-/// `base[key]` in the body of the for-in `state` (`Op::GetEnumerated`), where `base` is the object
-/// the loop lists and `key` the key its last step yielded: the state's memo proves `base` still
-/// has the listed shape (`current_state`), and the key's listed slot (`FOR_IN_SLOTS`) holds its
-/// value, a data property, read at that run-time slot (`object::read_slot_at`), as V8 loads a
-/// property with an enumerated key. Any other `base` or `key`, a key without a slot, and an
-/// object whose values extras displaced or a narrow run on a specializer's residual leave at
-/// `miss`, where the general element read decides.
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-pub fn for_in_keyed_get<S: Stage>(stage: &mut S, arrays: S::Word, state: S::Word, base: S::Word,
-    key: S::Word, epoch: S::Word, miss: S::Miss) -> Option<S::Word> {
-    let backing = current_state::<S, false>(stage, arrays, state, epoch, miss)?;
-    let object = state_word(stage, backing.values, FOR_IN_OBJECT);
-    same_word(stage, object, base, miss)?;
-    let shape_word = state_word(stage, backing.values, FOR_IN_SHAPE);
-    let keyed = listed_keys_class(stage, shape_word);
-    // The cursor already names the key after the one the last step yielded.
-    let cursor = state_word(stage, backing.values, FOR_IN_CURSOR);
-    let past = stage.constant(crate::value::ValueLayout::INT_TAG + 1);
-    let index = stage.sub(cursor, past);
-    let wide = stage.ugt_imm(index, u64::from(u32::MAX));
-    let narrow = stage.not(wide);
-    stage.guard(narrow, miss)?;
-    let keys = state_word(stage, backing.values, FOR_IN_KEYS);
-    let snapshot = private_backing(stage, arrays, keys, miss)?;
-    let (_, listed) = elements::dense_element(stage, snapshot.values, snapshot.length, index, miss)?;
-    same_word(stage, listed, key, miss)?;
-    let slots = state_word(stage, backing.values, FOR_IN_SLOTS);
-    let slots = private_backing(stage, arrays, slots, miss)?;
-    let (_, slot) = elements::dense_element(stage, slots.values, slots.length, index, miss)?;
-    let int_tag = stage.constant(crate::value::ValueLayout::INT_TAG);
-    let slot = stage.sub(slot, int_tag);
-    let wide = stage.ugt_imm(slot, u64::from(u16::MAX));
-    let narrow = stage.not(wide);
-    stage.guard(narrow, miss)?;
-    stage.choose_leaving(keyed, #[inline(always)] |stage| {
-        // The live class cell `base` (proved the memo's class by `current_state`): its field at the listed slot.
-        let granule = value::direct_object_id(stage, base);
-        let cell = super::object::cell_at_granule(stage, granule);
-        Some(entry::cell_field(stage, cell, slot))
-    }, #[inline(always)] |stage| {
-        super::guard::no_record(stage, miss)?;
-        None
-    })
-}
-
 
 #[cfg(test)]
 mod tests;
