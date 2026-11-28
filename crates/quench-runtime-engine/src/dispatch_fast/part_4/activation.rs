@@ -43,27 +43,27 @@ pub(in super::super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
     }) {
         quench_runtime::vm::lane_exits::record_detail(body);
     }
-    let count = usize::from(target.registers);
+    let count = usize::from(target.body.registers);
     // A forwarding activation keeps every value passed after its registers, as does one for
     // a skipped forwarding constructor, whose frame passed them on, and one passed more values
     // than it has parameters.
     // A rest body keeps nothing its rest array holds, unless a kept `arguments` or legacy
     // reflection reads them (`TARGET_GATHERS_KEEPING`).
-    let gathers = target.entry == CallEntry::framed(Framed::Gathers);
+    let gathers = target.body.entry == CallEntry::framed(Framed::Gathers);
     // A rest view keeps them too, as `activate_gathering_in_lane` keeps them: its reads and
     // its frame, once materialized, take the values passed, never a rest array.
     let keeps = forwarder.is_some()
         || if gathers {
-            target.forms & (TARGET_GATHERS_KEEPING | TARGET_REST_VIEW) != 0
+            target.body.forms & (TARGET_GATHERS_KEEPING | TARGET_REST_VIEW) != 0
         } else {
-            target.forwards() || argc > usize::from(target.params)
+            target.body.forwards() || argc > usize::from(target.body.params)
         };
     let window_size = if keeps { count + argc } else { count };
     // The rest array, made before the window is: the values past the other parameters, read
     // in place from the caller's window or the kept values.
     // A rest view that keeps the values reads them in place (`LaneFrame::rest_view`).
-    let rest = (gathers && !(keeps && target.forms & TARGET_REST_VIEW != 0)).then(|| {
-        let fixed = usize::from(target.params) - 1;
+    let rest = (gathers && !(keeps && target.body.forms & TARGET_REST_VIEW != 0)).then(|| {
+        let fixed = usize::from(target.body.params) - 1;
         let passed: &[Value] = match arguments {
             // SAFETY: the window holds `argc` registers of the caller.
             ActivationArguments::Window(base) => unsafe { std::slice::from_raw_parts(r.0.add(usize::from(base)), argc) },
@@ -92,7 +92,7 @@ pub(in super::super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
     ) {
         return Err(script_call_frame_in_lane(ip, needed));
     }
-    let shape = quench_runtime::staged::call_keeping::KeepingWindow { registers: target.registers, params: target.params, keeps, gathers };
+    let shape = quench_runtime::staged::call_keeping::KeepingWindow { registers: target.body.registers, params: target.body.params, keeps, gathers };
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window; each slot is written before the length covers
     // it, and no activation's window moves. Parameter `k` lives in register `k` of a
@@ -117,9 +117,9 @@ pub(in super::super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
     // (a rest body's rest array among them): its materialization reads them there.
     let record = quench_runtime::staged::call_keeping::KeepingRecord::of(shape, argc);
     let activation = Activation::of_parts(
-        target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
+        target.body.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
         ActivationKind::Script(ScriptActivation {
-            callee: target.callee,
+            callee: target.closure.callee,
             argc: record.argc,
             completion: if forwarder.is_some() {
                 Completion::Forwarder
@@ -138,20 +138,20 @@ pub(in super::super) fn activate_keeping_in_lane<const MAY_CROSS: bool>(
         stack.attach_payload(SidePayload::Forwarder(forwarder));
     }
     // SAFETY: the program store keeps a derived view alive with its program.
-    let base = unsafe { (*target.view).records() };
+    let base = unsafe { (*target.body.view).records() };
     unsafe {
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
     quench_runtime::staged::call_keeping::enter_context(
         &mut quench_runtime::staged::Concrete::pure(), callee_registers.0.expose_provenance() as u64,
-        this.to_bits(), target.env.to_bits(), target.capture.expose_provenance() as u64,
+        this.to_bits(), target.closure.env.to_bits(), target.closure.capture.expose_provenance() as u64,
     );
     if cross {
-        enter_program_in_lane(cx, target.program());
+        enter_program_in_lane(cx, target.body.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
-    let start = if constructs { base } else { unsafe { (*target.view).start() } };
+    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
+    let start = if constructs { base } else { unsafe { (*target.body.view).start() } };
     Ok((callee_registers, start))
 }
 

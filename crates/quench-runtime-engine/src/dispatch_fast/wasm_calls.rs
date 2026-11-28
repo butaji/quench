@@ -507,10 +507,10 @@ fn import_activation_target(
         Some(entry) => unsafe { *entry },
         None => vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee)?,
     };
-    if target.program() == unsafe { (*cx).program }
-        || !target.entry.activates_across()
-        || target.forwards()
-        || !(argc <= target.params || target.drops_extra_arguments())
+    if target.body.program() == unsafe { (*cx).program }
+        || !target.body.entry.activates_across()
+        || target.body.forwards()
+        || !(argc <= target.body.params || target.body.drops_extra_arguments())
         || !activation_room_in_lane(vm, &target)
     {
         return None;
@@ -535,7 +535,7 @@ fn push_import_activation(
 ) -> Resumed {
     let instance = unsafe { (*cx).instance };
     let (registers, start) =
-        push_passed_in_lane::<true, false>(cx, r, ip, target, args.as_ptr(), argc.min(target.params), this, false);
+        push_passed_in_lane::<true, false>(cx, r, ip, target, args.as_ptr(), argc.min(target.body.params), this, false);
     let vm = unsafe { vm(cx) };
     vm.lane_stack.recomplete_top(Completion::ToWasm);
     vm.lane_stack.attach_payload(SidePayload::ToWasm(ToWasmCall { instance, memory, result }));

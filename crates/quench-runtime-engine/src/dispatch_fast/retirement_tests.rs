@@ -61,8 +61,8 @@ fn direct_slot_fixture() -> (Vm, quench_runtime::ResidualProgram, Value, ScriptC
     let root = vm.own_property(vm.realm.globals, root_atom).unwrap();
     let target = vm.resolve_script_call_target(&program, leaf).unwrap();
     let root_target = vm.resolve_script_call_target(&program, root).unwrap();
-    assert!(target.entry == CallEntry::framed(Framed::Activates) && !target.view.is_null());
-    assert!(!root_target.view.is_null());
+    assert!(target.body.entry == CallEntry::framed(Framed::Activates) && !target.body.view.is_null());
+    assert!(!root_target.body.view.is_null());
     (vm, program, leaf, target, root_target)
 }
 
@@ -81,27 +81,28 @@ fn store_edge_value(vm: &mut Vm, value: f64) {
 fn direct_callers_subscribe_to_callee_slot_dependencies() {
     use std::rc::Rc;
     let (mut vm, program, leaf, target, root_target) = direct_slot_fixture();
-    let leaf_method = vm.compile_lane_method(&program, target.function,
+    let leaf_method = vm.compile_lane_method(&program, target.body.function,
         &|_| (0, 0), Vec::new()).unwrap();
     assert!(!leaf_method.dependencies.slots.is_empty());
     let leaf_publication = { let (mut facts, programs) = vm.fact_watch(); programs.publish_lane_method(leaf_method, &mut facts) }.unwrap();
     let leaf_body = leaf_publication.lease().unwrap();
     assert!(leaf_body.calls_only_natively());
-    let code = program.function(root_target.function as usize);
+    let code = program.function(root_target.body.function as usize);
     let pc = code.instructions().position(|instruction| instruction.op().is_call()).unwrap();
     let mut direct = vec![super::compiled::DirectCandidates::new(); code.code.len()];
     // Resolve the capture view exactly as production direct-call publication does.
-    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.capture)) }
+    let (capture_values, capture_len) = unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads(target.closure.capture)) }
         .unwrap_or((std::ptr::null(), 0));
     direct[pc].push(super::compiled::DirectCallee {
-        target, method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
-        call: unsafe { &*root_target.view }.records().wrapping_add(pc).addr(), caller_base: unsafe { &*root_target.view }.records().addr(),
-        cell: unsafe { &*target.view }.entry_cell(),
-        callee: leaf, registers: target.registers,
-        sloppy: (target.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
-        capture_values, capture_len, capture_stores: capture_stores(target.capture).is_some(), bound: Default::default(),
+        target: target.body, closure: quench_runtime::vm::engine_types::ClosureOperands { callee: leaf, ..target.closure },
+        method: Some(leaf_publication.clone()), body: Some(leaf_body.clone()),
+        call: unsafe { &*root_target.body.view }.records().wrapping_add(pc).addr(), caller_base: unsafe { &*root_target.body.view }.records().addr(),
+        cell: unsafe { &*target.body.view }.entry_cell(),
+        registers: target.body.registers,
+        sloppy: (target.body.this_binding == ThisBinding::Sloppy).then_some(vm.realm.globals),
+        capture_values, capture_len, capture_stores: capture_stores(target.closure.capture).is_some(), bound: Default::default(),
     });
-    let root_method = vm.compile_lane_method(&program, root_target.function,
+    let root_method = vm.compile_lane_method(&program, root_target.body.function,
         &|_| (0, 0), direct, &[]).unwrap();
     assert_eq!(root_method.direct.len(), 1);
     assert_eq!(root_method.dependencies.slots, leaf_body.dependencies.slots);

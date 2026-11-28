@@ -101,7 +101,7 @@ impl PendingOsrRegion {
     pub(crate) fn native_calls(&self) -> (Rc<quench_runtime::code_dependencies::PublishedCode<()>>, Box<[quench_runtime::value::Value]>) {
         let identities = match &self.calls {
             Some(calls) => calls.identities(),
-            None => self.directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.callee)).collect(),
+            None => self.directs.iter().flat_map(|direct| direct.iter().map(|callee| callee.closure.callee)).collect(),
         };
         (self.watch.clone(), identities)
     }

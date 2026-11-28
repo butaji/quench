@@ -48,7 +48,7 @@ fn leaf_bodies_take_the_leaf_entry_and_others_activate() {
     ] {
         let atom = vm.intern_atom(name);
         let callee = vm.own_property(vm.realm.globals, atom).unwrap();
-        let entry = vm.resolve_script_call_target(&program, callee).map(|target| target.entry);
+        let entry = vm.resolve_script_call_target(&program, callee).map(|target| target.body.entry);
         match expected {
             Some(expected) => assert!(entry == Some(expected), "{name} is a leaf"),
             None => assert!(!entry.is_some_and(leaf), "{name} is no leaf"),

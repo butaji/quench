@@ -1134,7 +1134,7 @@ enum ActivationArguments {
     Kept(*const Value, usize),
 }
 
-pub(crate) use quench_runtime::vm::engine_types::ScriptCallTarget;
+pub(crate) use quench_runtime::vm::engine_types::{ClosureOperands, FunctionTarget, ScriptCallTarget};
 
 pub(crate) mod call_entry;
 use call_entry::{CallEntry, Framed, Frameless};
@@ -1165,15 +1165,8 @@ const TARGET_READS_IMPLICIT: u8 = 16;
 /// closures ride the window (`CallPlan::suspended_environment`).
 const TARGET_SETTLES_IN_ENVIRONMENT: u8 = 32;
 
-#[quench_macros::ext(ScriptCallTargetOps1)]
-impl ScriptCallTarget {
-    /// The closure environment and captures pointer its activation's window holds
-    /// (`CONTEXT_ENV`, `CONTEXT_CAPTURE`): a direct call row writes them (`CalleeRecord::env`, `capture`).
-    #[inline(always)]
-    pub(crate) fn context_words(&self) -> (u64, u64) {
-        (self.env.to_bits(), self.capture.expose_provenance() as u64)
-    }
-
+#[quench_macros::ext(FunctionTargetOps1)]
+impl FunctionTarget {
     /// `new` may activate it too (`Vm::inline_constructible`).
     #[inline(always)]
     fn constructs(&self) -> bool {
@@ -1261,8 +1254,8 @@ impl Admission {
     }
 }
 
-#[quench_macros::ext(ScriptCallTargetOps2)]
-impl ScriptCallTarget {
+#[quench_macros::ext(FunctionTargetOps2)]
+impl FunctionTarget {
     #[inline(always)]
     fn generation(&self) -> ScriptGeneration {
         self.admission.generation()
@@ -1327,12 +1320,12 @@ impl ScriptTargets {
     /// `most` entries.
     fn remember(&mut self, mut target: ScriptCallTarget, most: usize) {
         // No entry is proved before a plain call's link proves it (`Admission::UNPROVEN`).
-        target.admission.0 |= Admission::UNPROVEN;
-        let Some(set) = self.set(target.callee) else {
+        target.body.admission.0 |= Admission::UNPROVEN;
+        let Some(set) = self.set(target.closure.callee) else {
             return;
         };
-        if self.entries[set].callee != target.callee {
-            if self.entries[set | 1].generation() == target.generation() {
+        if self.entries[set].closure.callee != target.closure.callee {
+            if self.entries[set | 1].body.generation() == target.body.generation() {
                 self.displaced += 1;
             }
             self.entries[set | 1] = self.entries[set];
@@ -1620,10 +1613,10 @@ impl LaneStack {
         self.cross_targets.remember(target, script_call_targets(policy));
     }
 
-    /// The target `function_targets` holds for a closure of `function` of `program` in this
+    /// The body target `function_targets` holds for a closure of `function` of `program` in this
     /// generation, or `cross_function_targets` for calls from another program, whose closure
-    /// fields the caller rebinds.
-    fn function_target(&self, program: ProgramId, function: u32, cross: bool) -> Option<ScriptCallTarget> {
+    /// operands the caller rebuilds (`Vm::closure_target`).
+    fn function_target(&self, program: ProgramId, function: u32, cross: bool) -> Option<FunctionTarget> {
         let targets = if cross { &self.cross_function_targets } else { &self.function_targets };
         let known = targets[function as usize & (FUNCTION_TARGETS - 1)];
         // A target made under other diagnostics (`Admission::DIAGNOSED`) is admitted by no link
@@ -1633,15 +1626,15 @@ impl LaneStack {
             .then_some(known)
     }
 
-    /// Record `target` in its set and as its function's (`function_targets`), or a `cross`
-    /// one in the other programs' tables.
+    /// Record `target` in its set and its body as its function's (`function_targets`), or a
+    /// `cross` one in the other programs' tables.
     fn remember_function_target(&mut self, target: ScriptCallTarget, cross: bool, policy: quench_runtime::MemoryPolicy) {
-        let index = target.function as usize & (FUNCTION_TARGETS - 1);
+        let index = target.body.function as usize & (FUNCTION_TARGETS - 1);
         if cross {
-            self.cross_function_targets[index] = target;
+            self.cross_function_targets[index] = target.body;
             self.remember_cross_target(target, policy);
         } else {
-            self.function_targets[index] = target;
+            self.function_targets[index] = target.body;
             self.remember_script_target(target, policy);
         }
     }
@@ -1810,8 +1803,8 @@ impl LaneStack {
     /// Takes the proof (`Admission::UNPROVEN`) from every script call entry of `view`, whose
     /// entry cell just published a body: a proved call of it would skip the body.
     pub(crate) fn unprove_view_entries(&mut self, view: *const LaneView) {
-        for entry in self.script_targets.entries.iter_mut().filter(|entry| std::ptr::eq(entry.view, view)) {
-            entry.admission.0 |= Admission::UNPROVEN;
+        for entry in self.script_targets.entries.iter_mut().filter(|entry| std::ptr::eq(entry.body.view, view)) {
+            entry.body.admission.0 |= Admission::UNPROVEN;
         }
     }
 
@@ -3833,7 +3826,7 @@ impl Vm {
     #[inline(always)]
     fn script_call_holds(&self, index: usize, callee: Value) -> bool {
         self.lane_stack.script_targets.entries.get(index).is_some_and(|cached| {
-            cached.callee == callee && cached.admission.admits(self.lane_stack.admission)
+            cached.closure.callee == callee && cached.body.admission.admits(self.lane_stack.admission)
         })
     }
 
@@ -3898,7 +3891,7 @@ impl Vm {
     #[inline(always)]
     fn cross_call_holds(&self, index: usize, callee: Value) -> bool {
         self.lane_stack.cross_targets.entries.get(index).is_some_and(|cached| {
-            cached.callee == callee && cached.admission.admits_across(self.lane_stack.admission)
+            cached.closure.callee == callee && cached.body.admission.admits_across(self.lane_stack.admission)
         })
     }
 
@@ -4024,12 +4017,13 @@ impl Vm {
             // The function needs a frame, which the target records so its calls take one
             // without resolving it again.
             let target = ScriptCallTarget {
-                callee,
-                admission: self.lane_stack.target_admission(program),
-                function,
-                env,
-                entry: CallEntry::framed(Framed::Frame),
-                ..EMPTY_SCRIPT_CALL_TARGET
+                body: FunctionTarget {
+                    admission: self.lane_stack.target_admission(program),
+                    function,
+                    entry: CallEntry::framed(Framed::Frame),
+                    ..EMPTY_SCRIPT_CALL_TARGET.body
+                },
+                closure: ClosureOperands { callee, env, ..EMPTY_SCRIPT_CALL_TARGET.closure },
             };
             self.remember_target(target, numeric, cross);
             return Some(target);
@@ -4083,11 +4077,9 @@ impl Vm {
             unsafe { &*view }.claim_for_tier(tier_prologue_row(), function, body.params, !body.is_arrow);
         }
         let capture = self.target_capture(code, program, env);
-        let target = ScriptCallTarget {
-            callee,
+        let function_target = FunctionTarget {
             admission: self.lane_stack.target_admission(program),
             function,
-            env,
             view,
             registers: body.registers,
             // An environment activation's window also holds its environment, its locals and
@@ -4108,11 +4100,6 @@ impl Vm {
                 None if body.strict => ThisBinding::Strict,
                 None => ThisBinding::Sloppy,
             },
-            lexical_this: match lexical_this {
-                Some(this) => this.unwrap_or(Value::UNDEFINED),
-                None if body.strict => Value::UNDEFINED,
-                None => self.realm.globals,
-            },
             // A construction activates in place (`activate_in_lane`), which gathers no rest, and
             // completes across programs as a call does (`Completion::CrossConstructs`); a
             // forwarding one runs its program's keeping construction
@@ -4128,9 +4115,19 @@ impl Vm {
             // A read target answers its call through the callee's own field sites, which
             // only its program's caches index.
             entry: target_entry(body, &plan, &shape, (settles, environment, cross)),
-            capture,
             forwards_method: plan.forwards_arguments && shape.constructs,
         };
+        let closure = ClosureOperands {
+            callee,
+            env,
+            lexical_this: match lexical_this {
+                Some(this) => this.unwrap_or(Value::UNDEFINED),
+                None if body.strict => Value::UNDEFINED,
+                None => self.realm.globals,
+            },
+            capture,
+        };
+        let target = ScriptCallTarget { body: function_target, closure };
         self.remember_target(target, numeric, cross);
         Some(target)
     }
@@ -4346,7 +4343,7 @@ script_handler! {
         let vm = unsafe { vm(cx) };
         let target = vm.linked_script_call_entry(r.get(i.b), &i.call_link);
         // SAFETY: as `Vm::script_call_entry`; nothing before this read resolves a target.
-        let entry = target.map(|target| unsafe { (*target).entry });
+        let entry = target.map(|target| unsafe { (*target).body.entry });
         let handler: Handler = match entry {
             Some(entry) => entry_call_row(entry, i),
             None => sibling!(script_call_resolve_miss, r, ip, Carried::script_in(cx, view)),
@@ -4396,7 +4393,7 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        if target.entry != CallEntry::framed(Framed::Activates) {
+        if target.body.entry != CallEntry::framed(Framed::Activates) {
             sibling!(script_call_entry_miss, r, ip, Carried::script_in(cx, view))
         }
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
@@ -4404,7 +4401,7 @@ script_handler! {
             return exit(ip);
         }
         let argc = call_argument_count::<ARGC>(i);
-        if argc > FIXED_ARGUMENT_COPIES || !quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)) {
+        if argc > FIXED_ARGUMENT_COPIES || !quench_runtime::staged::call::concrete_fits(u64::from(target.body.params), u64::from(argc)) {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
         // The proof (`Admission::UNPROVEN`): the entry, which the link names, now admits the row's calls
@@ -4415,14 +4412,14 @@ script_handler! {
         // An entry proved already is a site meeting another callee than its link named (a polymorphic
         // `this.task.run(p)`): the link now names this one, and the call activates in place, not
         // back through the row, which declined it.
-        if entry.admission.0 & Admission::UNPROVEN == 0 {
+        if entry.body.admission.0 & Admission::UNPROVEN == 0 {
             match activate_unproven_in_lane::<ARGC>(cx, r, ip, i, target) {
                 Some(resumed) => resume!(cx, resumed),
                 None => sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view)),
             }
         }
-        entry.admission.0 &= !Admission::UNPROVEN;
-        debug_assert!(entry.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
+        entry.body.admission.0 &= !Admission::UNPROVEN;
+        debug_assert!(entry.body.admission == vm.lane_stack.admission, "an admitted entry's word is the lane's");
         i.call_link.set(i.call_link.get() | PLAIN_LINK);
         let row = script_call_row(ARGC, PLAIN, returns);
         sibling!(row, r, ip, Carried::script_in(cx, view))
@@ -4472,16 +4469,16 @@ script_handler! {
         };
         // SAFETY: as `Vm::script_call_entry`; a read resolves no target and collects nothing.
         let target = unsafe { &*target };
-        if target.entry == CallEntry::framed(Framed::Frame) {
+        if target.body.entry == CallEntry::framed(Framed::Frame) {
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
-        if target.entry == CallEntry::framed(Framed::Environment) {
+        if target.body.entry == CallEntry::framed(Framed::Environment) {
             sibling!(script_call_environment_miss, r, ip, Carried::script_in(cx, view))
         }
-        if target.settles() {
+        if target.body.settles() {
             sibling!(script_call_settles_miss, r, ip, Carried::script_in(cx, view))
         }
-        if target.forwards() {
+        if target.body.forwards() {
             sibling!(script_call_keeping_miss, r, ip, Carried::script_in(cx, view))
         }
         // A receiver whose binding reads the heap takes the general form.
@@ -4497,7 +4494,7 @@ script_handler! {
         // exactly when the entry activates (its plain or keeping form), so this is the same test.
         // A frameless native target runs its entry with no activation (`native_call_in_lane`); where that declines,
         // the call takes the general form below, which activates it as its records.
-        let value = if target.entry == CallEntry::frameless(Frameless::Native) {
+        let value = if target.body.entry == CallEntry::frameless(Frameless::Native) {
             if returns && !returning_call_admitted(cx) {
                 None
             } else {
@@ -4518,7 +4515,7 @@ script_handler! {
             // An activation keeping values past the parameters, a full lane stack or another
             // program's target takes the general form (`activate_in_lane`). A callee that drops
             // the values past its parameters is passed those alone, as `activate_in_lane` passes them.
-            if (argc > target.params && !target.drops_extra_arguments())
+            if (argc > target.body.params && !target.body.drops_extra_arguments())
                 || !activation_room_in_lane(vm, target)
                 || (returns && !returning_call_admitted(cx))
                 || vm.with_scope_entered
@@ -4528,7 +4525,7 @@ script_handler! {
             // SAFETY: the call's window of `r` holds its `argc` values.
             let passed = unsafe { r.0.add(usize::from(arguments)).cast_const() };
             let (registers, base) =
-                push_passed_in_lane::<false, false>(cx, r, ip, target, passed, argc.min(target.params), this, false);
+                push_passed_in_lane::<false, false>(cx, r, ip, target, passed, argc.min(target.body.params), this, false);
             next!(cx, registers, base, Carried::script_in(cx, view))
         };
         if !returns {
@@ -4555,7 +4552,7 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let Some(target) = target.map(|target| unsafe { &*target }).filter(|target| {
-            !target.entry.needs_frame_path() && !target.forwards()
+            !target.body.entry.needs_frame_path() && !target.body.forwards()
         }) else {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         };
@@ -4593,7 +4590,7 @@ script_handler! {
         debug_assert!(unsafe { (*cx).script_calls });
         // SAFETY: as `Vm::script_call_entry`; nothing below resolves a target or collects.
         let target = unsafe { &*target };
-        if target.entry != CallEntry::framed(Framed::Environment) {
+        if target.body.entry != CallEntry::framed(Framed::Environment) {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         }
         let Some(this) = call_this_in_lane(vm, target, r.get(i.c)) else {
@@ -4629,7 +4626,7 @@ script_handler! {
         // A linked target exists only while the run calls script functions (`linked_script_call_entry`).
         debug_assert!(unsafe { (*cx).script_calls } || target.is_none());
         // SAFETY: as `Vm::script_call_entry`; the target is copied before anything allocates.
-        let Some(target) = target.map(|target| unsafe { *target }).filter(ScriptCallTarget::settles) else {
+        let Some(target) = target.map(|target| unsafe { *target }).filter(|target| target.body.settles()) else {
             sibling!(script_call_full_miss, r, ip, Carried::script_in(cx, view))
         };
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
@@ -4637,7 +4634,7 @@ script_handler! {
         // `Vm::try_settling_call` declines it: the general loop's `Await` makes the
         // continuation only for a call whose caller keeps its result, and a caller that returns
         // the promise would otherwise suspend with it ("await requires async continuation").
-        if ImmediateLayout::argument_count(i.imm()) > target.params
+        if ImmediateLayout::argument_count(i.imm()) > target.body.params
             || (returns && (!returning_call_admitted(cx) || settling_body_suspends(cx, &target)))
             || vm.with_scope_entered
             || vm.host.observes_promise_lifecycle()
@@ -4645,7 +4642,7 @@ script_handler! {
             return exit(ip);
         }
         if !activation_room_in_lane(vm, &target) {
-            return script_call_frame_in_lane(ip, usize::from(target.room));
+            return script_call_frame_in_lane(ip, usize::from(target.body.room));
         }
         let Some(this) = call_this_in_lane(vm, &target, r.get(i.c)) else {
             return exit(ip);
@@ -4663,7 +4660,7 @@ script_handler! {
             note_allocation(vm);
             Some(vm.hold_root(promise))
         };
-        let (registers, base) = if target.settles_in_environment() {
+        let (registers, base) = if target.body.settles_in_environment() {
             // SAFETY: the call's window is registers of the running function.
             let passed = unsafe { call_window_in_lane(r, i) };
             match generator_yields::activate_settling_environment(cx, r, ip, &target, passed, this) {
@@ -4848,7 +4845,7 @@ script_handler! {
             sibling!(frame_call_in_lane, r, ip, Carried::script_in(cx, view))
         }
         if let Some(target) = vm.resolve_script_call_target(code, callee) {
-            if target.program() == vm.active_program {
+            if target.body.program() == vm.active_program {
                 // Under a pending construction no cached target admits a call
                 // (`LaneStack::set_refused`): the call leaves the lane, as it would. Nor in a run that
                 // makes no script calls (`NO_SCRIPT_CALLS`), whose admission no target carries: the
@@ -5356,7 +5353,7 @@ script_handler! {
             vm.script_call_entry(callee).or_else(|| vm.cross_call_entry(callee))
         };
         let Some(entry) = entry else {
-            if script_target_in_lane(cx, callee).is_some_and(|target| target.constructs()) {
+            if script_target_in_lane(cx, callee).is_some_and(|target| target.body.constructs()) {
                 sibling!(script_construct_miss, r, ip, Carried::script_in(cx, view))
             }
             sibling!(native_construct_miss, r, ip, Carried::script_in(cx, view))
@@ -5365,12 +5362,12 @@ script_handler! {
         // target, and any other path copies the target first.
         let target = unsafe { &*entry };
         // A class constructor's target constructs with entry `Frame`, which its calls take.
-        if !target.constructs() {
+        if !target.body.constructs() {
             sibling!(native_construct_miss, r, ip, Carried::script_in(cx, view))
         }
         // A planned construction, the common `new C(…)` or `return new C(…)`: the receiver
         // is the finished object, and the body completed with `undefined`.
-        if target.initializes()
+        if target.body.initializes()
             && finishes_construction_in_lane(cx, i)
             && let Some(this) = unsafe { planned_site_in_lane(vm, cx, ip, r, i) }
         {
@@ -5386,13 +5383,13 @@ script_handler! {
             return frame_return(vm, ip, this);
         }
         let target = *target;
-        if target.forwards() {
+        if target.body.forwards() {
             sibling!(script_construct_keeping_miss, r, ip, Carried::script_in(cx, view))
         }
-        let built = if target.initializes() {
+        let built = if target.body.initializes() {
             match unsafe { planned_site_in_lane(vm, cx, ip, r, i) } {
                 Some(this) => Some((this, true)),
-                None => unsafe { initialize_site_in_lane(vm, cx, ip, r, i, target.function) },
+                None => unsafe { initialize_site_in_lane(vm, cx, ip, r, i, target.body.function) },
             }
         } else {
             unsafe { inline_receiver_site_in_lane(vm, cx, ip, callee) }.map(|this| (this, false))
@@ -5417,7 +5414,7 @@ script_handler! {
                 return frame_return(vm, ip, this);
             }
         }
-        let activated = if target.entry == CallEntry::framed(Framed::Environment) {
+        let activated = if target.body.entry == CallEntry::framed(Framed::Environment) {
             // SAFETY: the construction's arguments are a window of the running function's registers.
             activate_environment_in_lane(cx, r, ip, &target, unsafe { window_in_lane(r, i.c, i) }, (this, true))
         } else {
@@ -5646,7 +5643,7 @@ impl Vm {
     pub(crate) fn callee_capture_slots(&self, callee: Value) -> (usize, usize) {
         self.script_call_entry(callee)
             // SAFETY: as `Vm::script_call_entry`; a live environment's slots never move.
-            .and_then(|target| unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads((*target).capture)) })
+            .and_then(|target| unsafe { quench_runtime::tier_surface::EnvironmentSlots::native_storage_view(capture_reads((*target).closure.capture)) })
             .map_or((0, 0), |(values, len)| (values.addr(), len))
     }
 }
@@ -5926,15 +5923,15 @@ impl LeafRead {
     #[inline(always)]
     unsafe fn of(target: &ScriptCallTarget) -> Option<Self> {
         // SAFETY: the program store keeps a derived view alive with its program.
-        let entry = unsafe { &*(*target.view).records() };
+        let entry = unsafe { &*(*target.body.view).records() };
         let handler = entry.handler;
         if handler == returning_row_of!(quench_runtime::bytecode::FIELD_READ, RETURNING_FIELD_PRIVATE, NOT_LEAF) as *const () {
             return Some(Self::Private {
                 base: entry.b,
                 atom: entry.imm(),
                 site: std::ptr::from_ref(entry).addr(),
-                environment: target.env,
-                function: target.function,
+                environment: target.closure.env,
+                function: target.body.function,
             });
         }
         None
@@ -6645,7 +6642,7 @@ impl Vm {
                 // The callback's frame runs in its own program, which the general loop
                 // finishes it in.
                 let code = if crosses {
-                    self.programs.residual(target.program()).map_or(code, std::ptr::from_ref)
+                    self.programs.residual(target.body.program()).map_or(code, std::ptr::from_ref)
                 } else {
                     code
                 };
@@ -6709,7 +6706,7 @@ impl Vm {
         self.lane_stack.enter_generation((self.cache_epochs.gc, self.realm.globals));
         let target = script_target_in_lane(cx, callee)?;
         // A callback of another program would enter it from the native's caller's view.
-        if target.program() != unsafe { (*cx).program } {
+        if target.body.program() != unsafe { (*cx).program } {
             return None;
         }
         let this = call_this_in_lane(self, &target, receiver)?;
@@ -6842,25 +6839,25 @@ impl PreparedShape {
     /// array each call makes (`activate_keeping_in_lane`).
     #[inline(always)]
     fn of(caller: &LaneContext, call: Ip, target: &ScriptCallTarget, argc: usize) -> Option<Self> {
-        if target.entry == CallEntry::framed(Framed::Gathers) || argc > usize::from(u16::MAX) {
+        if target.body.entry == CallEntry::framed(Framed::Gathers) || argc > usize::from(u16::MAX) {
             return None;
         }
-        let (params, registers) = (usize::from(target.params), usize::from(target.registers));
-        let keeps = target.forwards() || argc > params && !target.drops_extra_arguments();
+        let (params, registers) = (usize::from(target.body.params), usize::from(target.body.registers));
+        let keeps = target.body.forwards() || argc > params && !target.body.drops_extra_arguments();
         let size = if keeps { registers + argc } else { registers };
         let activation = Activation::of_parts(
-            target.function, call, caller.base, caller.registers, caller.program,
+            target.body.function, call, caller.base, caller.registers, caller.program,
             ActivationKind::Script(ScriptActivation {
-                callee: target.callee,
+                callee: target.closure.callee,
                 argc: if keeps { argc } else { argc.min(params) } as u16,
                 completion: Completion::ReturnsToNative,
                 forwards: keeps,
-                kept: if keeps { target.registers } else { 0 },
+                kept: if keeps { target.body.registers } else { 0 },
                 environment: false,
                 record: std::ptr::null_mut(),
             }),
         );
-        let room = usize::from(target.room).max(fill_room::<ACTIVATION_FILL_BLOCK>(size));
+        let room = usize::from(target.body.room).max(fill_room::<ACTIVATION_FILL_BLOCK>(size));
         // A callback that keeps nothing is pushed as a plain activation returning through the
         // trampoline; one that keeps its values needs the record's `kept`.
         let header = (!keeps).then(|| {
@@ -6869,7 +6866,7 @@ impl PreparedShape {
             CallbackHeader {
                 plain: quench_runtime::staged::protocol::PlainHeader::new(
                     trampoline, result, caller.base.expose_provenance() as u64,
-                    target.function, argc.min(params) as u16, 0, target.callee.to_bits(),
+                    target.body.function, argc.min(params) as u16, 0, target.closure.callee.to_bits(),
                 ),
                 program: u64::from(caller.program.raw()),
                 call,
@@ -6959,17 +6956,17 @@ impl PreparedShape {
     #[inline(always)]
     fn entry(&self, target: &ScriptCallTarget, this: Value) -> PreparedEntry {
         PreparedEntry {
-            view: target.view,
-            env: target.env,
-            capture: target.capture,
+            view: target.body.view,
+            env: target.closure.env,
+            capture: target.closure.capture,
             this,
             registers: self.registers,
             passed: self.passed as u16,
             argc: self.argc as u16,
             keeps: self.keeps,
             size: self.size,
-            program: target.program(),
-            function: target.function,
+            program: target.body.program(),
+            function: target.body.function,
         }
     }
 }
@@ -7065,7 +7062,7 @@ impl Vm {
         if self.cache_epochs.gc != prepared.epoch {
             prepared.epoch = self.cache_epochs.gc;
             self.lane_stack.enter_generation((prepared.epoch, self.realm.globals));
-            let callee = prepared.target.callee;
+            let callee = prepared.target.closure.callee;
             prepared.target = script_target_in_lane(cx, callee)?;
             prepared.this = call_this_in_lane(self, &prepared.target, prepared.receiver)?;
             prepared.shape = None;

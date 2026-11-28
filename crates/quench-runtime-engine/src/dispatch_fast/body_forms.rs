@@ -179,8 +179,8 @@ impl<'a> BodyCall<'a> {
         let window = unsafe {
             let top = stack.values.top();
             let listed = Passed::List { file: self.registers.0 as u64, registers: self.list };
-            fill_call(&mut Concrete::pure(), top as u64, &[], listed, target.registers);
-            stack.values.set_top(top.add(usize::from(target.registers) + quench_runtime::vm::lane_values::CONTEXT));
+            fill_call(&mut Concrete::pure(), top as u64, &[], listed, target.body.registers);
+            stack.values.set_top(top.add(usize::from(target.body.registers) + quench_runtime::vm::lane_values::CONTEXT));
             Registers(top)
         };
         enter_window_in_lane::<false, false>(cx, self.registers, self.ip, target, window, self.argc(), this, constructs, None).0
@@ -191,5 +191,5 @@ impl<'a> BodyCall<'a> {
 /// entry the record's hint names, where that is a function of the running program.
 fn known_callee(vm: &Vm, link: &std::cell::Cell<u16>, function: FunctionId) -> Option<Value> {
     let entry = vm.lane_stack.script_targets.entries.get(usize::from(link.get()))?;
-    (entry.function == u32::from(function) && entry.program() == vm.active_program).then_some(entry.callee)
+    (entry.body.function == u32::from(function) && entry.body.program() == vm.active_program).then_some(entry.closure.callee)
 }

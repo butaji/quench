@@ -237,9 +237,10 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::ActivationOps2 as _;
     pub use crate::dispatch_fast::ActivationOps3 as _;
     pub use crate::dispatch_fast::CompletionOps1 as _;
-    pub use crate::dispatch_fast::ScriptCallTargetOps1 as _;
+    pub use crate::dispatch_fast::closure_targets::ClosureOperandsOps1 as _;
+    pub use crate::dispatch_fast::FunctionTargetOps1 as _;
     pub use crate::dispatch_fast::AdmissionOps1 as _;
-    pub use crate::dispatch_fast::ScriptCallTargetOps2 as _;
+    pub use crate::dispatch_fast::FunctionTargetOps2 as _;
     pub use crate::dispatch_fast::ScriptTargetsOps1 as _;
     pub use crate::dispatch_fast::LaneStackOps1 as _;
     pub use crate::dispatch_fast::LaneStackOps2 as _;

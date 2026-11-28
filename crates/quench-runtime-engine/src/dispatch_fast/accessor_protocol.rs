@@ -130,12 +130,12 @@ impl AccessorCall {
     /// the running program's does. `None` for a trap the lane does not activate.
     pub(crate) fn trap_target(&self, trap: Value) -> Option<(ScriptCallTarget, bool)> {
         if let Some(target) = script_target_in_lane(self.cx, trap) {
-            return (!target.forwards()).then_some((target, false));
+            return (!target.body.forwards()).then_some((target, false));
         }
         let vm = unsafe { vm(self.cx) };
         // SAFETY: as `Vm::script_call_entry`; the entry is copied before anything resolves a target.
         let target = vm.cross_call_entry(trap).map(|target| unsafe { *target })?;
-        (target.entry.activates() && !target.forwards() && !constructing_in_lane(vm, trap)).then_some((target, true))
+        (target.body.entry.activates() && !target.body.forwards() && !constructing_in_lane(vm, trap)).then_some((target, true))
     }
 
     /// The activation of the trap `target` (`trap_target`) called on `handler` with
@@ -229,7 +229,7 @@ impl AccessorCall {
             return None;
         }
         let setter = stored_setter(vm, object, i.imm(), site)?;
-        let target = script_target_in_lane(self.cx, setter).filter(|target| !target.forwards())?;
+        let target = script_target_in_lane(self.cx, setter).filter(|target| !target.body.forwards())?;
         let this = call_this_in_lane(vm, &target, object)?;
         // SAFETY: the record's value register is one of the running function's.
         let stored = unsafe { std::slice::from_raw_parts(r.0.add(usize::from(i.a)).cast_const(), 1) };

@@ -24,7 +24,7 @@ pub(in super::super) fn activate_environment_in_lane(
     // SAFETY: `ip` is a record of the running view.
     let i = unsafe { &*ip };
     // Another program's callee enters its program and completes across (`Completion::Cross`).
-    let cross = target.program() != unsafe { (*cx).program };
+    let cross = target.body.program() != unsafe { (*cx).program };
     let Ok(argc) = u16::try_from(passed.len()) else {
         return Err(exit(ip));
     };
@@ -34,17 +34,17 @@ pub(in super::super) fn activate_environment_in_lane(
     }
     // SAFETY: the program store keeps a derived view alive with its program, and an
     // environment target's view has a window (`ScriptCallTarget::entry`).
-    let layout = unsafe { (*target.view).environment_window.unwrap_unchecked() };
+    let layout = unsafe { (*target.body.view).environment_window.unwrap_unchecked() };
     let (rest, self_binding) = (layout.rest, layout.self_binding);
     // A body reading its `arguments` keeps every value passed past its parameters too, as
     // a frame does where legacy reflection (`f.arguments`) can read them; elsewhere nothing
     // observes them, and the window keeps only those its parameters bind. Only a call
     // passing more values than the parameters reads the body's plan.
-    let extra = argc > target.params && !rest && {
-        let Some(code) = vm.programs.residual(target.program()) else {
+    let extra = argc > target.body.params && !rest && {
+        let Some(code) = vm.programs.residual(target.body.program()) else {
             return Err(exit(ip));
         };
-        let plan = code.function(target.function as usize).call_plan(code);
+        let plan = code.function(target.body.function as usize).call_plan(code);
         if !plan.reads_passed_arguments && plan.legacy_reflection {
             return Err(exit(ip));
         }
@@ -53,10 +53,10 @@ pub(in super::super) fn activate_environment_in_lane(
     if vm.with_scope_entered {
         return Err(exit(ip));
     }
-    let (passed, argc) = if extra { (&passed[..usize::from(target.params)], target.params) } else { (passed, argc) };
+    let (passed, argc) = if extra { (&passed[..usize::from(target.body.params)], target.body.params) } else { (passed, argc) };
     // A rest body keeps every value passed, the room sized for its parameters and the rest.
-    let extra = usize::from(argc.saturating_sub(target.params));
-    let needed = usize::from(target.room) + extra;
+    let extra = usize::from(argc.saturating_sub(target.body.params));
+    let needed = usize::from(target.body.room) + extra;
     // Both stacks' room, one row (`call_environment::admit_environment`).
     if !environment_row::concrete_admit_environment(
         vm.lane_stack.activation_count() as u64,
@@ -71,7 +71,7 @@ pub(in super::super) fn activate_environment_in_lane(
     // A plain branch: `bool::then` with this closure stayed an out-of-line call on every
     // activation.
     let gathered = if rest {
-        let fixed = usize::from(target.params) - 1;
+        let fixed = usize::from(target.body.params) - 1;
         Some(vm.rest_parameter_array(passed.get(fixed..).unwrap_or_default()))
     } else {
         None
@@ -91,15 +91,15 @@ pub(in super::super) fn activate_environment_in_lane(
             && environment_row::ENTRY_WORDS == WINDOW_LOCALS
     );
     let shape = environment_row::EnvironmentShape {
-        registers: target.registers,
-        live: target.entry_registers() as u16,
+        registers: target.body.registers,
+        live: target.body.entry_registers() as u16,
         locals: layout.locals,
         captured: layout.captured,
     };
     let held = shape.held();
-    debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held) <= usize::from(target.room));
-    let rest = if let Some(gathered) = gathered { Some((target.params - 1, gathered.to_bits())) } else { None };
-    let self_binding = if let Some(slot) = self_binding { Some((slot, target.callee.to_bits())) } else { None };
+    debug_assert!(fill_room::<SCRIPT_FILL_BLOCK>(held) <= usize::from(target.body.room));
+    let rest = if let Some(gathered) = gathered { Some((target.body.params - 1, gathered.to_bits())) } else { None };
+    let self_binding = if let Some(slot) = self_binding { Some((slot, target.closure.callee.to_bits())) } else { None };
     let stack: &mut LaneStack = &mut vm.lane_stack;
     // SAFETY: capacity holds the window (`ScriptCallTarget::room`); each slot is written
     // before the length covers it, and no activation's window moves.
@@ -112,24 +112,24 @@ pub(in super::super) fn activate_environment_in_lane(
             environment_row::EnvironmentPassed {
                 arguments: passed.as_ptr().expose_provenance() as u64,
                 count: argc,
-                bound: argc.min(target.params),
+                bound: argc.min(target.body.params),
                 in_registers: argc.min(layout.parameter_registers),
                 rest,
                 self_binding,
             },
             environment_row::WindowContext {
                 this: this.to_bits(),
-                env: target.env.to_bits(),
-                capture: target.capture.expose_provenance() as u64,
+                env: target.closure.env.to_bits(),
+                capture: target.closure.capture.expose_provenance() as u64,
             },
         );
         stack.values.set_top(registers.add(held + usize::from(argc) + lane_values::CONTEXT));
         Registers(registers)
     };
     let activation = Activation::of_parts(
-        target.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
+        target.body.function, ip, unsafe { (*cx).base }, r, unsafe { (*cx).program },
         ActivationKind::Script(ScriptActivation {
-            callee: target.callee,
+            callee: target.closure.callee,
             argc,
             completion: Completion::of(constructs, cross, false),
             forwards: false,
@@ -141,15 +141,15 @@ pub(in super::super) fn activate_environment_in_lane(
     // SAFETY: the capacity check above leaves room for the activation.
     unsafe { stack.push_activation(activation, callee_registers.0) };
     // SAFETY: the program store keeps a derived view alive with its program.
-    let base = unsafe { (*target.view).records() };
+    let base = unsafe { (*target.body.view).records() };
     unsafe {
         (*cx).registers = callee_registers;
         (*cx).base = base;
     }
     // The frame context was written with the window (`call_environment::bind_context`).
     if cross {
-        enter_program_in_lane(cx, target.program());
+        enter_program_in_lane(cx, target.body.program());
     }
-    vm.programs.record_js_jit_lane_entry(target.program(), target.function);
+    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
     Ok((callee_registers, base))
 }

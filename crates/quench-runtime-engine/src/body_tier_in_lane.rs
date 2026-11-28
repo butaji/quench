@@ -119,7 +119,7 @@ pub(crate) fn callees_compiling(vm: &super::Vm, view: &LaneView, function: u32, 
         crate::compiled::meaning_compiled::is_call(body.widened(*packed))
             && site_target(vm, view, function, pc).is_some_and(|target| {
                 // SAFETY: a resolved target's view outlives its program.
-                target.program() == vm.active_program && !target.view.is_null() && !std::ptr::eq(target.view, view) && pending(unsafe { &*target.view })
+                target.body.program() == vm.active_program && !target.body.view.is_null() && !std::ptr::eq(target.body.view, view) && pending(unsafe { &*target.body.view })
             })
     });
     // A callee declined for its length warms toward the body this one calls by its entry

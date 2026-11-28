@@ -265,7 +265,7 @@ impl Lowering<'_, '_> {
             self.builder.switch_to_block(tests[index]);
             let arm = self.builder.create_block();
             let next = tests.get(index + 1).copied().unwrap_or(fallback);
-            let matched = self.raw_compare_imm(Relation::Equal, word, callee.callee.to_bits() as i64);
+            let matched = self.raw_compare_imm(Relation::Equal, word, callee.closure.callee.to_bits() as i64);
             self.branch_if(matched, (arm, &[]), (next, &[]));
             self.builder.switch_to_block(arm);
             let miss = cold_block(&mut self.builder);

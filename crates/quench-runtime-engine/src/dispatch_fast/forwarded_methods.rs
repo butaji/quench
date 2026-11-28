@@ -9,9 +9,9 @@ use quench_runtime::vm::Vm;
 /// forward, or its function's body is not the forwarding shape. Both are fixed by the program's
 /// records, so nothing is recorded per lane.
 pub(crate) fn forwarded_method_of(vm: &Vm, target: &ScriptCallTarget) -> Option<ForwardedThisMethod> {
-    if !target.forwards_method {
+    if !target.body.forwards_method {
         return None;
     }
-    let code = vm.programs.residual(target.admission.program())?;
-    code.function(target.function as usize).forwarded_this(&code.constants)
+    let code = vm.programs.residual(target.body.admission.program())?;
+    code.function(target.body.function as usize).forwarded_this(&code.constants)
 }

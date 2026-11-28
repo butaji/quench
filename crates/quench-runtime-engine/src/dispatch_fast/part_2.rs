@@ -210,9 +210,9 @@ pub(super) fn activate_unproven_in_lane<const ARGC: u16>(cx: *mut LaneContext, r
     let vm = unsafe { vm(cx) };
     let this = direct_call_this_in_lane(vm, target, r.get(i.c))?;
     let argc = call_argument_count::<ARGC>(i);
-    debug_assert!(argc <= FIXED_ARGUMENT_COPIES && quench_runtime::staged::call::concrete_fits(u64::from(target.params), u64::from(argc)));
+    debug_assert!(argc <= FIXED_ARGUMENT_COPIES && quench_runtime::staged::call::concrete_fits(u64::from(target.body.params), u64::from(argc)));
     if !activation_room_in_lane(vm, target) {
-        return Some(Resumed::Exit(script_call_frame_in_lane(ip, usize::from(target.room))));
+        return Some(Resumed::Exit(script_call_frame_in_lane(ip, usize::from(target.body.room))));
     }
     // A `with` scope refuses every cached target (`LaneStack::refuse_cached_calls`), and only an admitted one reaches here.
     debug_assert!(!vm.with_scope_entered);
@@ -227,7 +227,7 @@ pub(super) fn activate_unproven_in_lane<const ARGC: u16>(cx: *mut LaneContext, r
         return Some(Resumed::Exit(exit(ip)));
     }
     // A callee whose entry cell holds a body that pays its entry runs it before any activation exists.
-    if !returns && unsafe { (*target.view).enters_cell_body() } {
+    if !returns && unsafe { (*target.body.view).enters_cell_body() } {
         if let Some(resumed) = enter_cell_body_in_lane(cx, r, ip, target, passed, argc, this) {
             return Some(resumed);
         }
@@ -281,11 +281,11 @@ pub(super) fn materialize_leaf_in_lane(cx: *mut LaneContext) {
     // SAFETY: the leaf's window starts at the stack's length, within its capacity
     // (`script_call_leaf_prove_miss`).
     let window = unsafe { (*cx).registers.0 };
-    unsafe { stack.values.set_top(window.add(usize::from(target.registers) + lane_values::CONTEXT)) };
+    unsafe { stack.values.set_top(window.add(usize::from(target.body.registers) + lane_values::CONTEXT)) };
     let activation = Activation::of_parts(
-        target.function, leaf.call, leaf.caller_base, leaf.caller_registers, leaf.caller_program.unwrap_or(unsafe { (*cx).program }),
+        target.body.function, leaf.call, leaf.caller_base, leaf.caller_registers, leaf.caller_program.unwrap_or(unsafe { (*cx).program }),
         ActivationKind::Script(ScriptActivation {
-            callee: target.callee,
+            callee: target.closure.callee,
             argc: leaf.argc,
             completion: if leaf.caller_program.is_some() { Completion::Cross } else { Completion::Plain },
             forwards: false,
@@ -306,7 +306,7 @@ pub(super) fn materialize_leaf_in_lane(cx: *mut LaneContext) {
     // The context words the form left to its caller, by the staged row on machine words.
     quench_runtime::staged::call_leaf::materialize_leaf_context(
         &mut quench_runtime::staged::Concrete::pure(), window.expose_provenance() as u64, form, this,
-        target.env.to_bits(), target.capture.expose_provenance() as u64,
+        target.closure.env.to_bits(), target.closure.capture.expose_provenance() as u64,
     );
 }
 
@@ -433,8 +433,8 @@ pub(super) fn direct_call_this_in_lane(
     target: &ScriptCallTarget,
     receiver: Value,
 ) -> Option<Value> {
-    match target.this_binding {
-        ThisBinding::Lexical => Some(target.lexical_this),
+    match target.body.this_binding {
+        ThisBinding::Lexical => Some(target.closure.lexical_this),
         binding => receiver_this_in_lane(vm, binding, receiver),
     }
 }
@@ -461,7 +461,7 @@ pub(super) fn receiver_this_in_lane(vm: &Vm, binding: ThisBinding, receiver: Val
 pub(super) fn settling_body_suspends(cx: *mut LaneContext, target: &ScriptCallTarget) -> bool {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    code.function_get(target.function as usize).is_none_or(|body| body.suspends())
+    code.function_get(target.body.function as usize).is_none_or(|body| body.suspends())
 }
 
 /// The realm's atoms an iteration step's `done` and `value` reads name
@@ -651,13 +651,13 @@ pub(super) fn forwarded_cell_entry_in_lane(
     this: Value,
 ) -> Option<Resumed> {
     let vm = unsafe { vm(cx) };
-    let argc = u16::try_from(args.len()).ok().filter(|argc| *argc <= target.params)?;
-    (target.entry == CallEntry::framed(Framed::Activates)
+    let argc = u16::try_from(args.len()).ok().filter(|argc| *argc <= target.body.params)?;
+    (target.body.entry == CallEntry::framed(Framed::Activates)
         && !crosses_in_lane::<true>(cx, target)
         && i.a & quench_runtime::bytecode::RETURN_REGISTER == 0
         && !vm.with_scope_entered
         && activation_room_in_lane(vm, target)
-        && unsafe { (*target.view).enters_cell_body() })
+        && unsafe { (*target.body.view).enters_cell_body() })
     .then_some(())?;
     enter_cell_body_in_lane(cx, r, ip, target, args.as_ptr(), argc, this)
 }
@@ -679,12 +679,12 @@ pub(super) fn passed_target_in_lane(cx: *mut LaneContext, callee: Value, passed:
                 .then(|| vm.cross_call_entry(callee))
                 .flatten()
                 .map(|entry| unsafe { &*entry })
-                .filter(|target| target.entry.activates_across() || target.entry == CallEntry::framed(Framed::Environment));
+                .filter(|target| target.body.entry.activates_across() || target.body.entry == CallEntry::framed(Framed::Environment));
             // SAFETY: as above.
             let own = || {
                 vm.script_call_entry(callee)
                     .map(|entry| unsafe { &*entry })
-                    .filter(|target| target.entry == CallEntry::framed(Framed::Environment) && target.program() == vm.active_program)
+                    .filter(|target| target.body.entry == CallEntry::framed(Framed::Environment) && target.body.program() == vm.active_program)
             };
             match cross {
                 Some(target) => *target,
@@ -692,9 +692,9 @@ pub(super) fn passed_target_in_lane(cx: *mut LaneContext, callee: Value, passed:
             }
         }
     };
-    if target.entry == CallEntry::framed(Framed::Environment)
-        && passed > usize::from(target.params)
-        && !vm.programs.residual(target.program())?.function(target.function as usize).rest
+    if target.body.entry == CallEntry::framed(Framed::Environment)
+        && passed > usize::from(target.body.params)
+        && !vm.programs.residual(target.body.program())?.function(target.body.function as usize).rest
     {
         return None;
     }
@@ -714,7 +714,7 @@ pub(super) fn activate_passed_in_lane(
     passed: &[Value],
     this: Value,
 ) -> Result<(Registers, Ip), Ip> {
-    if target.entry == CallEntry::framed(Framed::Environment) {
+    if target.body.entry == CallEntry::framed(Framed::Environment) {
         return activate_environment_in_lane(cx, r, ip, target, passed, (this, false));
     }
     activate_kept_in_lane::<true>(cx, r, ip, target, passed, this)
@@ -738,13 +738,13 @@ pub(super) fn activate_kept_in_lane<const MAY_CROSS: bool>(
     let argc = u16::try_from(passed.len()).unwrap_or(u16::MAX);
     // SAFETY: `ip` is a record of the running view.
     let returns = unsafe { (*ip).a } & quench_runtime::bytecode::RETURN_REGISTER != 0;
-    if !target.forwards()
-        && (argc <= target.params || target.drops_extra_arguments())
+    if !target.body.forwards()
+        && (argc <= target.body.params || target.body.drops_extra_arguments())
         && (!returns || returning_call_admitted(cx))
         && !vm.with_scope_entered
         && activation_room_in_lane(vm, target)
     {
-        return Ok(push_passed_in_lane::<MAY_CROSS, false>(cx, r, ip, target, passed.as_ptr(), argc.min(target.params), this, false));
+        return Ok(push_passed_in_lane::<MAY_CROSS, false>(cx, r, ip, target, passed.as_ptr(), argc.min(target.body.params), this, false));
     }
     let arguments = ActivationArguments::Kept(passed.as_ptr(), passed.len());
     activate_keeping_in_lane::<MAY_CROSS>(cx, r, ip, target, arguments, this, false, None)
@@ -897,14 +897,14 @@ pub(super) fn passed_linked_call_in_lane(
     // nothing before the activation is made resolves a target or collects; the gathering
     // activation copies it before it allocates the rest array (`activate_gathering_in_lane`).
     let target = vm.linked_script_call_entry(callee, &i.call_link).map(|target| unsafe { &*target })?;
-    if target.entry == CallEntry::framed(Framed::Gathers) && target.forms & TARGET_GATHERS_KEEPING == 0 {
+    if target.body.entry == CallEntry::framed(Framed::Gathers) && target.body.forms & TARGET_GATHERS_KEEPING == 0 {
         if !admits_activation_in_lane(&target) || valid < argc {
             return None;
         }
         // Refused here, not by the activation: without room it makes the lane's activations
         // frames (`script_call_frame_in_lane`), after which the caller may not go on in the lane.
         let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
-        let room = usize::from(target.room) + if target.forms & TARGET_REST_VIEW != 0 { usize::from(argc) } else { 0 };
+        let room = usize::from(target.body.room) + if target.body.forms & TARGET_REST_VIEW != 0 { usize::from(argc) } else { 0 };
         if (returns && !returning_call_admitted(cx))
             || vm.with_scope_entered
             || !quench_runtime::staged::call_keeping::concrete_admits_keeping(
@@ -918,8 +918,8 @@ pub(super) fn passed_linked_call_in_lane(
     }
     let returns = i.a & quench_runtime::bytecode::RETURN_REGISTER != 0;
     if !admits_activation_in_lane(&target)
-        || target.forwards()
-        || (argc > target.params && !target.drops_extra_arguments())
+        || target.body.forwards()
+        || (argc > target.body.params && !target.body.drops_extra_arguments())
         || (returns && !returning_call_admitted(cx))
         || vm.with_scope_entered
         || !activation_room_in_lane(vm, &target)
@@ -927,7 +927,7 @@ pub(super) fn passed_linked_call_in_lane(
         return None;
     }
     let this = call_this_in_lane(vm, &target, r.get(i.c))?;
-    let argc = argc.min(target.params);
+    let argc = argc.min(target.body.params);
     if valid < argc {
         return None;
     }
@@ -1492,7 +1492,7 @@ pub(super) fn call_keeping_activation_in_lane(
             &resolved
         }
     };
-    if !target.forwards() {
+    if !target.body.forwards() {
         return Err(None);
     }
     #[cfg(feature = "profile-lane-exits")]
@@ -1502,12 +1502,12 @@ pub(super) fn call_keeping_activation_in_lane(
         return Err(Some(exit(ip)));
     };
     let window = ImmediateLayout::call_window_base(i.imm());
-    if target.entry == CallEntry::framed(Framed::Gathers) && target.forms & TARGET_GATHERS_KEEPING == 0 {
+    if target.body.entry == CallEntry::framed(Framed::Gathers) && target.body.forms & TARGET_GATHERS_KEEPING == 0 {
         // SAFETY: the call's window of `r` holds its `argc` values.
         let passed = unsafe { r.0.add(usize::from(window)).cast_const() };
         return activate_gathering_in_lane(cx, r, ip, &target, passed, ImmediateLayout::argument_count(i.imm()), this).map_err(Some);
     }
-    if target.entry == CallEntry::framed(Framed::Keeps) {
+    if target.body.entry == CallEntry::framed(Framed::Keeps) {
         return activate_keeping_window_in_lane::<false>(cx, r, ip, &target, window, this).map_err(Some);
     }
     let arguments = ActivationArguments::Window(window);
@@ -1536,9 +1536,9 @@ pub(super) fn activate_keeping_window_in_lane<const GENERAL: bool>(
         return Err(exit(ip));
     }
     let argc = ImmediateLayout::argument_count(i.imm());
-    let count = usize::from(target.registers);
-    let window_size = quench_runtime::staged::call_keeping::keeping_window_words(target.registers, usize::from(argc), true);
-    let room = fill_room::<ACTIVATION_FILL_BLOCK>(window_size).max(usize::from(target.room));
+    let count = usize::from(target.body.registers);
+    let window_size = quench_runtime::staged::call_keeping::keeping_window_words(target.body.registers, usize::from(argc), true);
+    let room = fill_room::<ACTIVATION_FILL_BLOCK>(window_size).max(usize::from(target.body.room));
     if !quench_runtime::staged::call_keeping::concrete_admits_keeping(
         vm.lane_stack.activation_count(), vm.lane_stack.activation_limit.get(), vm.lane_stack.values.room(), room,
     ) {
@@ -1549,7 +1549,7 @@ pub(super) fn activate_keeping_window_in_lane<const GENERAL: bool>(
     // are the admitted fill's (`fill_window_in_lane`), the kept values the keeping row's.
     let callee_registers = unsafe {
         let passed = r.0.add(usize::from(arguments)).cast_const();
-        let registers = fill_window_in_lane(vm, target, passed, argc.min(target.params));
+        let registers = fill_window_in_lane(vm, target, passed, argc.min(target.body.params));
         quench_runtime::staged::call_keeping::keep_passed(
             &mut quench_runtime::staged::Concrete::pure(), registers.0.add(count).expose_provenance() as u64,
             passed.expose_provenance() as u64, argc,
@@ -1557,5 +1557,5 @@ pub(super) fn activate_keeping_window_in_lane<const GENERAL: bool>(
         vm.lane_stack.values.set_top(registers.0.add(window_size + lane_values::CONTEXT));
         registers
     };
-    Ok(enter_window_in_lane::<GENERAL, false>(cx, r, ip, target, callee_registers, argc, this, false, Some(target.registers)))
+    Ok(enter_window_in_lane::<GENERAL, false>(cx, r, ip, target, callee_registers, argc, this, false, Some(target.body.registers)))
 }

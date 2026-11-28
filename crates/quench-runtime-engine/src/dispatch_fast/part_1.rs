@@ -341,7 +341,7 @@ pub(super) fn activate_getter_in_lane(
     // that leaves as it was.
     materialize_running_leaf_in_lane(cx);
     let vm = unsafe { vm(cx) };
-    if let Some(target) = resolved.or_else(|| script_target_in_lane(cx, getter)).filter(|target| !target.forwards()) {
+    if let Some(target) = resolved.or_else(|| script_target_in_lane(cx, getter)).filter(|target| !target.body.forwards()) {
         // A getter is an ordinary call: the one call row where it is plain, else the kept activation.
         if let Some(entered) = getters::invoke_getter(cx, r, ip, &target, base) {
             return Ok(entered);
@@ -359,7 +359,7 @@ pub(super) fn activate_getter_in_lane(
         .script_call_entry(getter)
         .or_else(|| vm.cross_call_entry(getter))
         .map(|target| unsafe { *target })
-        .filter(|target| target.entry == CallEntry::framed(Framed::Environment) && !constructing_in_lane(vm, getter));
+        .filter(|target| target.body.entry == CallEntry::framed(Framed::Environment) && !constructing_in_lane(vm, getter));
     if let Some(target) = environment {
         let Some(this) = call_this_in_lane(vm, &target, base) else {
             return Err(exit(ip));
@@ -370,7 +370,7 @@ pub(super) fn activate_getter_in_lane(
     let Some(target) = vm
         .cross_call_entry(getter)
         .map(|target| unsafe { *target })
-        .filter(|target| target.entry.activates() && !constructing_in_lane(vm, getter))
+        .filter(|target| target.body.entry.activates() && !constructing_in_lane(vm, getter))
     else {
         #[cfg(feature = "profile-lane-exits")]
         quench_runtime::vm::lane_exits::record_detail(format!(

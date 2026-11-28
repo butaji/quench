@@ -330,7 +330,7 @@ impl EmitFrame<'_> {
     fn callee_identity(&self, stage: &mut Emit<'_, '_>, callee: DirectSite<'_>) -> Option<ir::Value> {
         match callee {
             DirectSite::Owned(owned) if self.rebinds.get() => Some(self.bound_word(stage, owned, std::mem::offset_of!(BoundClosure, callee))),
-            DirectSite::Owned(owned) => Some(stage.constant(owned.callee.to_bits())),
+            DirectSite::Owned(owned) => Some(stage.constant(owned.closure.callee.to_bits())),
             DirectSite::Proven(_) | DirectSite::Indirect { .. } => self.callee_word(stage, callee, std::mem::offset_of!(CalleeRecord, callee)),
         }
     }
