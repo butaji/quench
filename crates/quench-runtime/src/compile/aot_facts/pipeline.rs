@@ -272,6 +272,9 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.readers = Some(field_readers);
         // The unions read the settled readers and cells, so they are built after both settle.
         facts.unions = class_layout::unions_of(program, &settled_flows, &census, &facts);
+        // The `extends` chain and the accessor names `field_holder` reads, settled with the census.
+        facts.parents = census.accessors.parents().clone();
+        facts.accessor_atoms = accessors::names_of(&settled_flows);
         // The cell facts need the union layout, which holds only in a closed world: no class of an open world keeps one. A fixed
         // cell's slots are stable and every construction is direct; a writable cell is also reached by no flag transition.
         let mut fixed = std::collections::BTreeSet::new();
