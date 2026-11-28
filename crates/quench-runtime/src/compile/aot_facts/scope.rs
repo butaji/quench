@@ -113,6 +113,9 @@ pub(super) struct Scope {
     pub(super) object_sites: Vec<Vec<u32>>,
     /// The atom `assign` interns to, if the program names it: `Object.assign` copies its source's keys (`copies`).
     pub(super) assign: Option<u32>,
+    /// The atom `construct` interns to, when the program names `Reflect` and `construct` (`Reflect.construct`): a construction
+    /// it makes may take a new_target other than the constructor (`shapes::direct_constructions_only`).
+    pub(super) reflect_construct: Option<u32>,
 }
 
 impl Scope {
@@ -165,6 +168,7 @@ impl Scope {
             constant_atoms: constant_atoms(program),
             object_sites: program.object_sites.iter().map(|site| site.atoms.iter().copied().collect()).collect(),
             assign: program.atoms.iter().position(|name| name == "assign").map(|atom| atom as u32),
+            reflect_construct: atom_named(program, "Reflect").and_then(|_| atom_named(program, "construct")),
             site_reads: program.field_sites.iter().map(|site| site.sink.is_none().then(|| site.second.map_or(site.first.0, |(atom, _)| atom))).collect(),
             site_paths: program.field_sites.iter().map(|site| site.sink.is_none().then(|| (site.base, site.first.0, site.second.map(|(atom, _)| atom)))).collect(),
             builtins: BUILTINS.iter().filter_map(|builtin| {
