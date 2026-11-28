@@ -784,15 +784,6 @@ impl RecordPlan {
         let held = IcOp::HeldNumber { watch, value };
         Self { ops: [held, held], len: 1, records: 0, other: None, word: true, store: None, nested: None, host: None, entry: None, own: None }
     }
-
-    /// The own field a getter's hint returns (`IcOp::GetterOwn`), over the object records the lane
-    /// bound: the receiver's layout `guard`, the watch on its prototype and the slot `slot`.
-    #[inline(always)]
-    pub(crate) fn getter(guard: u64, watch: u64, slot: u16, records: u64) -> Self {
-        use quench_runtime::staged::ic::IcOp;
-        let read = IcOp::GetterOwn { guard, watch, slot };
-        Self { ops: [read, read], len: 1, records, other: None, word: false, store: None, nested: None, host: None, entry: None, own: None }
-    }
 }
 
 impl RecordPlan {
@@ -3634,10 +3625,6 @@ view_handler! {
         if const { FLAG == crate::dispatch_fast::GEOMETRY_SITE } {
             // A name the view's geometry does not answer (a shadowed or ordinary one): the general read.
             sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
-        }
-        if const { crate::dispatch_fast::getter_site(FLAG) } {
-            // The getter's refresh makes the hint, or reads through the getter's activation.
-            sibling!(crate::dispatch_fast::getters::row_get_field_getter_refresh, r, ip, Carried::script_in(script, view))
         }
         if const { crate::dispatch_fast::inherited_site(FLAG) && !crate::dispatch_fast::inherited_other_site(FLAG) } {
             // A direct object's miss; the read of any other receiver's object part.

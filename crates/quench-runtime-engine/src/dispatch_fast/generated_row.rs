@@ -16,6 +16,11 @@ view_handler! {
         if const { ACC != ACC_NONE && !accumulator_readable(LaneFields::<OP, FLAG>::OPCODE, ACC) } {
             sibling!(generated_row!(OP, ACC_NONE, FLAG), r, ip, view)
         }
+        // A closure read (`CLOSURE_CELL_SITE`) reads its record's `mode` word alone, before the field row's base
+        // asserts, which a closure read's base does not satisfy.
+        if const { FLAG == crate::dispatch_fast::CLOSURE_CELL_SITE } {
+            sibling!(closure_cell_read::<OP, ACC, FLAG>, r, ip, view)
+        }
         // Where a planned named read misses: the own read past its record's hint, which reads
         // through the site's cache and rebinds the hint; a held read, the site's holder entry.
         macro_rules! property_miss { () => {
@@ -246,14 +251,6 @@ view_handler! {
                 } else {
                     quench_runtime::staged::property::FieldPlan::Geometry { atom: i.imm() }
                 }));
-            } else if const { crate::dispatch_fast::getter_site(FLAG) } {
-                // A read that met a getter whose hint returns an own field of the receiver
-                // (`IcOp::GetterOwn`): the hint's operands, where the hint is for the read's name;
-                // else the getter's refresh, which makes the hint.
-                let machine = unsafe { vm(script) };
-                let Some((guard, watch, slot)) = machine.getter_hint_operands(i.call_link.get(), i.imm()) else { property_miss!() };
-                if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
-                frame.plan = Some(RecordPlan::getter(guard, watch, slot, machine.heap_reads().live_object_records() as u64));
             } else if const { FLAG == crate::dispatch_fast::STRING_SITE } {
                 // A string receiver's read through the record's `String.prototype` hint.
                 let machine = unsafe { vm(script) };
@@ -398,6 +395,23 @@ view_handler! {
                 sibling!(const { row_miss::<FLAG>(LaneFields::<OP, FLAG>::OPCODE) }, r, ip, view)
             }
         }
+    }
+}
+
+view_handler! {
+    /// The closure read of a field row (`CLOSURE_CELL_SITE`, chosen by `named_read_row`): the read's value is the one
+    /// closure object the record's `mode` word addresses (the closure cell `derive_lane_view` wrote there). That cell is full
+    /// at every read: the closure's creation edge writes it before any code can reach the closure
+    /// (`ProgramStore::write_closure_cell`), and the read's proven identity (`typed_ir::Identity::Closure`) makes the read's
+    /// value that closure. So the read takes no receiver, walks no prototype and cannot miss.
+    #[inline(never)]
+    pub(crate) fn closure_cell_read<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
+        let script: *mut LaneContext = view.memory.bytes.cast();
+        // SAFETY: the word is the closure cell of the running program, which keeps its cells for its life; the cell is
+        // full (see above).
+        let value = unsafe { *(*(i.mode as *const std::cell::OnceCell<Value>)).get().unwrap_unchecked() };
+        r.set(i.a, value);
+        next!(script, r, following(ip), Carried::script_in(script, view))
     }
 }
 

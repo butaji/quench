@@ -103,8 +103,6 @@ pub(crate) const fn length_site(site: u8) -> bool { site == ARRAY_LENGTH_SITE ||
 
 pub(crate) const fn host_read_site(site: u8) -> bool { site == TYPED_LENGTH_SITE || site == GEOMETRY_SITE }
 
-pub(crate) const fn getter_site(site: u8) -> bool { site == GETTER_THIS || site == GETTER_REGISTER }
-
 /// Whether site `site` is a nested read, `NESTED_SITE` or one of its formed instances.
 pub(crate) const fn nested_site(site: u8) -> bool {
     site == NESTED_SITE || site == NESTED_FLAT_FLAT || site == NESTED_FLAT_INLINE || site == NESTED_INLINE_FLAT
