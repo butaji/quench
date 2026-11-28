@@ -12,9 +12,9 @@
 
 use super::cell::{Object, ProtoLink};
 use super::class_space::{header_class, live_header};
-use super::dictionary_space::DictionaryTable;
-use super::{Heap, layouts};
+use super::Heap;
 use crate::value::Value;
+use crate::value_vec::DictionaryTable;
 
 /// A class cell's view: its header word (the class id in the low half, zero above), its inline fields in
 /// constructor order, the slack fields holding `Value::DELETED`, and the words of its spill run, which follow the
@@ -294,28 +294,21 @@ impl Heap {
     /// The shared view of live class cell `granule`.
     #[inline(always)]
     pub(crate) fn live_cell(&self, granule: u32) -> ObjectRef<'_> {
-        let class = header_class(self.class_space.header(granule));
         let (fields, run) = self.class_space.cell_words(granule, self.live_spill_from(granule));
-        let table = self.class_space.dictionary_of(granule, class);
+        let table = self.cell_dictionary(granule);
         ObjectRef::Cell(CellView { header: self.class_space.cell_header(granule), fields, run, table })
     }
 
     /// The exclusive view of live class cell `granule`, whose header and fields it edits in place. A dictionary
-    /// cell's table is its view's fields (`CellViewMut::table`).
+    /// cell's table is its view's fields (`CellViewMut::table`), in the value arena.
     #[inline(always)]
     pub(crate) fn live_cell_mut(&mut self, granule: u32) -> ObjectMut<'_> {
         let spill = self.live_spill_from(granule);
         let dictionary = self.dictionary_id_of_cell(granule);
-        let (header, fields, run, dictionaries) = self.class_space.cell_parts_mut(granule, spill);
-        let table = dictionary.map(|id| dictionaries.get_mut(id));
+        let properties = &mut self.properties;
+        let (header, fields, run) = self.class_space.cell_parts_mut(granule, spill);
+        let table = dictionary.map(|id| properties.dictionary_mut(id));
         ObjectMut::Cell(CellViewMut { header, fields, run, table })
-    }
-
-    /// The dictionary id of live cell `granule` when its class is dictionary storage (`dictionary_cell`).
-    #[inline(always)]
-    pub(crate) fn dictionary_id_of_cell(&self, granule: u32) -> Option<u32> {
-        let class = header_class(self.class_space.header(granule));
-        layouts::class_is_dictionary(class).then(|| self.class_space.dictionary_id(granule))
     }
 
     /// The value of `slot` on `object`, as `property_get` reads it: a class cell's field, or a record's

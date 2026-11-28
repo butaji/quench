@@ -221,6 +221,9 @@ pub(crate) struct ValueVec {
     auxiliary: u32,
 }
 
+/// The table of a dictionary: each slot index to its stored word (a deleted slot holds `Value::DELETED`).
+pub(crate) type DictionaryTable = FxHashMap<u32, Value>;
+
 /// `ValueVec::start` bits that hold the storage position: an arena offset, a dictionary id,
 /// or one of the empty and inline markers.
 pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK;
@@ -395,7 +398,7 @@ pub(crate) struct ValueArena {
     /// Owners that widened from Int32 to Number (`widen_owner`) and whose int-tagged words the heap
     /// has not rewritten yet (`Heap::rewrite_widened_numbers` drains it, once per observing call).
     int_to_number: Vec<u32>,
-    dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
+    dictionaries: FxHashMap<u32, DictionaryTable>,
     free_dictionaries: Vec<u32>,
     next_dictionary: u32,
     nursery: Nursery,
@@ -981,11 +984,11 @@ impl ValueArena {
         self.values[vector.start() + len] = value;
     }
 
-    /// The storage of an object in dictionary mode whose table is `slots` (slot index to stored word): a dictionary-mode
-    /// class cell's table, which a departure hands to its record (`heap::departure`). The table is the arena's now.
-    pub(crate) fn with_dictionary(&mut self, shape: u32, slots: FxHashMap<u32, Value>) -> ValueVec {
+    /// The storage of an object in dictionary mode whose table is dictionary `id` (`insert_dictionary`). A dictionary-mode
+    /// class cell names the same table by its id, so a departure hands that id to its record (`heap::departure`).
+    pub(crate) fn with_dictionary(shape: u32, id: u32) -> ValueVec {
         let mut vector = ValueVec { start: EMPTY_START, auxiliary: shape };
-        vector.use_dictionary(self.insert_dictionary(slots));
+        vector.use_dictionary(id);
         vector
     }
 
@@ -1423,9 +1426,7 @@ impl ValueArena {
     #[inline(never)]
     fn release_held(&mut self, vector: ValueVec) {
         if vector.is_dictionary() {
-            let id = vector.dictionary_id();
-            self.dictionaries.remove(&id);
-            self.free_dictionaries.push(id);
+            self.release_dictionary(vector.dictionary_id());
             return;
         }
         let capacity = Self::ordered_capacity(vector, self.len(vector));
@@ -1745,7 +1746,10 @@ impl ValueArena {
         )
     }
 
-    fn insert_dictionary(&mut self, slots: FxHashMap<u32, Value>) -> u32 {
+    /// Stores `slots` (slot index to stored word) as a new dictionary table, reusing a released id first, and returns
+    /// its id. The arena is the one dictionary store: a record's dictionary and a dictionary-mode class cell's name
+    /// their tables here.
+    pub(crate) fn insert_dictionary(&mut self, slots: DictionaryTable) -> u32 {
         let id = self.free_dictionaries.pop().unwrap_or_else(|| {
             let id = self.next_dictionary;
             self.next_dictionary = id
@@ -1756,6 +1760,24 @@ impl ValueArena {
         });
         self.dictionaries.insert(id, slots);
         id
+    }
+
+    /// The table of dictionary `id`, which a record or a dictionary-mode class cell names.
+    #[inline(always)]
+    pub(crate) fn dictionary(&self, id: u32) -> &DictionaryTable {
+        self.dictionaries.get(&id).expect("object dictionary exists")
+    }
+
+    /// The table of dictionary `id`, exclusively.
+    #[inline(always)]
+    pub(crate) fn dictionary_mut(&mut self, id: u32) -> &mut DictionaryTable {
+        self.dictionaries.get_mut(&id).expect("object dictionary exists")
+    }
+
+    /// Frees dictionary `id` with its owner: a record's release, or the sweep of a dead dictionary-mode class cell.
+    pub(crate) fn release_dictionary(&mut self, id: u32) {
+        self.dictionaries.remove(&id);
+        self.free_dictionaries.push(id);
     }
 
     /// The free list of a size class (`capacity_class`): `MIN_CAPACITY` and its step first,

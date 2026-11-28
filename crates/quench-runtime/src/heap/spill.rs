@@ -12,12 +12,13 @@
 
 use super::Heap;
 use super::class_space::{ClassSpace, granule, header_class, region_capacity};
-use super::dictionary_space::{DictionarySpace, dictionary_id_of};
+use super::dictionary_cell::dictionary_id_of;
 use super::layouts;
 use super::records::RecordId;
 use crate::staged::field_cache_layout::{field_index_of, is_spilled_slot, spill_from_of};
 use crate::staged::object_encoding::{CLASS_HEADER_BYTES, DEPARTED_CLASS};
 use crate::value::Value;
+use crate::value_vec::ValueArena;
 
 /// The spill arena of the class space: runs of words, and the freed runs by size class.
 #[derive(Default)]
@@ -129,11 +130,11 @@ impl SpillSpace {
 }
 
 /// The disposal of a dead cell region's records (`RecordSpace::sweep_disposing`): a dead cell that spilled frees its
-/// run, and a dead dictionary cell frees its table. The cell's class is read from its header, which still names it, and
-/// `spill_of` says where that class spills. The record is forgotten: a cell's words own nothing else.
-pub(super) fn dispose_dead_runs<'a, T, F: Fn(u32) -> Option<u32>>(
+/// run, and a dead dictionary cell releases its table in the value arena. The cell's class is read from its header, which
+/// still names it, and `spill_of` says where that class spills. The record is forgotten: a cell's words own nothing else.
+pub(super) fn dispose_dead_runs<'a, T, F: Fn(&ValueArena, u32) -> Option<u32>>(
     arena: &'a mut SpillSpace,
-    tables: &'a mut DictionarySpace,
+    values: &'a mut ValueArena,
     base: usize,
     region: u32,
     spill_of: &'a F,
@@ -147,8 +148,8 @@ pub(super) fn dispose_dead_runs<'a, T, F: Fn(u32) -> Option<u32>>(
             if layouts::class_is_dictionary(class) {
                 // SAFETY: a dictionary cell's slot 0 is the one word after its header, the dictionary word.
                 let word = unsafe { *cell.add(1) };
-                drop(tables.take(dictionary_id_of(word)));
-            } else if let Some(from) = spill_of(class) {
+                values.release_dictionary(dictionary_id_of(word));
+            } else if let Some(from) = spill_of(&*values, class) {
                 // SAFETY: the spill word is the cell's field `from`, one word past its header.
                 let word = unsafe { *cell.add(1 + from as usize) };
                 arena.free_run(spill_offset_of(word));
@@ -184,14 +185,14 @@ impl ClassSpace {
         }
     }
 
-    /// The header, the inline and run words of cell `g` under spill slot `spill`, and the dictionary space, all
-    /// exclusively: a split borrow, so a dictionary cell's view can take its table with its words.
-    pub(super) fn cell_parts_mut(&mut self, g: u32, spill: Option<u32>) -> (&mut u64, &mut [Value], &mut [Value], &mut DictionarySpace) {
+    /// The header, the inline and run words of cell `g` under spill slot `spill`, all exclusively: a split borrow of
+    /// the cell and its spill arena.
+    pub(super) fn cell_parts_mut(&mut self, g: u32, spill: Option<u32>) -> (&mut u64, &mut [Value], &mut [Value]) {
         let ptr = self.cell_ptr(g);
         let capacity = region_capacity(g) as usize;
-        let ClassSpace { spill: arena, dictionaries, .. } = self;
-        // SAFETY: the header and the capacity fields lie inside the cell at `ptr`, disjoint from each other; the arena and
-        // the dictionaries are other fields, and `self` is exclusive.
+        let ClassSpace { spill: arena, .. } = self;
+        // SAFETY: the header and the capacity fields lie inside the cell at `ptr`, disjoint from each other; the arena is
+        // another field, and `self` is exclusive.
         let header = unsafe { &mut *ptr };
         let inline = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<Value>().add(1), capacity) };
         let (words, run): (&mut [Value], &mut [Value]) = match spill {
@@ -202,7 +203,7 @@ impl ClassSpace {
                 (words, arena.run_mut(offset))
             }
         };
-        (header, words, run, dictionaries)
+        (header, words, run)
     }
 
     /// The offset of cell `g`'s run, read from its spill word `spill`.
@@ -350,10 +351,12 @@ impl Heap {
     /// The field `slot` of live class cell `granule`, read through its run where it spills.
     #[inline(always)]
     pub(crate) fn class_slot_value(&self, granule: u32, slot: usize) -> Value {
-        let class = header_class(self.class_space.header(granule));
-        match self.class_space.dictionary_of(granule, class) {
+        match self.cell_dictionary(granule) {
             Some(table) => table.get(&(slot as u32)).copied().unwrap_or(Value::DELETED),
-            None => self.class_space.word(granule, layouts::class_spill(class, self.properties.shape_length(layouts::class_shape(class))), slot),
+            None => {
+                let class = header_class(self.class_space.header(granule));
+                self.class_space.word(granule, layouts::class_spill(class, self.properties.shape_length(layouts::class_shape(class))), slot)
+            }
         }
     }
 

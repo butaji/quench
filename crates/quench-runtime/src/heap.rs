@@ -229,7 +229,6 @@ pub use records::RecordBlockRecordsExt;
 mod class_space;
 mod departure;
 mod spill;
-mod dictionary_space;
 mod dictionary_cell;
 #[cfg(test)] mod class_space_tests;
 mod object_view;
@@ -3157,8 +3156,8 @@ impl Heap {
                 });
                 // After the records: a departed cell dies with its record (its stub released in `dispose`), so
                 // the cell regions sweep only the cells whose Value is dead and not released yet.
-                class_space.sweep_cells(full, age, |class| {
-                    layouts::class_spill(class, properties.shape_length(layouts::class_shape(class)))
+                class_space.sweep_cells(&mut *properties, full, age, |values, class| {
+                    layouts::class_spill(class, values.shape_length(layouts::class_shape(class)))
                 });
                 // A function's own properties may take a young run too (`Heap::finished_run_object`):
                 // after one did, its sweep shows its survivors and lists those it keeps.
@@ -4119,8 +4118,7 @@ impl Heap {
             self.gc_profile.marked += 1;
             self.gc_profile.marked_kinds[CellKind::Object as usize] += 1;
         }
-        let spill = self.class_spill_from(class);
-        let (fields, run, table) = self.class_space.marking_parts(granule, class, spill);
+        let (fields, run, table) = self.cell_marking_parts(granule, class);
         Self::cell_children_marking(value, class, fields, run, table, |_, _, _| false, ctx.work, ctx.object_roots, ctx.trace_kind, &mut ctx.last_proto);
         self.notify_ephemerons_marked(value, None, ctx.ephemerons, ctx.work);
     }
@@ -5250,7 +5248,7 @@ impl Heap {
         class: u32,
         fields: &[Value],
         run: &[Value],
-        table: Option<&dictionary_space::DictionaryTable>,
+        table: Option<&crate::value_vec::DictionaryTable>,
         mut mark_leaf: impl FnMut(Value, &mut Vec<Value>, &mut PushedProtos) -> bool,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, bool, &mut Vec<Value>),
