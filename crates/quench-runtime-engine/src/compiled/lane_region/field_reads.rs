@@ -65,6 +65,28 @@ impl Lowering<'_, '_> {
         instructions.iter().enumerate().any(|(pc, instruction)| self.facts.reached(pc) && quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NamedFieldAccess))
     }
 
+    /// Whether the field read `instruction` is keyed by classes alone: every cache site it reads proves only class-keyed loads
+    /// (`NativeFieldLoad::class`), so its plan starts from the live class cell and reads no record (`plan_receiver`).
+    pub(crate) fn class_keyed_read(&self, instruction: WideInstruction) -> bool {
+        let Some((links, _)) = self.field_chain(instruction) else { return false };
+        !links.is_empty() && links.iter().all(|&(_, site)| site_loads(self.fields, site)
+            .is_some_and(|loads| !loads.is_empty() && loads.iter().all(|load| load.class.is_some())))
+    }
+
+    /// Whether the body makes named field reads, and every reached named access is a class-keyed read (`class_keyed_read`).
+    /// Then no receiver's record is read at entry: the class cell is the whole guard of each read.
+    pub(crate) fn class_keyed_reads(&self, instructions: &[WideInstruction]) -> bool {
+        let mut reads = false;
+        for (pc, instruction) in instructions.iter().enumerate() {
+            if !self.facts.reached(pc) || !quench_runtime::staged::meaning::means(instruction, quench_runtime::staged::meaning::Meaning::NamedFieldAccess) { continue; }
+            if !matches!(crate::compiled::decoded(*instruction), Some(quench_runtime::staged::Operation::GetField { .. })) || !self.class_keyed_read(*instruction) {
+                return false;
+            }
+            reads = true;
+        }
+        reads
+    }
+
     /// The entry facts of a body that never looks at the receiver's record: no object, no
     /// shape, no arena.
     pub(crate) fn absent_receiver(&mut self) -> LaneReceiver {

@@ -131,7 +131,7 @@ impl Lowering<'_, '_> {
             let mut record_stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> = smallvec::SmallVec::new();
             for (store, binding) in stores {
                 match receiver {
-                    Some((owner, _)) if self.fixed_class(store, Some(owner)).is_some() => {
+                    Some((owner, _)) if self.writable_class(store, Some(owner)).is_some() => {
                         if let Some(loop_store) = self.fixed_loop_store(state, store, owner) {
                             self.loop_stores.insert(store, loop_store);
                         }

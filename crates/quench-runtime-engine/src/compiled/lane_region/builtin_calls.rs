@@ -233,12 +233,6 @@ impl Lowering<'_, '_> {
         self.builder.use_var(variables.length)
     }
 
-    /// Whether no builtin prototype object has an index property in the closed world (`AotFacts::prototype_indices_empty`),
-    /// an edge fact: a hole then reads undefined, with no run-time check.
-    fn prototype_indices_empty(&self) -> bool {
-        self.vm.facts.is_some_and(|facts| facts.function_facts(self.function_id).prototype_indices_empty())
-    }
-
     /// Continues where the prototypes of `base` hold no index (`LaneHelper::PrototypesHoldNoIndex`): at once where the flag
     /// `checked` is set, else by the helper, which leaves at `exit` where a prototype holds one, and sets the flag.
     fn prototypes_checked(&mut self, base: ir::Value, checked: Variable, exit: ir::Block) {
@@ -278,9 +272,9 @@ impl Lowering<'_, '_> {
                 (view.values, view.length)
             }
         };
-        // The closed world proves the prototypes hold no index (`prototype_indices_empty`): no guard is emitted. Otherwise a
+        // The closed world proves the prototypes hold no index (`holes_read_undefined`): no guard is emitted. Otherwise a
         // loop's entry proved the prototypes once (`hoist_arrays`); an invalidation unsets the flag, and the next search re-checks.
-        if !self.prototype_indices_empty() {
+        if !self.holes_read_undefined() {
             match hoisted.and_then(|hoisted| self.prototype_clear.get(&hoisted.source).copied()) {
                 Some(checked) => self.prototypes_checked(base, checked, exit),
                 None => {

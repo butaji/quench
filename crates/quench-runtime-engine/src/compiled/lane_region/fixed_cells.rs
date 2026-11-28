@@ -91,12 +91,21 @@ impl Lowering<'_, '_> {
         ObjectRecord::prove_fixed(&mut self.builder, bits, class_base)
     }
 
-    /// The fixed class and the union field `atom` of the receiver `owner` at unit PC `pc` (`tag_proofs::fixed_class`).
-    fn fixed_field_of(&self, pc: usize, owner: Option<Register>, atom: Atom) -> Option<FixedSlot> {
-        let class = self.fixed_class(pc, owner)?;
+    /// The union field `atom` of fixed class `class`, with its slot and whether every instance holds it from birth.
+    fn fixed_field_in(&self, class: u32, atom: Atom) -> Option<FixedSlot> {
         let facts = self.vm.facts?;
         let (slot, field) = union_field(facts, class, atom)?;
         Some(FixedSlot { slot, field, stored: facts.field_always_stored(class, atom) })
+    }
+
+    /// The fixed class and the union field `atom` of the receiver `owner` at unit PC `pc`, for a read (`tag_proofs::fixed_class`).
+    fn fixed_field_of(&self, pc: usize, owner: Option<Register>, atom: Atom) -> Option<FixedSlot> {
+        self.fixed_field_in(self.fixed_class(pc, owner)?, atom)
+    }
+
+    /// `fixed_field_of` for a store that addresses the cell in place: the class must be writable (`tag_proofs::writable_class`).
+    fn fixed_store_field_of(&self, pc: usize, owner: Option<Register>, atom: Atom) -> Option<FixedSlot> {
+        self.fixed_field_in(self.writable_class(pc, owner)?, atom)
     }
 
     /// The word the union slot at `address` holds for the access at unit PC `pc`, under the alias region of its field.
@@ -176,7 +185,7 @@ impl Lowering<'_, '_> {
         owner: Option<Register>, exit: ir::Block) -> bool {
         let source = instruction.register_a();
         let atom = instruction.atom_index();
-        let Some(fixed) = self.fixed_field_of(pc, owner, atom) else { return false };
+        let Some(fixed) = self.fixed_store_field_of(pc, owner, atom) else { return false };
         let field = fixed.field;
         if !state.values[usize::from(source)].value.ty.is_subtype(field.cell.ty) { return false; }
         let Some(cell) = self.fixed_cell(state, owner) else { return false };
@@ -201,7 +210,7 @@ impl Lowering<'_, '_> {
     /// barrier. None where the receiver is no fixed class's, the union names no such field, or the slot does not admit the domain.
     pub(crate) fn fixed_loop_store(&mut self, state: &mut State, store: usize, owner: Register) -> Option<LoopStore> {
         let instruction = self.unit.instructions[store];
-        let fixed = self.fixed_field_of(store, Some(owner), instruction.atom_index())?;
+        let fixed = self.fixed_store_field_of(store, Some(owner), instruction.atom_index())?;
         let domain = if super::number_domains::is_double(fixed.field.cell.ty) { Type::NUMBER } else { Type::INT32 };
         if !domain.is_subtype(fixed.field.cell.ty) { return None; }
         let cell = self.fixed_cell(state, Some(owner))?;
