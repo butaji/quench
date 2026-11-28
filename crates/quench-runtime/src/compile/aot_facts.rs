@@ -176,6 +176,9 @@ pub struct AotFacts {
     /// The functions every call of which passes an undefined receiver (`identity::this_undefined`), read by
     /// `FunctionFacts::this_undefined_at_entry`.
     this_undefined: std::collections::BTreeSet<u32>,
+    /// Whether an `Identity::GlobalObject` the settled solve keeps is the realm's global object in every run
+    /// (`identity::global_object_proof`). False where the solve is not closed.
+    global_object_identity: bool,
     /// The atoms no method cache can name (`globals::uncached_atoms`): empty unless the program is closed.
     uncached: std::collections::BTreeSet<u32>,
     /// The global object's own properties the closed world fixes (`globals::GlobalShape`); None unless it is closed.
@@ -220,6 +223,7 @@ impl AotFacts {
             builtins: None,
             closures_once: std::collections::BTreeSet::new(),
             this_undefined: std::collections::BTreeSet::new(),
+            global_object_identity: false,
             uncached: std::collections::BTreeSet::new(),
             global_shape: None,
         }
@@ -242,6 +246,13 @@ impl AotFacts {
     /// closure identity of `function` in execution. False in an open world.
     pub fn closure_identity(&self, function: u32) -> bool {
         self.closures_once.contains(&function)
+    }
+
+    /// Whether the `Identity::GlobalObject` a cell keeps is the realm's global object in every run: the root's `this` of a Script,
+    /// a by-name read of `globalThis`, and a sloppy function's `this` where its calls are plain (`identity::global_object_proof`).
+    /// Its `global` flag is the may-fact the gate reads; this is the must-fact. False in an open world.
+    pub fn global_object_identity(&self) -> bool {
+        self.global_object_identity
     }
 
     /// Whether a self-recursive call of `function`, whose callee is its own closure, runs in the environment of the entry: the

@@ -68,6 +68,9 @@ pub(super) struct Scope {
     module: bool,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
+    /// The atom `globalThis` interns to, if the program names it: the one global name the realm installs as the global
+    /// object itself (`GlobalObject`). `self`, `window` and `global` are not installed, so they carry no such identity.
+    global_this: Option<u32>,
     /// The atoms of the property builtins the program names, with their row of `PROPERTY_BUILTINS`.
     property_adders: Vec<(u32, bool, Descriptors)>,
     /// The atoms of the methods that pass a `this` (`THIS_PASSERS`) the program names.
@@ -138,6 +141,7 @@ impl Scope {
                 .filter(|(_, name)| GLOBAL_OBJECT_NAMES.contains(name))
                 .map(|(atom, _)| atom as u32)
                 .collect(),
+            global_this: program.atoms.iter().position(|name| name == "globalThis").map(|atom| atom as u32),
             property_adders: program
                 .atoms
                 .iter()
@@ -215,6 +219,16 @@ impl Scope {
 
     pub(super) fn is_global_object(&self, atom: u32) -> bool {
         self.global_objects.contains(&atom)
+    }
+
+    /// Whether `atom` is `globalThis`, the global name the realm installs as the global object (`Identity::GlobalObject`).
+    pub(super) fn is_global_this(&self, atom: u32) -> bool {
+        self.global_this == Some(atom)
+    }
+
+    /// The atom `globalThis` interns to, if the program names it.
+    pub(super) fn global_this(&self) -> Option<u32> {
+        self.global_this
     }
 
     /// Whether `atom` names an array method that may change the array it is called on (`ARRAY_MUTATORS`).
