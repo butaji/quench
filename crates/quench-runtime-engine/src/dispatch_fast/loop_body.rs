@@ -93,8 +93,7 @@ pub(crate) fn enter_loop_body(cx: *mut LaneContext, r: Registers, ip: Ip, site: 
     let vm = unsafe { vm(cx) };
     vm.execution_interrupt.clear_tier_up();
     // A declined body is terminal: its dispatch has nothing to plan, run or count.
-    if !crate::compiled::admission::lane_bodies_enrolled(vm) || matches!(*site.body.borrow(), LoopBody::Declined)
-        || !site.is_hot() || site.tier.borrow().is_published() {
+    if matches!(*site.body.borrow(), LoopBody::Declined) || !site.is_hot() || site.tier.borrow().is_published() {
         return None;
     }
     run_loop_body(cx, r, ip, site)
