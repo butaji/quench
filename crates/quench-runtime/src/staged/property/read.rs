@@ -88,6 +88,13 @@ pub fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (o
             run_owned(stage, frame, (owner, !readable), object, ops, (at, records), miss)
         }),
         FieldPlan::Private { atom } => frame.private_field(stage, object, atom, miss),
+        // The receiver is a fixed cell of a proved class: its cell is addressed with no guard. The slot word decodes
+        // inline or spilled (`cell_field`); a hole the class may hold leaves at `miss`.
+        FieldPlan::Fixed { slot, hole } => {
+            let cell = super::super::object::cell_of(stage, object);
+            let slot = stage.constant(u64::from(slot));
+            if hole { super::super::entry::cell_own_field(stage, cell, slot, miss) } else { Some(super::super::entry::cell_field(stage, cell, slot)) }
+        }
     }
 }
 

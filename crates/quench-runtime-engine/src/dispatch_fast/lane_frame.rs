@@ -2659,12 +2659,6 @@ fn row_frame_of<const OP: u16, const ACC: u8, const FLAG: u8>(cx: *mut LaneConte
             alloc: super::wasm_instance::wasm_vector_alloc };
         return LaneFrame::<ACC> { vectors: Some(vectors), ..LaneFrame::<ACC>::new(r, view) };
     }
-    // A `GetField` of a local slot reads the plain local its record names (`plain_local_operand`), which
-    // the row's base is; any other local leaves to the record's miss (`local_field_miss`).
-    if const { FLAG == super::LOCAL_FIELD_SITE } {
-        let local = quench_runtime::bytecode::FieldBase(i.b).local_index().and_then(|slot| super::plain_local_operand(cx, slot));
-        return LaneFrame::<ACC> { local_object: local.map(Value::to_bits), ..LaneFrame::<ACC>::new(r, view) };
-    }
     if !locals {
         return LaneFrame::<ACC>::new(r, view);
     }
@@ -3636,9 +3630,9 @@ view_handler! {
     pub(crate) fn property_miss_row<OP: u16, ACC: u8, FLAG: u8>(cx, r, ip, i, view) {
         let cx: *mut LaneContext = row_context::<OP>(cx);
         let script: *mut LaneContext = view.memory.bytes.cast();
-        // A local's read past its record's hint: the cached read of its site's tier (`local_field_miss`).
-        if const { FLAG == crate::dispatch_fast::LOCAL_FIELD_SITE } {
-            sibling!(crate::dispatch_fast::local_field_miss, r, ip, Carried::script_in(script, view))
+        // A trusted read's miss (a field the class may leave absent): the general read, which keeps the record.
+        if const { crate::dispatch_fast::trusted_site(FLAG) } {
+            sibling!(crate::dispatch_fast::row_get_field_general, r, ip, Carried::script_in(script, view))
         }
         if const { crate::dispatch_fast::general_site(FLAG) } {
             // The general read the host path did not answer: its activation path, as `lane_get_field` made it.

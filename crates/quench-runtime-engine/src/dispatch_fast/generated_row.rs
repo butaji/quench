@@ -81,7 +81,7 @@ view_handler! {
                 } else if const { crate::dispatch_fast::nested_site(FLAG) } {
                     // A nested record's lookup is its site (`set_field_lookup_site`): `b` names the nested base, `c` is zero.
                     std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::NESTED && i.c == 0);
-                } else if const { !crate::dispatch_fast::nested_site(FLAG) && !crate::dispatch_fast::sink_site(FLAG) && FLAG != crate::dispatch_fast::LOCAL_FIELD_SITE } {
+                } else if const { !crate::dispatch_fast::nested_site(FLAG) && !crate::dispatch_fast::sink_site(FLAG) } {
                     // A nested read's base is its site's, not the record's operand; a local's, its slot's.
                     std::hint::assert_unchecked(i.b <= quench_runtime::bytecode::REGISTER_MASK);
                 }
@@ -223,16 +223,7 @@ view_handler! {
                 // The Math call the read's value feeds, computed by the VM's functions (`PropertyFrame::math_call`).
                 frame.math = Some(MathCalls::of(script));
             }
-            if const { FLAG == crate::dispatch_fast::LOCAL_FIELD_SITE } {
-                // A local's read through the own-field hint its record holds (`local_field_handler`): the hint's
-                // layout over the bound object records. An unbound table or hint leaves to the local's miss.
-                let records = unsafe { (*script).binding.object_base } as u64;
-                let hint = i.field_hint();
-                if records == 0 || hint.receiver == quench_runtime::vm::NO_FIELD_RECEIVER {
-                    sibling!(crate::dispatch_fast::local_field_miss, r, ip, Carried::script_in(script, view))
-                }
-                frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
-            } else if const { crate::dispatch_fast::inherited_site(FLAG) } {
+            if const { crate::dispatch_fast::inherited_site(FLAG) } {
                 // A read through the record's inherited hint (`IcOp::Held` over the layout its proof
                 // last answered); at the other site, of any receiver's object part.
                 let machine = unsafe { vm(script) };
@@ -296,6 +287,15 @@ view_handler! {
                 if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
                 let hint = i.field_hint();
                 frame.plan = Some(RecordPlan::own_word(hint.receiver, hint.record_slot(), records));
+            } else if const { crate::dispatch_fast::trusted_site(FLAG) } {
+                // A fixed class's own field at the slot word the load chose (`trusted_named_read`): the cell is read with
+                // no class or layout guard. A field the class may leave absent leaves at the miss (`property_miss_row`).
+                if const { crate::dispatch_fast::own_site_this(FLAG) } { frame.this = r.this(); }
+                let word = unsafe { i.operand.field.shape };
+                frame.plan = Some(RecordPlan::host_read(quench_runtime::staged::property::FieldPlan::Fixed {
+                    slot: word & !crate::dispatch_fast::TRUSTED_HOLE,
+                    hole: word & crate::dispatch_fast::TRUSTED_HOLE != 0,
+                }));
             } else if const { crate::dispatch_fast::cell_own_site(FLAG) } {
                 // A receiver outside the object records (a function) by its layout id; a direct
                 // object, should the site meet one, through the bound records.
