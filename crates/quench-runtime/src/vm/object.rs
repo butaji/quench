@@ -933,7 +933,7 @@ impl Vm {
             };
             if data.has_exotic_access()
                 || data.record_only().is_some_and(|record| record.boxed_primitive().is_some())
-                || data.record_only().is_some_and(|record| record.has_indexed_descriptors())
+                || data.has_indexed_descriptors()
                 || self.shape_has_index_key(data.shape())
                 || self.heap.sparse_length(holder).is_some()
                 || self

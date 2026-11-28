@@ -176,6 +176,14 @@ impl<'a> ObjectRef<'a> {
             ObjectRef::Cell(cell) => cell.extras.is_some_and(|extras| extras.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)),
         }
     }
+    /// Whether the object holds index-keyed descriptors (`Object::has_indexed_descriptors`); a cell's fact is in its extras.
+    #[inline(always)]
+    pub fn has_indexed_descriptors(&self) -> bool {
+        match self {
+            ObjectRef::Record(object) => object.has_indexed_descriptors(),
+            ObjectRef::Cell(cell) => cell.extras.is_some_and(|extras| extras.element_facts().has(ElementFacts::INDEXED_DESCRIPTORS)),
+        }
+    }
     read_methods! {
         layout_id -> u32;
         proto_link -> ProtoLink;
