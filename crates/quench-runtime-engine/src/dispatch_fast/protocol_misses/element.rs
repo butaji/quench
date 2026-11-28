@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// `GetIndex`'s miss (`get_index_miss`).
 pub(crate) const GET_INDEX: u8 = 0;

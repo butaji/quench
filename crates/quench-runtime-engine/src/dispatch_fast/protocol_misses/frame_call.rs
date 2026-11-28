@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The miss body of a record of this family with static parameters `parameters`
 /// (`protocol_row!(OP, ACC, { protocol_family::FRAME_CALL | parameters })`). A memoized script

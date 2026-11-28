@@ -5,6 +5,7 @@ use crate::ext_traits::*;
 use super::*;
 
 pub(crate) use quench_runtime::vm::engine_types::{CallEntry, Framed, Frameless};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 #[quench_macros::ext(CallEntryOps1)]
 impl CallEntry {

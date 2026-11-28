@@ -9,6 +9,7 @@ use crate::ext_traits::*;
 use super::*;
 use crate::compiled::{LANE_CALL_BRANCHED, LANE_CALL_COMPLETED, LANE_CALL_LEFT, LANE_CALL_MISSED};
 use quench_runtime::bytecode::ValueStep;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// A value step's operands: left and right (a unary step's is its operand twice).
 const OPERANDS: usize = 2;

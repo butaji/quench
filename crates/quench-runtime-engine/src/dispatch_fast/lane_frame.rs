@@ -4662,6 +4662,7 @@ pub(crate) fn staged_delete(cx: *mut LaneContext, r: Registers, [destination, ba
 #[path = "lane_frame/fused.rs"]
 pub(crate) mod fused;
 pub(crate) use fused::{chain_row, fused_row, is_window_row};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 #[cfg(feature = "jit")] pub(crate) use fused::{fuse_chains, fuse_rows};
 
 /// The lane context's string-case index for a `StringCaseIndex` row (`case_index_in_lane`): the record's

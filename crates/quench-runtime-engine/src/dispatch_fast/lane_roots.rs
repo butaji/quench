@@ -95,6 +95,7 @@ fn job_start<'a>(code: &'a ResidualProgram, job: JobRoot, window: &JobWindow, (p
 pub(crate) use quench_runtime::vm::engine_types::JobEnd;
 
 pub(crate) use quench_runtime::vm::engine_types::ParkedLane;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 

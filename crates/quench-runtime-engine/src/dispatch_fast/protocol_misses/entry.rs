@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// Parameter codes of the call records (the plain and the forwarding call family).
 /// A call of a target that keeps its activation (`script_call_keeping_miss`).

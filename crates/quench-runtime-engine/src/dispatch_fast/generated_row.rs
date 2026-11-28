@@ -1,3 +1,4 @@
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 #[allow(unused_imports)] use quench_runtime::staged::{OperationOperationExt};
 // The body of `generated_row`, included once per shard module (`lane_frame::generated_rows_*`,
 // `generated_row_handler`): each module is its own codegen unit.

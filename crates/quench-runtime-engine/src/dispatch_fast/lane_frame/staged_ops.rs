@@ -3,6 +3,7 @@
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::*;
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 
 /// `LoadCapture` of the capture at `depth` and `slot` into `destination` (of the root's projected

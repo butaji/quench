@@ -15,6 +15,7 @@ use quench_runtime::vm::field_cache::FieldCacheProbe;
 use super::operand_feedback::{OperandClass, OperandKinds};
 use quench_runtime::bytecode::{Atom, FieldBase, FieldLookup, Operand};
 use quench_runtime::staged::{DecodeContext, Operation};
+#[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;
 
 /// The staged operation the packed helper runs directly, decoded from `instruction`, where it has a direct arm.
 pub(crate) fn direct_operation(instruction: WideInstruction) -> Option<Operation<(), ()>> {
