@@ -152,13 +152,6 @@ fn int_is_word(builder: &mut FunctionBuilder<'_>, int: ir::Value, word: ir::Valu
     stage.raw_compare(Relation::Equal, widened, word)
 }
 
-/// Leaves to `otherwise` unless `condition` holds, which a register's proved type makes certain (`proved`).
-fn guard_unless(builder: &mut FunctionBuilder<'_>, condition: ir::Value, proved: bool, otherwise: ir::Block) {
-    if !proved {
-        emit_js_guard(builder, condition, otherwise);
-    }
-}
-
 /// `register`'s int32 value: by its fact, or by the staged guard of the representation it holds.
 pub(crate) fn register_int_value(builder: &mut FunctionBuilder<'_>, registers: &mut Registers,
     state: &mut State, register: Register, otherwise: ir::Block) -> Int32<ir::Value> {
