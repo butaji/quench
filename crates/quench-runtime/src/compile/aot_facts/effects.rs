@@ -311,6 +311,10 @@ fn value_of(
         if ctx.scope.is_global_object(atom) { word.cell = word.cell.maybe_global(); }
         return word;
     }
+    // A concatenation (a template, a `+` chain) converts each part to a string: it defines a string whatever its parts.
+    if instruction.op() == crate::bytecode::Op::StringConcat {
+        return Word::of(Type::language(crate::ValueType::String));
+    }
     // A closure record decodes under its allocation's proof (`Decoder::Literal`), not as an operation.
     if let Some((_, Allocation::Closure { function })) = Allocation::decode(instruction, &[]) {
         return Word::closure(function);

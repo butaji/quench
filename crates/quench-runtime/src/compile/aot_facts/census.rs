@@ -135,26 +135,37 @@ impl Census {
                 _ => {}
             }
         }
-        let mut member_bases: BTreeMap<u32, Holders> = BTreeMap::new();
-        for &(atom, holders) in flows.iter().flat_map(|flow| &flow.member_bases) {
-            member_bases.entry(atom).and_modify(|joined| *joined = joined.join(holders)).or_insert(holders);
-        }
         let mut census = Self {
             world,
-            wild: flows.iter().fold(Holders::NONE, |wild, flow| wild.join(flow.wild)),
-            member_bases,
+            wild: Holders::NONE,
+            member_bases: BTreeMap::new(),
             members,
             members_on,
             writes,
-            global_wild: flows.iter().any(|flow| flow.global_wild || flow.computed_global),
-            wild_owner: flows.iter().map(|flow| flow.wild_owner).collect(),
+            global_wild: false,
+            wild_owner: Vec::new(),
             phases: BTreeMap::new(),
             accessors: Accessors::default(),
             undominated: BTreeSet::new(),
             classes,
         };
+        census.retype_wild(flows);
         census.accessors = Accessors::of(flows, &census);
         census
+    }
+
+    /// Takes the writes the analysis cannot follow (`wild`) from `flows`: the globals, the frames, the holders of the stores under
+    /// names it cannot list, and each name's holders. A round's typed flows name fewer of them than the untyped ones (a store
+    /// whose key the types prove a Number names no property), so the types' passes read the wild writes of the flows they solve.
+    pub(super) fn retype_wild(&mut self, flows: &[FunctionFlow]) {
+        let mut member_bases: BTreeMap<u32, Holders> = BTreeMap::new();
+        for &(atom, holders) in flows.iter().flat_map(|flow| &flow.member_bases) {
+            member_bases.entry(atom).and_modify(|joined| *joined = joined.join(holders)).or_insert(holders);
+        }
+        self.wild = flows.iter().fold(Holders::NONE, |wild, flow| wild.join(flow.wild));
+        self.member_bases = member_bases;
+        self.global_wild = flows.iter().any(|flow| flow.global_wild || flow.computed_global);
+        self.wild_owner = flows.iter().map(|flow| flow.wild_owner).collect();
     }
 
     /// The closures stored under name `atom` (`members`): the closed set a method call of that name may
