@@ -39,7 +39,7 @@ impl Shadows {
                 Some(class) => { self.classes.insert((class, atom)); }
                 None => { self.names.insert(atom); }
             },
-            (Change::Field(atom), Owner::This(classes) | Owner::Object(classes)) => self.field(classes, atom),
+            (Change::Field(atom), Owner::This(classes) | Owner::Object(classes) | Owner::Host(_, classes)) => self.field(classes, atom),
         }
     }
 

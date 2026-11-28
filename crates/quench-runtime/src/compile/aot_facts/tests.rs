@@ -1135,6 +1135,48 @@ fn a_builtin_member_a_store_writes_is_no_builtin_identity() {
 }
 
 #[test]
+fn a_builtin_member_an_immediate_is_stored_to_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } Math.floor = 1; var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "Math.floor = 1 writes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_deleted_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } delete Math.floor; var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "delete Math.floor removes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_stored_under_a_computed_key_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } var k = 'floor'; Math[k] = function () { return 9; }; var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "Math[k] = v writes Math.floor");
+}
+
+#[test]
+fn a_builtin_member_defined_through_an_alias_is_no_builtin_identity() {
+    let program = program("function f(x) { return Math.floor(x); } var d = Object.defineProperty; d(Math, 'floor', { value: 9 }); var s = f(2.5);");
+    let floor = BuiltinPath { global: atom_of(&program, "Math"), member: Some(atom_of(&program, "floor")) };
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Builtin(floor)), "an aliased defineProperty writes Math.floor");
+}
+
+#[test]
+fn a_constructor_read_by_a_computed_key_leaves_the_world_open() {
+    let program = program("var k = 'constructor'; var F = Object.getPrototypeOf(function () {})[k]; var src = 'Math.floor = 1'; var s = 0; if (s === 1) F(src)();");
+    assert!(world(&program) != World::Closed, "the Function constructor is reached by a computed read of constructor");
+}
+
+#[test]
+fn a_closure_bound_before_its_store_is_no_closure_identity() {
+    let program = program("var h; function call() { return h(); } function g() { return 1; } var out = 0; \
+        for (var i = 0; i < 100; i++) { if (i === 50) h = g; try { out += call(); } catch (e) { out -= 1; } }");
+    let g = function_named(&program, "g") as u32;
+    assert!(!identities_of(&program, &analyze(&program)).contains(&Identity::Closure(g)), "h is undefined until its one store, which dominates no read");
+}
+
+#[test]
 fn a_top_level_function_register_is_its_closure_identity() {
     let program = program("function f(x) { return x; } var g = f; g(1);");
     let f = function_named(&program, "f") as u32;

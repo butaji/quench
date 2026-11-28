@@ -51,6 +51,7 @@ pub(super) struct Record {
     wild_global: bool,
     computed_global: bool,
     global_keyed: bool,
+    reflective_read: bool,
     global_source: bool,
     plain_calls: Vec<Option<u32>>,
     reads_this: bool,
@@ -131,6 +132,7 @@ impl Record {
             wild_global: false,
             computed_global: false,
             global_keyed: false,
+            reflective_read: false,
             global_source: false,
             plain_calls: Vec::new(),
             reads_this: false,
@@ -312,6 +314,7 @@ impl Record {
         self.wild_global |= events.wild_global;
         self.computed_global |= events.computed_store;
         self.global_keyed |= events.global_keyed;
+        self.reflective_read |= events.reflective_read;
         self.global_source |= events.global_source;
         self.wild = self.wild.join(events.wild);
         self.member_bases.extend(events.member_bases);
@@ -423,6 +426,7 @@ impl Record {
             global_wild: self.wild_global,
             computed_global: self.computed_global,
             global_keyed: self.global_keyed,
+            reflective_read: self.reflective_read,
             global_source: self.global_source,
             plain_calls: self.plain_calls,
             reads_this: self.reads_this,

@@ -158,9 +158,17 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
     let none = length_settle::Feedback::default();
     let first = analyze_typed(&std::collections::BTreeMap::new(), &std::collections::BTreeSet::new(), None, &none);
     let accessor_names = accessors::names_of(&first);
-    let resolved = Census::of(&first, world, classes.clone()).singles();
+    // A binding one of whose closure stores no root store dominates is no single closure (`frozen::undominated_closures`): its
+    // closure's identity is no proof either. The first pass's census names the callees the dominance check follows.
+    let first_census = Census::of(&first, world, classes.clone());
+    let first_facts = AotFacts::unsolved(world);
+    let first_escapes = escapes::escapes(&first, &first_facts, &first_census, &scope);
+    let (undominated, undominated_bodies) = frozen::undominated_closures(program, &first, &first_facts, &first_census, &first_escapes);
+    let mut resolved = first_census.singles();
+    resolved.retain(|key, _| !undominated.contains(key));
     let flows = analyze_typed(&resolved, &accessor_names, None, &none);
     let mut census = Census::of(&flows, world, classes.clone());
+    census.undominated = undominated;
     census.phases = phase::folds(program, &flows, &census);
     let mut facts = AotFacts::unsolved(world);
     for (id, flow) in flows.iter().enumerate() {
@@ -318,8 +326,9 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         // The frozen facts read the settled call graph and the settled flows, so they are solved after the calls settle.
         facts.root_stores = frozen::root_stores(program, world, &settled_flows, &facts, &census, &open_escapes);
         // The identity facts are read from the settled solve, and hold only in the closed world (`identity`).
-        facts.builtins = identity::builtin_proofs(program, world, &settled_flows);
+        facts.builtins = identity::builtin_proofs(program, world, &settled_flows, &scope);
         facts.closures_once = identity::closures_once(program, world);
+        facts.closures_once.retain(|body| !undominated_bodies.contains(body));
         // The receivers the global object is proven for are read off the calls alone, so they are settled before the cells.
         let this_undefined = identity::this_undefined(program, world, &settled_flows, &facts, &census, &open_escapes);
         facts.global_object_identity = identity::global_object_proof(program, &settled_flows, &facts, &census, &scope, &this_undefined);

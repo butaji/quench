@@ -68,6 +68,9 @@ pub(super) struct FunctionFlow {
     /// Whether an instruction keys an access into a value that may be the global object (`effects::keyed_global`): a
     /// computed access the closed world's call graph cannot see through.
     pub(super) global_keyed: bool,
+    /// Whether an instruction reads `constructor`, or a computed key that may name it, off a value that may be a function or a
+    /// prototype object (`effects::reflective_read`): the `Function` constructor, which compiles code the closed world does not see.
+    pub(super) reflective_read: bool,
     /// Whether the function may make the global object reachable as a value (`Events::global_source`, sloppy plain calls,
     /// `call`/`apply`/`bind`). The proofs of a program with no such source keep the global object unreached.
     pub(super) global_source: bool,

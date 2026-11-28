@@ -104,6 +104,8 @@ pub(super) struct Census {
     pub(super) phases: BTreeMap<(u32, bool, u32), Fold>,
     /// The accessors the program defines and what may shadow them (`accessors::Accessors`).
     pub(super) accessors: Accessors,
+    /// The bindings whose closure a read may see before its store (`frozen::undominated_closures`): `single` resolves none of them.
+    pub(super) undominated: BTreeSet<Key>,
     /// The class ids of the program's constructors (`class_ids::ClassIds`): a binding's prototype owner is its class.
     pub(super) classes: ClassIds,
 }
@@ -147,6 +149,7 @@ impl Census {
             wild_owner: flows.iter().map(|flow| flow.wild_owner).collect(),
             phases: BTreeMap::new(),
             accessors: Accessors::default(),
+            undominated: BTreeSet::new(),
             classes,
         };
         census.accessors = Accessors::of(flows, &census);
@@ -226,7 +229,7 @@ impl Census {
     fn single(&self, key: Key) -> Option<u32> {
         if matches!(key, Key::MemberOn { .. } | Key::MemberAny(_) | Key::Return(_) | Key::Element(_)) { return None; }
         match self.writes.get(&key) {
-            Some(&(1, fact)) if !self.wild(key) => fact.cell.ty.body_index(),
+            Some(&(1, fact)) if !self.wild(key) && !self.undominated.contains(&key) => fact.cell.ty.body_index(),
             _ => None,
         }
     }
