@@ -34,7 +34,7 @@ pub(crate) fn view_in_lane<'a>(vm: &Vm, program: ProgramId, function: u32, code:
         crate::compiled::admission::record_plan(loop_regions && quench_runtime::vm::tier_policy::tiers_run(vm.execution_mode, vm.memory_policy(), crate::compiled::admission::Tier::ANY)),
         facts.as_deref(), planned);
     // Where an image's bodies are the only code, the lane takes on every record they leave at.
-    if image && !vm.execution_mode.allows_dynamic_execution() { view.admit_every_record(); }
+    if image && !quench_runtime::vm::tier_policy::interprets_unimaged(vm.execution_mode) { view.admit_every_record(); }
     view
 }
 

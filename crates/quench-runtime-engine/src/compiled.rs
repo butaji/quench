@@ -6674,8 +6674,8 @@ impl Vm {
         self.execution_mode = mode;
         self.lane_tiers_run = None;
         #[cfg(feature = "jit")]
-        crate::regexp_native::enable(mode != ExecutionMode::Interpreted);
-        self.set_narrow_runs(mode == ExecutionMode::Interpreted);
+        crate::regexp_native::enable(quench_runtime::vm::tier_policy::regexp_runs_native(mode));
+        self.set_narrow_runs(quench_runtime::vm::tier_policy::runs_narrow(mode));
     }
 
     /// Lets hot functions reach lane bodies by the tier gate (`Runtime` runs for speed).
@@ -6906,7 +6906,7 @@ impl Vm {
     /// An execution-only build (no `jit`) compiles no function at an entry.
     #[cfg(feature = "jit")]
     fn js_tier_frame_entry_compiled(&mut self, program: &ResidualProgram, frame: usize) -> Option<usize> {
-        if self.execution_mode != ExecutionMode::Compiled {
+        if !quench_runtime::vm::tier_policy::compiles_at_entry(self.execution_mode) {
             return None;
         }
         if self.frames[frame].js_jit_skip_entry_once {
@@ -7546,7 +7546,7 @@ impl Vm {
     /// it, and the interpreter runs the call.
     #[inline(always)]
     fn offer_compiled_in(&mut self, program: ProgramId, env: Value, id: u32) -> Option<Rc<CompiledProgram>> {
-        if self.execution_mode != ExecutionMode::Compiled {
+        if !quench_runtime::vm::tier_policy::wasm_runs_native(self.execution_mode) {
             return None;
         }
         let mut tiers = GeneralTiers { vm: self, program, env };
