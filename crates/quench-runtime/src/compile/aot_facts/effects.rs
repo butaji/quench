@@ -204,10 +204,10 @@ pub(super) fn is_global_load(instruction: WideInstruction) -> bool {
 }
 
 /// The fact of the root's `this`: the global object in a Script (sloppy top-level code), `undefined` in a Module, whose
-/// code is strict.
+/// code is strict. A Script's `this` is the realm's global object in every run, so its identity is proven by construction.
 pub(super) fn root_this(ctx: &Ctx<'_>) -> Word {
     let cell = if ctx.scope.root_this_is_global() {
-        Cell::of(Type::language(crate::ValueType::Object)).maybe_global()
+        Cell { identity: Identity::GlobalObject, ..Cell::of(Type::language(crate::ValueType::Object)).maybe_global() }
     } else {
         Cell::of(Type::language(crate::ValueType::Undefined))
     };
@@ -293,9 +293,11 @@ fn value_of(
         events.global_source |= ctx.scope.is_global_object(atom);
         let mut word = resolved(ctx, Key::Global(atom));
         // A name the program binds to no closure reads the realm's builtin of that name, joined with what its stores put there;
-        // a name the program writes is demoted by the closed world's proof (`identity::proven`).
+        // a name the program writes is demoted by the closed world's proof (`identity::proven`). `globalThis` is the realm's
+        // global object itself, not a builtin: it reads `GlobalObject`, which the same proof demotes once the program writes it.
         if !ctx.resolved.contains_key(&Key::Global(atom)) {
-            word.cell.identity = Identity::Builtin(BuiltinPath { global: atom, member: None }).join(word.cell.identity);
+            let installed = if ctx.scope.is_global_this(atom) { Identity::GlobalObject } else { Identity::Builtin(BuiltinPath { global: atom, member: None }) };
+            word.cell.identity = installed.join(word.cell.identity);
         }
         // A global-object name (`globalThis`, `window`, ...) reads the global object itself.
         if ctx.scope.is_global_object(atom) { word.cell = word.cell.maybe_global(); }

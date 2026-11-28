@@ -15,8 +15,8 @@
 //!   (`Object.assign`, an extend helper) reads the keys and values of. Kept apart from `classes`: a literal
 //!   is no constructed class's instance, so its site is not a class id;
 //! - `identity`: which one object the value is, where the solve proves it (`Identity`): a builtin the
-//!   closed world never changes, or a closure of a body made once per run. A callee whose identity is
-//!   proven needs no compare in execution.
+//!   closed world never changes, the realm's global object, or a closure of a body made once per run. A
+//!   callee or a base whose identity is proven needs no compare in execution.
 //!
 //! Representation is derived from the cell (`Cell::representation`), never stored. A store and a read
 //! form a Galois connection: a slot's cell is the join of every stored cell (α), and a read takes the
@@ -401,16 +401,23 @@ pub struct BuiltinPath {
     pub member: Option<u32>,
 }
 
-/// Which one object a value is: a flat lattice. `Never` holds no object (a primitive, or nothing yet); `Builtin` and
-/// `Closure` are the proven identities, and `Many` is any other object or none known.
+/// Which one object a value is: a flat lattice. `Never` holds no object (a primitive, or nothing yet); `Builtin`,
+/// `GlobalObject` and `Closure` are the proven identities, and `Many` is any other object or none known.
 ///
-/// Proven: where the settled solve keeps a `Builtin(p)` or `Closure(b)` in a cell, the value is that builtin / that body's one
-/// closure object in every run (`AotFacts::builtin_identity`, `AotFacts::closure_identity`); every other identity the solve
-/// proposed is demoted to `Many` after the solve (`identity::proven`). The lane drops its callee compare on the proof.
+/// Proven: where the settled solve keeps a `Builtin(p)`, `GlobalObject` or `Closure(b)` in a cell, the value is that builtin /
+/// the realm's global object / that body's one closure object in every run (`AotFacts::builtin_identity`,
+/// `AotFacts::global_object_identity`, `AotFacts::closure_identity`); every other identity the solve proposed is demoted to
+/// `Many` after the solve (`identity::proven`). The lane drops its callee or base compare on the proof.
+///
+/// `GlobalObject` implies the cell's `global` flag (the may-fact the closed world's gate reads). The flag is kept as it is:
+/// `global` says the value may be the global object, `GlobalObject` says it is, in every run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Identity {
     Never,
     Builtin(BuiltinPath),
+    /// The realm's global object, in every run: the root's `this` of a Script, the value of a by-name read of `globalThis`,
+    /// or a sloppy function's `this` where every call binds it to the global object (a plain call).
+    GlobalObject,
     /// The one closure object of body `0`, made once per run. Derived from the body a function type carries (`Type::body_index`).
     Closure(u32),
     Many,

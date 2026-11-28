@@ -130,9 +130,12 @@ impl Types {
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
                 for target in targets(id as u32, call, facts, census) {
-                    // A plain call binds a sloppy callee's `this` to the global object; a strict callee's `this` is `undefined`.
+                    // A plain call binds a sloppy callee's `this` to the global object; a strict callee's `this` is `undefined`. The
+                    // global object is the value of that `this` in every run, so its identity is `GlobalObject`, which the closed
+                    // world proves only where every such callee's calls are plain (`identity::global_object_proof`).
                     let plain_call = call.plain && sloppy(flows, target);
-                    let receiver = Cell { ty: receiver_type(call), global: call.receiver.cell.global || plain_call, ..call.receiver.cell };
+                    let identity = if plain_call { Identity::GlobalObject } else { call.receiver.cell.identity };
+                    let receiver = Cell { ty: receiver_type(call), global: call.receiver.cell.global || plain_call, identity, ..call.receiver.cell };
                     let joined = types.receivers.entry(target).or_insert(Cell::NEVER);
                     *joined = joined.join(receiver);
                 }

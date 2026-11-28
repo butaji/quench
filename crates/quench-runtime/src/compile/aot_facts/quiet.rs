@@ -198,4 +198,13 @@ impl Proofs {
     pub(super) fn global_object_fixed(&self) -> bool {
         !self.wild && !self.global_wild && !(self.computed && self.global_source) && !self.defined
     }
+
+    /// Whether the global object keeps the binding of `global` (`globalThis`, if the program names it) as the realm installed it:
+    /// the program never writes that name, and no store, define or delete it makes reaches a name it cannot follow
+    /// (`wild`, `defined`, a computed store into a global object that is a value). Unlike `global_object_fixed` it does not
+    /// count a read of the global object as a value (`global_wild` with no `wild`): that read changes no binding. Every
+    /// `global_wild` source the analysis records beside `wild` (a name operation, a capture) also sets `wild`.
+    pub(super) fn global_object_identity_fixed(&self, global: Option<u32>) -> bool {
+        !self.wild && !self.defined && !(self.computed && self.global_source) && global.is_none_or(|atom| !self.written.contains(&atom))
+    }
 }
