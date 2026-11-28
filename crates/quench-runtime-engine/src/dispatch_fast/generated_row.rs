@@ -219,7 +219,6 @@ view_handler! {
                 if const { !quench_runtime::staged::row_writes_result(LaneFields::<OP, FLAG>::OPCODE) } {
                     r.set(i.a, Value::from_bits(value));
                 }
-// merge: the store-then-move pair (`element_move_site`) has no site constant in this design; its branch is dropped.
                 if const { row_produces(LaneFields::<OP, FLAG>::OPCODE) } {
                     next!(cx, r, following(ip), Carried { acc: Slot::of(Value::from_bits(value)), ..view })
                 }

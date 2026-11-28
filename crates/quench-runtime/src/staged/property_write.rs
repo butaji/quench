@@ -8,7 +8,7 @@ use super::property::{base_word, guard_receiver_shape, Owner, PlanSource, Proper
 use super::store::{admit_named, own_store, own_store_proved, slot_holds, uncallable};
 use super::{Stage, StagedRecordSpace};
 use crate::bytecode::{FieldBase, Register};
-use crate::typed_ir::{Representation, Type};
+use crate::typed_ir::Type;
 
 /// `base.atom = value` through cache site `site`: the stored word, or a leave at `miss`.
 /// `base` is a register, or the bound `this` for `None`; the `value` register is read tagged,

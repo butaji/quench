@@ -2640,7 +2640,7 @@ const FIELD_LEAF_READ: u16 = {
 /// the kind its site fixes (`LaneFrame::kept_view`) and reads or stores the element inline with
 /// no dispatch on the kind; a miss takes the host path (`row_index_read_miss`, `row_index_write`).
 const TYPED_KIND_SITES: [u8; quench_runtime::staged::typed_elements::NATIVE_KINDS] = {
-    const FORMS: [usize; quench_runtime::staged::typed_elements::NATIVE_KINDS] = [26, 27, 28, 29, 51, 52, 53, 54, 55];
+    const FORMS: [usize; quench_runtime::staged::typed_elements::NATIVE_KINDS] = [29, 30, 31, 32, 33, 34, 35, 36, 37];
     let mut sites = [0; quench_runtime::staged::typed_elements::NATIVE_KINDS];
     let mut index = 0;
     while index < FORMS.len() {

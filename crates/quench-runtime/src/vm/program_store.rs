@@ -618,10 +618,6 @@ pub struct ProgramStore {
     /// Whether the lane prologue specializes a declined function into a frameless lane
     /// body (`Vm::compile_lane_method`).
     js_jit_lane_methods_enabled: bool,
-    /// The warming-entry clock a lane body's `recurrent` reads: one tick per entry a warming
-    /// body counts, program-wide. A plain cell of the store the lane already reaches, where a
-    /// thread-local read costs a `tlv_get_addr` call on every entry.
-    warming_ticks: std::cell::Cell<u32>,
     #[cfg(any(test, feature = "test-support"))]
     js_entry_specializations_enabled: bool,
     js_jit_dataview_float64_get_entries: u64,
@@ -663,7 +659,6 @@ impl Default for ProgramStore {
             // guarded exits can be tested independently of profitability (diagnostic only).
             js_jit_diagnostics: (crate::trace::Channel::JsJit.on() || crate::trace::Channel::Census.on()).then(FxHashMap::default),
             js_jit_lane_methods_enabled: false,
-            warming_ticks: std::cell::Cell::new(0),
             #[cfg(any(test, feature = "test-support"))]
             js_entry_specializations_enabled: true,
             js_jit_dataview_float64_get_entries: 0,
@@ -1892,15 +1887,6 @@ impl ProgramStore {
 
     pub fn js_jit_lane_methods_enabled(&self) -> bool {
         self.js_jit_lane_methods_enabled
-    }
-
-    /// Takes the next warming-entry tick (`body_tier_in_lane`): one per entry a warming body
-    /// counts, which a function entered rarely but for long reads to specialize early.
-    #[inline]
-    pub(super) fn warming_tick(&self) -> u32 {
-        let tick = self.warming_ticks.get().wrapping_add(1);
-        self.warming_ticks.set(tick);
-        tick
     }
 
     #[inline]

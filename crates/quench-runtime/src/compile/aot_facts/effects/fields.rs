@@ -94,7 +94,7 @@ pub(super) fn prototype_base(classes: &super::super::class_ids::ClassIds, base: 
     // A binding, or a named property read off some object (`Origin::Member`, `Key::Member`): the census resolves the key to the
     // one closure it holds (`single`), so a `Flog.Class` read the same way as a global one is a class too.
     match base.origin? {
-        Origin::Binding(key) | Origin::Member(_) => base.origin?.key().map(PrototypeBase::Binding),
+        Origin::Binding(_) | Origin::Member(_) => base.origin?.key().map(PrototypeBase::Binding),
         _ => None,
     }
 }

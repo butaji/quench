@@ -8,7 +8,7 @@ mod strings;
 pub(super) use self::fields::{base_fact, field_owner, this_fact, this_member};
 #[allow(unused_imports)]
 use crate::staged::AllocationAllocationExt;
-use self::fields::{base_fact, member_identity, member_stores, member_type, named_word, prototype_base};
+use self::fields::{member_identity, member_stores, member_type, named_word, prototype_base};
 use self::strings::{string_call, string_length};
 use super::scope::Scope;
 use super::value::{Accessor, Word, Key, Origin};
