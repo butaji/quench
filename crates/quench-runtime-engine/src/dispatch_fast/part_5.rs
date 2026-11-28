@@ -1299,8 +1299,8 @@ pub(crate) fn fuse_target_backedges(records: &mut [LaneInstruction], osr_loop: b
 /// (`MATH_CALL_SITE`, `MATH_CALL2_SITE`, `MATH_CALL2_CONST_SITE`), which runs the read and the call past it
 /// (`math_row_resume`). The shape is the bytecode's: the read of a callee register, the copies of one or two
 /// arguments into the call's window, then the `Call` of that register. The callee's identity decides it: the
-/// solve proves the callee register holds the builtin `Math.x` (`Identity::Builtin`, confirmed by
-/// `AotFacts::builtin_identity`), where `x` is a Math function a Math row runs. Without that fact no record changes.
+/// solve proves the callee register holds the builtin `Math.x` (`Identity::Builtin`, which the solve keeps only where
+/// proven, `identity::proven`), where `x` is a Math function a Math row runs. Without that fact no record changes.
 /// A record the row declines takes the generic step in place.
 fn fuse_math_calls(facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, vm: &quench_runtime::vm::Vm,
     decoded: &[WideInstruction], records: &mut [LaneInstruction]) {
@@ -1314,7 +1314,7 @@ fn fuse_math_calls(facts: &quench_runtime::compile::aot_facts::AotFacts, functio
     // the solve's identity of the callee register, which the closed world proves in every run.
     let math_callee = |call_pc: usize, callee: u16, member: u32| -> bool {
         let Some(Identity::Builtin(path)) = function.cell_at(call_pc as u32, callee).map(|cell| cell.identity) else { return false };
-        let is_math = path.member == Some(member) && vm.atom_name(path.global) == "Math" && facts.builtin_identity(path);
+        let is_math = path.member == Some(member) && vm.atom_name(path.global) == "Math";
         is_math && quench_runtime::vm::native_rows::math_function(vm.atom_name(member))
             .is_some_and(|native| super::native_calls::math_handler(native).is_some())
     };
