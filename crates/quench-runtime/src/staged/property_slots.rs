@@ -66,15 +66,3 @@ pub fn word_formed_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
     frame.keep_layout(owner, object, (shape, shaped.fact()), layout);
     Some(read_slot_value(stage, layout, slot, rep))
 }
-
-/// Continues where `owner`'s object is the ahead image's construction `id` (`ic::SYMBOLIC_SHAPE`,
-/// `ImageWord::Layout`, the class id the loader resolves): a class cell of that class. A proof the frame
-/// holds emits nothing; else the cell's class is compared once with the id, and the proof is kept under `id`.
-#[inline(always)]
-pub fn guard_receiver_layout<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
-    at: &Reached<S::Word, S::Cond>, id: u32, miss: S::Miss) -> Option<super::super::Shaped<S::Word>> {
-    if let Some((proven, fact)) = frame.proven_shape(stage, owner) && proven == id { return Some(super::super::Shaped::by_fact(at.record, fact)); }
-    let shaped = ic::guard_image_class(stage, at, id & !ic::SYMBOLIC_SHAPE, miss)?;
-    frame.prove_shape(stage, owner, (id, shaped), direct);
-    Some(shaped)
-}

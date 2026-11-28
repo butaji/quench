@@ -186,17 +186,10 @@ fn class_dispatch<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (
 fn shape_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, object): (Owner, S::Word),
     arms: &[StoreArm], value: (S::Word, Type), named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
     if arms.is_empty() { return None; }
+    // An ahead image's construction is a class cell: its arm reads the cell, not a record (`image_arm_store`).
+    if let [arm] = arms && arm.image { return image_arm_store(stage, object, *arm, value, named, miss); }
     let at = frame.receiver_record(stage, owner, object, false, miss)?;
     match arms {
-        // An ahead image's layout arm: the record's own word proves the shape and the plain arena
-        // run, so the store writes the run with no form test.
-        [arm] if arm.layout => {
-            super::property::guard_receiver_layout(stage, frame, (owner, true), &at, arm.shape, miss)?;
-            if let Some(base) = kept_flat(frame, owner, object, *arm) {
-                return tagged_through_layout(stage, (base, object), *arm, value, named, miss);
-            }
-            arm_store_flat(stage, (at.record, object), *arm, value, named, miss)
-        }
         [arm] => {
             guard_receiver_shape(stage, frame, (owner, true), &at, arm.shape, miss)?;
             if let Some(base) = kept_flat(frame, owner, object, *arm) {
@@ -266,25 +259,6 @@ fn arm_switch<S: Stage>(stage: &mut S, (at, object): (&Reached<S::Word, S::Cond>
         #[inline(always)] |stage| arm_switch(stage, (at, object), rest, value, named, miss).map(|()| stage.constant(0))).map(drop)
 }
 
-/// `arm_store` of a tagged arm whose layout the caller proved a plain arena run (`StoreArm::layout`):
-/// the arm's type test, the method-cache admission and the gate, then the word into the run.
-#[inline(always)]
-fn arm_store_flat<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm: StoreArm,
-    (value, fact): (S::Word, Type), named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
-    let fact = match arm.holds {
-        Some(holds) => {
-            let held = slot_holds(stage, value, holds);
-            stage.guard(held, miss)?;
-            holds
-        }
-        None => fact,
-    };
-    let (value, fact) = super::slot_store::class_word(stage, (value, fact), arm.class);
-    admit_named(stage, named, (record, arm.slot), value, miss)?;
-    let id = super::value::direct_object_id(stage, object);
-    super::store::own_store_flat_proved(stage, record, id, arm.slot, (value, fact), miss)
-}
-
 /// The store through one arm into `record` (the record of `object`), whose shape the caller
 /// proved. A value the slot's type may not hold must be of the arm's `holds` type, else it
 /// leaves at `miss` for the VM, which joins the slot's type; the shared own store then runs
@@ -315,6 +289,34 @@ fn class_arm_store<S: Stage>(stage: &mut S, object: S::Word, arm: StoreArm, (val
     named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
     let key = stage.constant(u64::from(arm.shape));
     let (granule, cell) = super::entry::class_key_cell(stage, object, key, miss)?;
+    let slot = stage.constant(u64::from(arm.slot));
+    if let Some(named) = named {
+        let old = super::entry::cell_field(stage, cell, slot);
+        let (fresh, kept) = (uncallable(stage, value), uncallable(stage, old));
+        let quiet = stage.all(fresh, kept);
+        let admitted = stage.any(named, quiet);
+        stage.guard(admitted, miss)?;
+    }
+    let open = stage.store_gate(StagedRecordSpace::Class, granule, value);
+    stage.guard(open, miss)?;
+    super::entry::class_store(stage, cell, slot, value);
+    Some(())
+}
+
+/// The store of `value` into the field `arm` names of an ahead image's construction, where `object` is a live class cell
+/// of the class the loader resolves for the arm's key (`ImageWord::Layout`): one compare of the cell's class word proves
+/// the class, its shape and its link. The admission and gate are `class_arm_store`'s; a miss leaves.
+#[inline(always)]
+fn image_arm_store<S: Stage>(stage: &mut S, object: S::Word, arm: StoreArm, (value, _fact): (S::Word, Type),
+    named: Option<S::Cond>, miss: S::Miss) -> Option<()> {
+    let direct = super::value::is_direct_object(stage, object);
+    stage.guard(direct, miss)?;
+    let granule = super::value::direct_object_id(stage, object);
+    let cell = super::object::cell_at_granule(stage, granule);
+    let loaded = super::object::cell_class(stage, cell);
+    let class = stage.image_word(super::stage::ImageWord::Layout, arm.shape);
+    let same = stage.eq_imm(loaded, class);
+    stage.guard(same, miss)?;
     let slot = stage.constant(u64::from(arm.slot));
     if let Some(named) = named {
         let old = super::entry::cell_field(stage, cell, slot);
