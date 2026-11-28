@@ -58,8 +58,9 @@ view_handler! {
                 } else if const { crate::dispatch_fast::nested_trusted_site(FLAG) } {
                     // A trusted nested read's record names the nested base; its site names the first hop's base.
                     std::hint::assert_unchecked(i.b == quench_runtime::bytecode::FieldBase::NESTED);
-                } else if const { !crate::dispatch_fast::sink_site(FLAG) } {
-                    // A read's base is its site's, not the record's operand; a local's, its slot's.
+                } else if const { !crate::dispatch_fast::sink_site(FLAG) && !crate::dispatch_fast::trusted_local_site(FLAG) } {
+                    // A read's base is its site's, not the record's operand; a local's, its slot's. A trusted local read's
+                    // base is its slot's flagged local base (`FieldBase::local`), which no register bound holds.
                     std::hint::assert_unchecked(i.b <= quench_runtime::bytecode::REGISTER_MASK);
                 }
             }
