@@ -974,7 +974,7 @@ struct FieldAddCache {
 }
 // Keep the entry compact: a monomorphic add site's set is its first entry, a length and a box.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(size_of::<FieldAddCache>() == 48);
+const _: () = assert!(size_of::<FieldAddCache>() == 56);
 /// The prototype shapes a cached add must find again (`Vm::add_prototype_guard`), nearest
 /// first, before an entry interns them as its chain.
 #[derive(Clone, Copy)]

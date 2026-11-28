@@ -160,7 +160,7 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
         };
     }
     match load.holder {
-        None => vec![IcOp::LoadSlot { slot: load.slot,
+        None => vec![IcOp::LoadSlot { slot: load.record_slot(),
             form: formed.map_or_else(|| Form::of(load.storage, load.storage_len), quench_runtime::staged::ic::form_of_layout),
             storage_len: load.storage_len, rep: Representation::Tagged }],
         Some(_) if !pairs.is_empty() => vec![IcOp::PrototypeConstants(pairs)],
@@ -175,7 +175,7 @@ fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<
                 Some(id) => IcOp::GuardLayout(id),
                 None => IcOp::GuardShape(holder),
             };
-            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.slot)]
+            vec![IcOp::Prototype, guard, IcOp::LoadPrototypeSlot(load.record_slot())]
         }
     }
 }

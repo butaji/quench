@@ -2020,7 +2020,7 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         let stores = self.stores?;
         let object = Value::from_bits(object);
         if object.is_deleted() { return None; }
-        let hint = quench_runtime::vm::FieldCache::own(hint.0, hint.1);
+        let hint = quench_runtime::vm::FieldCache::own(hint.0, u32::from(hint.1));
         (stores.hinted)(stores.context, object, atom, Value::from_bits(value), hint, narrow).then_some(())
     }
 
@@ -2033,7 +2033,7 @@ impl<const ACC: u8> quench_runtime::staged::PropertyFrame<Concrete> for LaneFram
         let object = Value::from_bits(object);
         if object.is_deleted() { return None; }
         let value = Value::from_bits(value);
-        let hint = quench_runtime::vm::FieldCache::own(hint.0, hint.1);
+        let hint = quench_runtime::vm::FieldCache::own(hint.0, u32::from(hint.1));
         if (stores.hinted_own)(stores.context, object, atom, value, hint) { return Some(()); }
         if let Some(own) = (stores.polymorphic)(stores.context, object, atom, site, value) {
             self.stored = Some(own);

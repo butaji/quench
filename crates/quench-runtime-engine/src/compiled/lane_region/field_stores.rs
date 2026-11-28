@@ -237,7 +237,7 @@ impl Lowering<'_, '_> {
             let shapes = loads.iter().filter(|load| !load.image_layout() || image_alone)
                 .filter_map(|load| if load.image_layout() {
                         Some(StoreArm::of_image(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE, load.slot))
-                    } else { StoreArm::of((load.shape, load.slot), load.ty, ty) })
+                    } else { StoreArm::of((load.shape, load.record_slot()), load.ty, ty) })
                 // An arm whose test no value of `ty` passes would take its shape's store and miss: a
                 // shape the image guessed once per stored class (`ahead_images::fields`) keeps the
                 // class the value may be.

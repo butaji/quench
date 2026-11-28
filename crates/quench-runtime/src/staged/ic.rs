@@ -39,11 +39,11 @@ pub enum IcOp<'a> {
     GuardImageClass(u32),
     /// The value at `slot` of the class cell the guard before it proved (`object::cell_fields`): tagged, at
     /// `cell + 8 + 8 * slot`. It ends the read.
-    LoadField { slot: u16, rep: Representation },
+    LoadField { slot: u32, rep: Representation },
     /// The tagged value at `slot` of the live class cell at granule `holder`, the holder of a class-keyed held
     /// entry (`entry::class_held_value`). The class guard before it fixes the holder's identity; a departed holder
     /// resets the field caches before any read (`Vm::drop_departed_holder_entries`), so it tests none. It ends the read.
-    LoadHeldField { holder: u32, slot: u16 },
+    LoadHeldField { holder: u32, slot: u32 },
     /// The read of the one object whose record is at `record` as `value`, while `watch` holds
     /// (`own_constant_read`): an own constant, as an enum member or a namespace export. A plan
     /// that starts from the receiver's word compares the word with the object's own instead.

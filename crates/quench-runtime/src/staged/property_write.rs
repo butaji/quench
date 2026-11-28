@@ -205,7 +205,7 @@ fn shape_store<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (own
 /// holds `arm`'s slot: a store through it needs neither the storage form nor the run tested again.
 #[inline(always)]
 fn kept_flat<S: Stage, F: PropertyFrame<S>>(frame: &F, owner: Owner, object: S::Word, arm: StoreArm) -> Option<S::Word> {
-    match frame.kept_layout(owner, object, arm.shape).filter(|layout| usize::from(arm.slot) < layout.storage_len)?.slots {
+    match frame.kept_layout(owner, object, arm.shape).filter(|layout| usize::from(arm.record_slot()) < layout.storage_len)?.slots {
         super::object::Slots::Flat(base) => Some(base),
         _ => None,
     }
@@ -275,9 +275,9 @@ fn arm_store<S: Stage>(stage: &mut S, (record, object): (S::Word, S::Word), arm:
         None => fact,
     };
     let (value, fact) = super::slot_store::class_word(stage, (value, fact), arm.class);
-    admit_named(stage, named, (record, arm.slot), value, miss)?;
+    admit_named(stage, named, (record, arm.record_slot()), value, miss)?;
     let id = super::value::direct_object_id(stage, object);
-    own_store_proved(stage, record, id, arm.slot, (value, fact), miss)
+    own_store_proved(stage, record, id, arm.record_slot(), (value, fact), miss)
 }
 
 /// The store of `value` into the field `arm` names of the live class cell `object` is, of the class its key names

@@ -160,17 +160,19 @@ pub fn guard_image_class<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>
 /// `IcOp::LoadField`: the tagged value at `slot` of the class cell the reached word names, which the class
 /// guard before it proved holds the slot (`object::cell_fields`).
 #[inline(always)]
-pub fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u16, Representation)) -> S::Word {
+pub fn load_field<S: Stage>(stage: &mut S, at: &Reached<S::Word, S::Cond>, (slot, rep): (u32, Representation)) -> S::Word {
     debug_assert!(at.shaped.is_some(), "a field load follows the guard of its class");
-    let layout = super::object::cell_fields(stage, at.record, usize::from(slot) + 1);
-    read_slot_value(stage, layout, slot, rep)
+    debug_assert!(rep == Representation::Tagged, "a class cell's field is read tagged");
+    // The class cell's own field, inline or spilled (`entry::cell_field`, `class_slot_address`).
+    let slot = stage.constant(u64::from(slot));
+    super::entry::cell_field(stage, at.record, slot)
 }
 
 /// `IcOp::LoadHeldField`: the tagged value at `slot` of the live class cell at granule `holder`, the holder
 /// `entry::class_held_value` reads. No guard of its own: the class guard before it proved the receiver, and the
 /// holder's departure resets the caches before any read.
 #[inline(always)]
-pub fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u16) -> S::Word {
+pub fn load_held_field<S: Stage>(stage: &mut S, holder: u32, slot: u32) -> S::Word {
     let granule = stage.constant(u64::from(holder));
     let cell = super::object::cell_at_granule(stage, granule);
     let slot = stage.constant(u64::from(slot));

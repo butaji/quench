@@ -136,7 +136,7 @@ impl Lowering<'_, '_> {
                 Origin::Inlined { .. } => return None,
             },
         };
-        proven_class(classes).filter(|&class| facts.class_fixed_cell(class) && facts.spill_from(class).is_none())
+        proven_class(classes).filter(|&class| facts.class_fixed_cell(class))
     }
 
     /// The fixed class (`fixed_class`) whose instances the lane may store into in place: its cell is no flag transition

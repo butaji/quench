@@ -307,7 +307,7 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
     let shape = vm.heap.object(receiver).unwrap().shape();
     let slot = vm.shape_slot(shape, atom).unwrap();
     vm.record_field_cache(vm.field_cache_index(site), FieldCache {
-        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u16, holder_cell: NO_FIELD_HOLDER_LAYOUT,
+        receiver: shape, holder: NO_FIELD_HOLDER, slot: slot as u32, holder_cell: NO_FIELD_HOLDER_LAYOUT,
     });
     vm.heap.track_slot_representations(&vm.shape_layouts());
     assert_eq!(vm.heap.slot_type(shape, slot), crate::typed_ir::Type::INT32);

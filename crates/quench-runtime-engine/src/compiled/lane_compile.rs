@@ -370,7 +370,7 @@ impl Vm {
         let atom = instruction.atom_index();
         let shaped = self.shape_constructed_class(load.shape).is_some_and(|(program, class)| program == self.active_program
             && lane_region::tag_proofs::slot_write_seeded(facts, class, atom, load.ty)
-            && lane_region::tag_proofs::union_slot(facts, class, atom) == Some(usize::from(load.slot)));
+            && lane_region::tag_proofs::union_slot(facts, class, atom) == Some(load.field_index()));
         shaped || lane_region::tag_proofs::store_seeded(facts, unit, function, pc, instruction, load.ty)
     }
 }

@@ -2966,7 +2966,8 @@ pub struct NativeFieldLoad {
     /// The exact shape of the receiver's prototype, an object record, that holds the slot;
     /// `None` for the receiver's own (`FieldCache::holder`).
     pub holder: Option<u32>,
-    pub slot: u16,
+    /// The slot word: a field index, or a spilled class field's `spilled_slot` (`field_cache_layout`).
+    pub slot: u32,
     pub storage_len: usize,
     pub storage: Option<PlainPropertyStorage>,
     /// The slot's type when the plan was made (`Heap::slot_type`), which every store maintains:
