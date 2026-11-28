@@ -43,7 +43,6 @@ use quench_runtime::vm::operations::{NumberArithmetic, NumberBitwise, NumberUnar
 
 use super::typed_ir::Type;
 use quench_runtime::typed_ir::Representation;
-use super::NativeFieldLoad;
 use oxc_ast::ast::UnaryOperator;
 
 use crate::compiled::tier_policy::{MAX_REGION_INSTRUCTIONS, MAX_REGION_REGISTERS, MAX_REGION_ARRAYS, MAX_REGION_CAPTURES, MAX_REGION_FIELDS, MAX_REGION_FIELD_STORES};
