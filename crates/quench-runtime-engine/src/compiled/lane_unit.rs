@@ -95,6 +95,9 @@ mod plan;
 pub(crate) use plan::*;
 #[path = "lane_unit/emit.rs"]
 mod emit;
+#[cfg(test)]
+#[path = "lane_unit/tests.rs"]
+pub(crate) mod tests;
 pub(crate) use emit::*;
 use super::tier_policy::{charges_growth, INLINE_GROWTH_PERCENT, PERCENT};
 #[allow(unused_imports)] use quench_runtime::staged::glue_prelude::*;

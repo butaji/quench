@@ -204,10 +204,6 @@ pub(crate) fn unit<'f>(
     Some(emitter.unit)
 }
 
-#[cfg(test)]
-#[path = "lane_unit/tests.rs"]
-pub(crate) mod tests;
-
 /// `unit` under the call plans `targets` names: each target one arm of a plan that inlines whole (`Miss::None`), so a
 /// fixture names its callees as the one source the planner reads.
 #[cfg(test)]
