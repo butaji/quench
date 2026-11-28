@@ -401,11 +401,12 @@ pub(crate) fn derive_lane_view<'live>(
                 == element_typed_row(quench_runtime::staged::element_read_family(op), index) as usize));
             let handler = selected.map_or(exit_lane as Handler, |selected| selected.handler) as *const ();
             let name_native = named_program.as_ref().and_then(|(residual, _)| name_native_operand(residual, op, handler, instruction.imm()));
+            let name_global = named_program.as_ref().and_then(|(_, facts)| name_global_operand(vm, facts, op, handler, instruction.imm()));
             LaneInstruction {
                 handler,
                 operand: match trusted {
                     Some((_, word, _)) => LaneOperand { field: quench_runtime::vm::engine_types::FieldOperand { imm: instruction.imm(), shape: word } },
-                    None => typed_element.map(|index| LaneOperand { imm: index }).or(name_native).or(operand).unwrap_or(LaneOperand { imm: 0 }),
+                    None => typed_element.map(|index| LaneOperand { imm: index }).or(name_native).or(name_global).or(operand).unwrap_or(LaneOperand { imm: 0 }),
                 },
                 a: instruction.a(),
                 b: instruction.b(),
@@ -574,19 +575,12 @@ pub(crate) fn derive_lane_view<'live>(
     let entries = entries.into_boxed_slice();
     let returns_from_entry = reads_accumulator.first() == Some(&false) && entry_run_returns(&decoded, &exits);
     let activation = ActivationShape::of(function);
-    let hinted_records = |names: bool| -> Box<[u32]> {
-        decoded
-            .iter()
-            .enumerate()
-            .filter(|&(pc, instruction)| {
-                holds_field_hint(instruction.op())
-                    && is_global_name_access(instruction.op()) == names
-                    && !loops.iter().any(|site| site.hookable && site.header as usize == pc)
-            })
-            .map(|(pc, _)| pc as u32)
-            .collect()
-    };
-    let (field_records, name_records) = (hinted_records(false), hinted_records(true));
+    let field_records: Box<[u32]> = decoded
+        .iter()
+        .enumerate()
+        .filter(|&(pc, instruction)| holds_field_hint(instruction.op()) && !loops.iter().any(|site| site.hookable && site.header as usize == pc))
+        .map(|(pc, _)| pc as u32)
+        .collect();
     let string_case_filters = string_case_filter::specialize(heap, constants, &decoded, &mut records);
     if this_trusted { trust_this_rows(&mut records); }
     let records = Records::new(records);
@@ -628,7 +622,6 @@ pub(crate) fn derive_lane_view<'live>(
         osr_rejections: (!osr_rejections.is_empty())
             .then(|| osr_rejections.into_boxed_slice()),
         field_records,
-        name_records,
         proven_counters: proven_counters.into_boxed_slice(),
         planned_calls: planned,
     }
@@ -640,17 +633,11 @@ fn int32_projectable(decoded: &[WideInstruction], resolves_names: bool) -> bool 
     !resolves_names && !decoded.iter().any(|instruction| instruction.op().immediate_role() == quench_runtime::bytecode::ImmediateRole::SuperinstructionIndex)
 }
 
-/// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field`
-/// operand: every field read or store's of its receiver, and a global name access's or top-level
-/// `var` capture read's of the global object (`name_row`, `lane_load_root_var`).
+/// Whether a record holds an own-field hint (`LaneInstruction::field_hint`) in a `field` operand: every field read or
+/// store's of its receiver, and a top-level `var` capture read's of the global object (`lane_load_root_var`). A by-name
+/// load keeps no hint: its field operand, where its row reads one, is a slot word the load chose (`name_global_operand`).
 pub(super) fn holds_field_hint(op: Op) -> bool {
-    quench_runtime::staged::stores_field(op) || quench_runtime::staged::reads_named_field(op) || quench_runtime::staged::reads_capture(op) || is_global_name_access(op)
-}
-
-/// Whether an instruction is a by-name load (`LOAD_NAME`) or store, whose hint a global
-/// lexical declaration clears (`LaneView::clear_name_hints`).
-pub(super) fn is_global_name_access(op: Op) -> bool {
-    op.traits().has(quench_runtime::bytecode::Traits::GLOBAL_NAME_ACCESS)
+    quench_runtime::staged::stores_field(op) || quench_runtime::staged::reads_named_field(op) || quench_runtime::staged::reads_capture(op)
 }
 
 /// Whether an instruction's record leaves its `call_link` unread: any but a call's, whose
@@ -1914,9 +1901,9 @@ fn by_name_default(op: quench_runtime::bytecode::Op) -> Option<Handler> {
 /// The row of the by-name load or store `op` of `atom` in function `function_id` of program `id`, chosen at load from the
 /// program's static facts: the name's resolution (`name_resolution`), the function's static name scope (`names_static`),
 /// the closed world's global lexical names (`global_lexical_names`) and the function's window scope
-/// (`CallPlan::holds_window_scope`). A global store keeps its default row, whose miss stores through the global object's
-/// hint, except a name the closed world declares lexically, whose stores leave to the general path. `None` is the generic
-/// step, which the record takes where no fact decides it.
+/// (`CallPlan::holds_window_scope`). A global load of a declared name takes its slot row (`global_slot_word`). A global
+/// store keeps its default row, whose miss takes the general store, except a name the closed world declares lexically,
+/// whose stores leave to the general path. `None` is the generic step, which the record takes where no fact decides it.
 fn named_name_row(vm: &quench_runtime::vm::Vm, residual: &quench_runtime::ResidualProgram, id: quench_runtime::vm::ProgramId,
     facts: &quench_runtime::compile::aot_facts::AotFacts, function_id: u32, op: quench_runtime::bytecode::Op, atom: u32) -> Option<Handler> {
     let names_static = facts.function_facts(function_id).names_static();
@@ -1927,8 +1914,8 @@ fn named_name_row(vm: &quench_runtime::vm::Vm, residual: &quench_runtime::Residu
         return match name_resolution(vm, residual, id, names_static, atom) {
             NameResolution::Native => Some(name_row::<FLAG_NAME_NATIVE>(load)),
             NameResolution::Undefined => Some(name_row::<FLAG_NAME_UNDEFINED>(load)),
-            NameResolution::Global if lexical => Some(name_row::<FLAG_NAME_LEXICAL>(load)),
-            NameResolution::Global => Some(name_row::<FLAG_NAME_GLOBAL>(load)),
+            NameResolution::Global if lexical => None,
+            NameResolution::Global => global_slot_word(vm, facts, atom).map(|_| name_row::<FLAG_NAME_GLOBAL_SLOT>(load)),
             NameResolution::Intrinsic => Some(name_row::<FLAG_NAME_INTRINSIC>(load)),
             NameResolution::General if window => Some(name_row::<FLAG_SCOPE>(load)),
             NameResolution::General if !internal => Some(name_row::<{ lane_frame::FLAG_PROBE }>(load)),
@@ -1939,6 +1926,25 @@ fn named_name_row(vm: &quench_runtime::vm::Vm, residual: &quench_runtime::Residu
         return (!lexical).then(|| by_name_default(op)).flatten();
     }
     window.then(lane_frame::scoped_store_row)
+}
+
+/// The slot word of the global object's own data property `atom`, which a by-name load of it reads through its
+/// `FLAG_NAME_GLOBAL_SLOT` row (`name_global_operand`). A closed world fixes the object's layout, so the word holds while
+/// the program runs; `None` where the world is open, the name is not declared, or the realm holds no such slot yet.
+fn global_slot_word(vm: &quench_runtime::vm::Vm, facts: &quench_runtime::compile::aot_facts::AotFacts, atom: u32) -> Option<u32> {
+    let declared = facts.closed() && facts.global_shape().is_some_and(|shape| shape.declared().contains(&atom));
+    declared.then(|| vm.global_slot(atom, false)).flatten().map(|slot| slot.slot)
+}
+
+/// The operand of a by-name load whose row is `FLAG_NAME_GLOBAL_SLOT` (`named_name_row`): the slot word its row reads
+/// (`NameRead::GlobalSlot`), beside the name's atom, which the record keeps as its immediate.
+fn name_global_operand(vm: &quench_runtime::vm::Vm, facts: &quench_runtime::compile::aot_facts::AotFacts, op: quench_runtime::bytecode::Op,
+    handler: *const (), atom: u32) -> Option<LaneOperand> {
+    let load = quench_runtime::staged::name_load(op)?;
+    if handler != name_row::<FLAG_NAME_GLOBAL_SLOT>(load) as *const () {
+        return None;
+    }
+    Some(LaneOperand { field: FieldOperand { imm: atom, shape: global_slot_word(vm, facts, atom)? } })
 }
 
 /// The operand of a by-name load whose row is `FLAG_NAME_NATIVE` (`named_name_row`): the discriminant of the native its

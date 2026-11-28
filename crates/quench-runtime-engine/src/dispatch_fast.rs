@@ -649,12 +649,6 @@ impl LaneView {
         self.held_hints(&self.field_records)
     }
 
-    /// How many of its by-name loads hold a global-object hint (`name_row`).
-    #[cfg(all(test, not(quench_profiled)))]
-    pub(crate) fn held_name_hints(&self) -> usize {
-        self.held_hints(&self.name_records)
-    }
-
     #[cfg(all(test, not(quench_profiled)))]
     fn held_hints(&self, pcs: &[u32]) -> usize {
         pcs.iter()
@@ -2287,7 +2281,7 @@ pub(crate) use window_bodies::{LocalsOf, body_locals};
 pub(crate) mod lane_reads;
 pub(crate) mod loop_body;
 use loop_body::LoopBody;
-use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL, FLAG_NAME_GLOBAL_SCOPED, FLAG_NAME_LEXICAL, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
+use lane_frame::{protocol_handler, returning_operator_row, operator_row, protocol_family, is_row, jump_row, jumps_by_row, plain_row, row_miss, row_near, row_produces, FLAG_LOOP, FLAG_ROOT, FLAG_SET, FLAG_UNREAD, FLAG_WINDOW, admits_row, name_row, FLAG_NAME_GLOBAL_SLOT, FLAG_NAME_INTRINSIC, FLAG_NAME_NATIVE, FLAG_NAME_UNDEFINED, FLAG_SCOPE};
 
 
 pub(crate) mod capture_append;
@@ -5018,98 +5012,6 @@ enum NameResolution {
 
 /// The global value property `name_resolution` answers without a lookup.
 const UNDEFINED_GLOBAL: &str = "undefined";
-
-script_handler! {
-    /// `name_row` of a global, past its record's hint: an initialized global lexical binding of the name, which the
-    /// general path's search finds first there, and which a `LEXICAL` row's hint locates by index; else the global
-    /// object's own data field, which becomes the hint (`Vm::own_data_field_hint`), or its cached field
-    /// (`Vm::cached_field_hit`). Any other read takes `global_name_read_miss`, or the general path for an
-    /// uninitialized binding. `typeof` (`LOAD_NAME_TYPEOF`) reads an absent name as `undefined`. A global row that
-    /// finds a lexical binding keeps no hint: its row reads the global object's hint, which a lexical index must not
-    /// name, so the read repeats here until a declaration retires the hints (`note_global_lexical_names`).
-    #[inline(never)]
-    fn global_name_refresh_miss<KIND: u8, SCOPED: bool, LEXICAL: bool>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let vm = unsafe { vm(cx) };
-        let atom = i.imm();
-        // A read the general path found past a scope that could declare the name holds only
-        // until some scope does (`Vm::note_dynamic_scope_name`).
-        if SCOPED && vm.scope_names.declared(atom) {
-            return exit(ip);
-        }
-        let value = match vm.global_name_read(code, atom, i.c) {
-            quench_runtime::vm::field_cache::GlobalNameRead::Value(value, hint) => {
-                if let Some(hint) = hint {
-                    set_field_hint(ip, hint);
-                } else if LEXICAL
-                    && let Some(index) = vm.realm.global_lexical_bindings.get_index_of(&atom)
-                    && let Ok(index) = u16::try_from(index)
-                    && index != NO_CALL_LINK
-                {
-                    // A declared name's row locates its binding by index, which the global lexical bindings never move.
-                    set_field_hint(ip, quench_runtime::vm::FieldCache::own(atom, u32::from(index)));
-                }
-                value
-            }
-            quench_runtime::vm::field_cache::GlobalNameRead::Uninitialized => return exit(ip),
-            quench_runtime::vm::field_cache::GlobalNameRead::Miss => sibling!(global_name_read_miss::<KIND>, r, ip, Carried::script_in(cx, view)),
-        };
-        r.set(i.a, value);
-        if KIND == LOAD_NAME_CALL {
-            r.set(i.b, Value::UNDEFINED);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
-
-script_handler! {
-    /// `global_name_refresh_miss` past its lexical binding and global property: a
-    /// global accessor's getter, activated in the lane, or a plain global property, recorded
-    /// in the site's entry; any other read takes the general path. Out of line: the getter's
-    /// activation and the lookups take stack temporaries, which the common read then does not
-    /// hold.
-    #[inline(never)]
-    fn global_name_read_miss<KIND: u8>(cx, r, ip, i, view) {
-        let vm = unsafe { vm(cx) };
-        let atom = i.imm();
-        let globals = vm.realm.globals;
-        if let Some(getter) = vm.cached_field_getter(globals, atom, vm.field_cache_index(i.c)) {
-            if !unsafe { (*cx).script_calls } {
-                return exit(ip);
-            }
-            // A binding of the global object's environment calls with an `undefined`
-            // receiver.
-            if KIND == LOAD_NAME_CALL {
-                r.set(i.b, Value::UNDEFINED);
-            }
-            return match activate_getter_in_lane(cx, r, ip, getter, globals, None) {
-                Ok((registers, base)) => next!(cx, registers, base, Carried::script_in(cx, view)),
-                Err(next) => next,
-            };
-        }
-        // A present data property records the site's entry as the general path's read
-        // does (`Vm::field_miss_data_value`): the global object changes shape as Node's
-        // lazy globals materialize, and a site that only walked would miss from then
-        // on. Only a present one: that read answers an absent key as `[[Get]]` does,
-        // where the binding raises. A global object no cache records (a dictionary
-        // shape) still answers a present data property through its shape walk. An
-        // absent name is `undefined` to `typeof` and raises on the general path
-        // otherwise.
-        let value = match vm.plain_global_lookup(atom) {
-            Some(Some(value)) => vm
-                .field_miss_data_value(globals, atom, vm.field_cache_index(i.c))
-                .unwrap_or(value),
-            Some(None) if KIND == LOAD_NAME_TYPEOF => Value::UNDEFINED,
-            _ => return exit(ip),
-        };
-        r.set(i.a, value);
-        if KIND == LOAD_NAME_CALL {
-            r.set(i.b, Value::UNDEFINED);
-        }
-        next!(cx, r, following(ip), Carried::script_in(cx, view))
-    }
-}
 
 script_handler! {
     /// `new Array(...values)` of an intrinsic `Array`, which allocates without running guest

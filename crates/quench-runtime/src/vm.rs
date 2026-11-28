@@ -2901,17 +2901,14 @@ impl Vm {
         self.map_global_lexical_slots(program);
         Ok(())
     }
-    /// A global lexical name was declared: it may shadow a global property that a global name
-    /// read's hint names (`dispatch_fast::name_row`), so every such hint is
-    /// dropped (`LaneView::clear_name_hints`), and code holding one retires (`note_global_shadowing`).
+    /// A global lexical name was declared: it may shadow a global property, so code holding that
+    /// property retires (`note_global_shadowing`).
     pub(super) fn note_global_lexical_names(&self) {
-        self.programs.clear_global_name_hints();
         self.note_global_shadowing();
     }
 
-    /// Whether a global name read of `atom` may keep the global object's own data property as
-    /// its hint: no realm, active or not, declares a global lexical binding of it, so a realm
-    /// switch keeps every hint. A later declaration drops them (`note_global_lexical_names`).
+    /// Whether the global object's own data property `atom` may be a global slot a lane body holds (`global_slot`): no
+    /// realm, active or not, declares a global lexical binding of it, so a realm switch keeps the slot.
     pub fn global_name_hintable(&self, atom: Atom) -> bool {
         !self.realm.shadows_global_name(atom)
     }

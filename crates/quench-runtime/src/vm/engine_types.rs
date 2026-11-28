@@ -320,9 +320,6 @@ pub struct LaneView {
     pub osr_rejections: Option<Box<[(RegionRejection, usize)]>>,
     /// The `GetField`, `SetField` and `LoadCapture` records past its sites' loop headers, whose own-field hints a shape compaction clears.
     pub field_records: Box<[u32]>,
-    /// The by-name records past its sites' loop headers, whose global-object hints (`name_row`, `global_name_store`) a shape
-    /// compaction clears, and a change of the global lexical names they answer past (`LaneView::clear_name_hints`).
-    pub name_records: Box<[u32]>,
     /// The held back edges' `IncDec` records whose counter the solve's int32 cells prove, with it (`int_steps`).
     pub proven_counters: Box<[(u32, u16)]>,
     /// The method call sites whose receiver's class union is closed (`PlannedSite`), by pc. A record names its site by
@@ -4291,13 +4288,6 @@ impl LaneView {
     #[inline]
     pub fn body_detail_in_lane(&self) -> (&'static str, bool, bool) {
         (self.body_state_in_lane(), self.start.get() == self.prologue.get().cast_const(), self.warming())
-    }
-
-    /// Clears the global-object hints of its by-name loads and stores: a global
-    /// lexical name was declared (`Vm::note_global_lexical_names`).
-    #[inline]
-    pub fn clear_name_hints(&self) {
-        self.clear_hints(&self.name_records);
     }
 
     /// Starts activations at the first record again, once the tier declines the function.
