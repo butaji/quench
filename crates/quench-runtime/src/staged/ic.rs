@@ -30,10 +30,6 @@ pub enum IcOp<'a> {
     /// site whose observed form is that run (`Form::Arena`) guards this way: a record in another form missed
     /// the run's form tests anyway (`object::plain_slots`), so only the tests go.
     GuardShapeFormed(u32),
-    /// The record's layout id is the one an ahead image's loader resolves for field guard key
-    /// `key` (`ImageWord::Layout`): a construction's exact shape, a plain arena run and its
-    /// prototype link, proved by one compare, so the `LoadSlot` after it reads the run untested.
-    GuardImageLayout(u32),
     /// The reached cell's class (`object::cell_class`) is this one, else the read misses. The reached word is a
     /// class cell (`object::cell_of`), so the guard is one compare of its header's low half: a departed object's
     /// header holds `DEPARTED_CLASS`, which no class guard names, so it misses here and takes the record path.
@@ -179,10 +175,6 @@ fn run_op<S: Stage>(stage: &mut S, op: &IcOp<'_>, at: &mut Reached<S::Word, S::C
         }
         IcOp::GuardShapeFormed(shape) => {
             at.shaped = Some(guarded!(guard_shape_formed(stage, at, shape, miss)));
-            at.formed = Some(0);
-        }
-        IcOp::GuardImageLayout(key) => {
-            at.shaped = Some(guarded!(guard_image_layout(stage, at, key, miss)));
             at.formed = Some(0);
         }
         IcOp::GuardClass(class) => at.shaped = Some(guarded!(guard_class(stage, at, class, miss))),

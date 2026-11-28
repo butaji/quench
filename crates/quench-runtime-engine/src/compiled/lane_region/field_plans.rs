@@ -142,6 +142,11 @@ fn holder_cell(load: &NativeFieldLoad) -> Option<u32> {
 /// layout id a single-shape load was guarded by (`formed_id`), whose form the slot is read in;
 /// a family's shapes are guarded one by one, so their slots keep the form the site observed.
 fn load_ops<'a>(load: &NativeFieldLoad, pairs: &'a [(u32, u64)], formed: Option<u32>) -> Vec<IcOp<'a>> {
+    // An ahead image's construction: the class its loader resolves guards the live cell, and the field is the cell's own.
+    if load.image_layout() {
+        return vec![IcOp::GuardImageClass(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE),
+            IcOp::LoadField { slot: load.slot, rep: Representation::Tagged }];
+    }
     if load.class.is_some() {
         // A class-keyed read: its own field of the cell, or the held one of the holder cell its entry names by
         // granule. The class guard before these (`link_ops`) proves the cell.
@@ -198,15 +203,14 @@ fn link_ops<'a>(fast: &Fast, pairs: &'a [Vec<(u32, u64)>]) -> Vec<Vec<IcOp<'a>>>
             // and the slot read tests none of it (`IcOp::GuardShapeFormed`).
             let guard = match (load.class, formed_id(load)) {
                 // A class-keyed read guards the live cell's class: one compare of its header (`IcOp::GuardClass`).
-                (Some(class), _) => IcOp::GuardClass(class),
-                (None, Some(id)) => IcOp::GuardLayout(id),
-                // An ahead image's guess of a construction's arena run: the layout id its loader
-                // resolves proves the shape, the form and the link in one compare.
-                (None, None) if load.image_layout() => IcOp::GuardImageLayout(load.shape & !quench_runtime::staged::ic::SYMBOLIC_SHAPE),
-                (None, None) if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => IcOp::GuardShapeFormed(load.shape),
-                (None, None) => IcOp::GuardShape(load.shape),
+                (Some(class), _) => Some(IcOp::GuardClass(class)),
+                (None, Some(id)) => Some(IcOp::GuardLayout(id)),
+                // An ahead image's construction guards its class cell in its own ops (`load_ops`).
+                (None, None) if load.image_layout() => None,
+                (None, None) if load.holder.is_none() && Form::of(load.storage, load.storage_len) == Form::Arena => Some(IcOp::GuardShapeFormed(load.shape)),
+                (None, None) => Some(IcOp::GuardShape(load.shape)),
             };
-            lists.map(|ops| std::iter::once(guard).chain(ops).collect()).collect()
+            lists.map(|ops| guard.into_iter().chain(ops).collect()).collect()
         }
         _ => lists.collect(),
     }

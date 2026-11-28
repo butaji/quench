@@ -5100,10 +5100,7 @@ impl Lowering<'_, '_> {
             let (admitted, split) = self.store_atom_admission(state, atom, exit);
             (Some(admitted), split.filter(|_| !arms.is_empty()))
         } else { (None, None) };
-        // A store whose one arm is an ahead image's layout (`StoreArm::layout`) is of the class the closed world
-        // gives its site: a miss leaves, so the layout's proof holds past the store.
-        let layout = matches!(&arms[..], [arm] if arm.layout);
-        let leaves = join == StoreJoin::Host && (self.store_leaves() || layout);
+        let leaves = join == StoreJoin::Host && self.store_leaves();
         state.proofs.write_field(atom);
         self.store_step(state, operation, (plan, HeldRead { admitted, split, leaves, ..HeldRead::default() }), exit)?;
         if leaves { return Some(()); }
@@ -5138,9 +5135,10 @@ impl Lowering<'_, '_> {
         let arms: Vec<StoreArm> = {
             let classes = own.iter().filter(|load| load.valid())
                 .filter_map(|load| load.class.map(|class| StoreArm::of_class(quench_runtime::staged::field_cache_layout::CLASS_KEY | class, load.slot)));
-            let shapes = own.iter().filter(|load| load.class.is_none() && load.valid())
-                .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty)
-                    .map(|arm| if load.image_layout() { arm.as_layout() } else { arm }))
+            // An ahead image's construction is a class cell whose class the loader resolves at run time, so no in-place
+            // arm names it: its stores take the VM's (the join), which writes the cell's field.
+            let shapes = own.iter().filter(|load| load.class.is_none() && !load.image_layout() && load.valid())
+                .filter_map(|load| StoreArm::of((load.shape, load.slot), load.ty, ty))
                 // An arm whose test no value of `ty` passes would take its shape's store and miss: a
                 // shape the image guessed once per stored class (`ahead_images::fields`) keeps the
                 // class the value may be.
