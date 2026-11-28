@@ -60,7 +60,14 @@ pub(crate) fn cell_field<S: Stage>(stage: &mut S, cell: S::Word, slot: S::Word) 
 pub(super) fn class_own_value<S: Stage>(stage: &mut S, cell: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     class_matches(stage, cell, entry, miss)?;
     let slot = entry_slot(stage, entry);
-    Some(cell_field(stage, cell, slot))
+    let value = cell_field(stage, cell, slot);
+    // A fixed class's absent union field holds the hole (R4-F): the class names the slot for every
+    // instance, so an entry filled from an instance that holds it meets one that does not. The hole
+    // leaves for the prototype walk; it is a value state, not a representation test.
+    let hole = stage.eq_imm(value, super::super::value_encoding::TAG_DELETED);
+    let present = stage.not(hole);
+    stage.guard(present, miss)?;
+    Some(value)
 }
 
 /// The value a class-keyed held entry at `entry` names for the live cell `object` (`direct_read_in`):

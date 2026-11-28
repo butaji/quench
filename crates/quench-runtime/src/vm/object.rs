@@ -2518,6 +2518,10 @@ impl Vm {
         }
         debug_assert_eq!(cache.receiver_shape(), self.heap.object(object)?.exact_shape());
         let value = self.heap.live_class_field(object, cache.slot as usize)?;
+        // A fixed class's absent union field is the hole: no own value, so the miss path walks the prototype.
+        if value == Value::DELETED {
+            return None;
+        }
         self.profile.field_cache_hit(0, 0);
         Some(value)
     }
