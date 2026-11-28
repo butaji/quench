@@ -1372,6 +1372,7 @@ impl Program {
         self.facts.anchored
             && (start != 0
                 || self
+                    .facts
                     .anchored_first
                     .as_ref()
                     .is_some_and(|units| first.is_none_or(|first| !units.contains(first))))

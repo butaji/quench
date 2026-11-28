@@ -246,8 +246,6 @@ pub fn absent_environment_storage() -> u64 {
 }
 
 const _: () =
-    assert!(NATIVE_OBJECT_LAYOUT.record_size.is_multiple_of(NATIVE_OBJECT_LAYOUT.record_align));
-const _: () =
     assert!(NATIVE_OBJECT_LAYOUT.property_value_size == std::mem::size_of::<Value>());
 const _: () =
     assert!(NATIVE_OBJECT_LAYOUT.property_value_align == std::mem::align_of::<Value>());

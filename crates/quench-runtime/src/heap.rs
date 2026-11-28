@@ -70,6 +70,7 @@ macro_rules! mark_bits_struct {
         #[derive(Clone, Copy)]
         pub(super) struct MarkBits<'a> {
             $($field: &'a $space,)*
+            class_space: &'a class_space::ClassSpace,
             marks: &'a [AtomicU64],
         }
     };
@@ -80,6 +81,7 @@ macro_rules! mark_bits_literal {
     ($heap:tt ; $($family:ident = $field:ident : $space:ty [$elem:ty] $view:ident,)*) => {
         MarkBits {
             $($field: &$heap.$field,)*
+            class_space: &$heap.class_space,
             marks: &$heap.marks,
         }
     };
@@ -2947,7 +2949,6 @@ impl Heap {
                 // A dead object's storage is released in place, and its stub with it; one without
                 // extras, which its drop would free, is then forgotten.
                 let young_runs = properties.young_runs();
-                let young_runs = properties.young_runs();
                 // The cell regions sweep only the cells whose Value is dead and not released yet.
                 class_space.sweep_cells(&mut *properties, &mut *extras, full, age, |values, class| {
                     layouts::class_spill(class, values.shape_length(layouts::class_shape(class)))
@@ -5301,11 +5302,10 @@ fn note_young_owner(owners: &mut Vec<(usize, YoungOwner)>, start: usize, owner: 
     owners.push((start, owner));
 }
 
-/// The record that owns a young run (`ValueArena::young_run_padded`): a direct object, or a
+/// The record that owns a young run (`ValueArena::young_run_padded`): a
 /// function, whose own properties a recorded closure allocates finished.
 #[derive(Clone, Copy)]
 enum YoungOwner {
-    Object(RecordId),
     Function(RecordId),
 }
 

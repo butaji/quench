@@ -143,16 +143,6 @@ impl<'a> ObjectRef<'a> {
         }
     }
 
-    /// Whether the object's VM side descriptors may name keys its shape lacks (`Object::has_side_descriptors`); a
-    /// cell's flag is in its extras, which no extras means unset.
-    #[inline(always)]
-    pub fn has_side_descriptors(self) -> bool {
-        match self {
-            ObjectRef::Record(object) => object.has_side_descriptors(),
-            ObjectRef::Cell(cell) => cell.extras.is_some_and(|extras| extras.element_facts().has(ElementFacts::SIDE_DESCRIPTORS)),
-        }
-    }
-
     /// The table of the values code read from this global object by name (`Object::global_values`).
     #[inline(always)]
     pub fn global_values(self) -> Option<u32> {
@@ -209,7 +199,7 @@ impl<'a> ObjectMut<'a> {
     /// `Object::set_arguments_map`.
     #[inline(always)]
     pub fn set_arguments_map(&mut self, mapping: Vec<u16>) {
-        super::array_proofs::retire_array_storage_proofs();
+        crate::heap::array_proofs::retire_array_storage_proofs();
         self.edit_extras(|extras| extras.set_arguments_map(mapping));
     }
 

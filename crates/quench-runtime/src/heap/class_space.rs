@@ -16,7 +16,7 @@ use super::layouts::class_region;
 use super::records::{AddressRange, RecordId, RecordSpace, RecordValue};
 use super::spill::SpillSpace;
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
-use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, NO_CLASS, REGION_MASK, REGION_SHIFT, region_field_capacity};
+use crate::staged::object_encoding::{CAPACITY_CLASSES, CLASS_HEADER_BYTES, REGION_MASK, REGION_SHIFT, region_field_capacity};
 
 /// The high half of a region 0 stub's header, which names its object record (`stub_header`). A stub is decided by
 /// its granule's region, never by its header's low half, which is `NO_CLASS`.

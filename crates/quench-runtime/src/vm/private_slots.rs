@@ -162,7 +162,7 @@ impl Vm {
     /// and home, does.
     pub fn site_private_field_entry(&self, site: usize, environment: Value) -> Option<FieldCache> {
         let (shape, slot) = self.private_site_homes.field_entry(site, environment)?;
-        Some(FieldCache::own(shape, u16::try_from(slot).ok()?))
+        Some(FieldCache::own(shape, u32::try_from(slot).ok()?))
     }
 
     /// The private names `object` carries, each once, fields and methods alike.

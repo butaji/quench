@@ -93,13 +93,14 @@ macro_rules! parallel_mark_view {
                 reads_closures: bool,
                 projection_function: Option<u32>,
             ) -> Self {
+                let class_base = heap.class_space.base;
                 let (cells, spill) = heap.class_space.parallel_marks();
                 Self {
                     slots: &heap.slots,
                     properties: &heap.properties,
                     sparse_arrays: heap.sparse_arrays.as_deref(),
                     marks: &heap.marks,
-                    class_base: heap.class_space.base,
+                    class_base,
                     cells,
                     spill,
                     extras: SharedExtras(&heap.extras),

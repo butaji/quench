@@ -456,7 +456,7 @@ impl Heap {
         match object {
             ObjectRef::Record(record) => self.property_get(record, slot),
             ObjectRef::Cell(cell) => {
-                if slot >= self.properties.shape_length(cell.shape()) {
+                if slot >= self.properties.shape_length(cell.object().shape()) {
                     return None;
                 }
                 cell.word(slot).filter(|value| !value.is_deleted())

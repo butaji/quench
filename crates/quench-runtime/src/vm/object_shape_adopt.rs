@@ -81,7 +81,7 @@ impl Vm {
         }
         let mut values = smallvec::SmallVec::<[Value; ADOPT_INLINE_PROPERTIES]>::new();
         for slot in 0..atoms.len() {
-            let Some(value) = self.heap.property_get(source_data, slot) else {
+            let Some(value) = self.heap.property_get_ref(source_data, slot) else {
                 return false;
             };
             values.push(value);
