@@ -6,7 +6,7 @@ use super::{Concrete, Stage, Table};
 use super::region::Region;
 use crate::heap::{NATIVE_OBJECT_LAYOUT as OBJECT, PlainPropertyStorage};
 use super::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
-use super::object_encoding::{CLASS_HEADER_BYTES, DEPARTED_CLASS};
+use super::object_encoding::CLASS_HEADER_BYTES;
 use crate::typed_ir::Representation;
 use crate::value::{NarrowLayout, ValueLayout};
 

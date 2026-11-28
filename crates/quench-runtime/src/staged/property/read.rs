@@ -63,12 +63,12 @@ pub fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (o
         }
         FieldPlan::Classed { classes, rest } => {
             let records = frame.object_records(stage);
-            // The class of a direct object's live cell; any other word, and a departed object, reads as `DEPARTED_CLASS`,
-            // which no arm names, so `rest` takes it. The cell is addressed only where the object is direct.
+            // The class of a direct object's live cell; any other word reads as `NO_CLASS`, which no arm names, so
+            // `rest` takes it. The cell is addressed only where the object is direct.
             let direct = value::is_direct_object(stage, object);
             let class = stage.choose(direct,
                 #[inline(always)] |stage| { let cell = super::super::object::cell_of(stage, object); super::super::object::cell_class(stage, cell) },
-                #[inline(always)] |stage| stage.constant(u64::from(super::super::object_encoding::DEPARTED_CLASS)));
+                #[inline(always)] |stage| stage.constant(u64::from(super::super::object_encoding::NO_CLASS)));
             classed(stage, frame, (owner, readable), object, (class, classes), (records, *rest), miss)
         }
         FieldPlan::Inherited { shape, constants, proof } =>

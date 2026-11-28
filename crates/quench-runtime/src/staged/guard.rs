@@ -54,8 +54,8 @@ pub fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (sh
 }
 
 /// `class`: `source` is a direct object whose live class cell's class is `class` (`ic::guard_class`). The class is one
-/// compare and fixes the exact shape and the prototype link together, so no record and no link test runs. A departed
-/// object's cell holds `DEPARTED_CLASS`, which no class is, so it leaves here. Any other word leaves.
+/// compare and fixes the exact shape and the prototype link together, so no record and no link test runs. Any word
+/// whose cell's class is not `class` leaves.
 #[inline(always)]
 pub fn class<S: Stage>(stage: &mut S, source: S::Word, class: u32, miss: S::Miss) -> Option<super::Shaped<S::Word>> {
     let direct = super::value::is_direct_object(stage, source);
