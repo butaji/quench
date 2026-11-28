@@ -61,16 +61,18 @@ pub(crate) struct ObjectHeader {
     pub(crate) shape_fact: Option<ShapeFact>,
 }
 
-/// The record id of the departed object whose stub granule is `granule` (`staged::object::departed_record_id`,
-/// the Cranelift projection): the class guard, that the cell's class is `DEPARTED_CLASS`, branches a live cell to
-/// `miss`; then the high half of the cell's header is the record id. `granule` is an `I64`.
-pub(crate) fn departed_record_id(builder: &mut FunctionBuilder<'_>, class_base: ir::Value, granule: ir::Value, miss: ir::Block) -> ir::Value {
-    use quench_runtime::staged::layout_offsets::{CLASS_CELL_GRANULE_BYTES, DEPARTED_CLASS, NATIVE_CLASS_CELL_LAYOUT};
+/// The record id of the stub at granule `granule` (the Cranelift projection of `staged::object::stub_record_id`):
+/// the granule's region is the guard, so a granule outside region 0 names a live class cell, which has no record,
+/// and branches to `miss`; the high half of the stub's header is the record id. `granule` is an `I64`, and the
+/// class space is at `class_base` (`emit` carries no dispatch payload to read it from). Mirrors the staged test.
+pub(crate) fn stub_record_id(builder: &mut FunctionBuilder<'_>, class_base: ir::Value, granule: ir::Value, miss: ir::Block) -> ir::Value {
+    use quench_runtime::staged::layout_offsets::{CLASS_CELL_GRANULE_BYTES, NATIVE_CLASS_CELL_LAYOUT};
+    use quench_runtime::staged::object_encoding::REGION_SHIFT;
+    let region = emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, granule, i64::from(REGION_SHIFT));
+    let stub = emit(builder).raw_compare_imm(Relation::Equal, region, 0);
+    emit_js_guard(builder, stub, miss);
     let cell_offset = emit(builder).raw_binary_imm(Binary::Mul, granule, CLASS_CELL_GRANULE_BYTES as i64);
     let cell = emit(builder).raw_binary(Binary::Add, class_base, cell_offset);
-    let class = emit(builder).raw_load(Lane::I32, MemFlagsData::trusted(), cell, NATIVE_CLASS_CELL_LAYOUT.class_offset as i32);
-    let departed = emit(builder).raw_compare_imm(Relation::Equal, class, i64::from(DEPARTED_CLASS as i32));
-    emit_js_guard(builder, departed, miss);
     let header = emit(builder).raw_load(Lane::I64, MemFlagsData::trusted(), cell, NATIVE_CLASS_CELL_LAYOUT.header_offset as i32);
     emit(builder).raw_binary_imm(Binary::ShiftRightUnsigned, header, i64::from(u32::BITS))
 }
@@ -83,7 +85,7 @@ pub(crate) enum ObjectRecord {
     Address(ir::Value),
     Indexed { base: ir::Value, offset: ir::Value },
     /// The class cell of a fixed class (`AotFacts::class_fixed_cell`): every instance is this cell from birth, so no record
-    /// exists, and no presence, departed or class test is made. The cell is `class_base + granule * 8`, whose fields are the
+    /// exists, and no presence or class test is made. The cell is `class_base + granule * 8`, whose fields are the
     /// union slots (`offset_address`); the granule is the cell's record id in the class space (`Stage::store_gate`).
     FixedCell { cell: ir::Value, granule: ir::Value },
 }
@@ -100,8 +102,8 @@ impl ObjectRecord {
     }
 
     /// The Cranelift projection of staged `object::object_record_of`: the granule the direct object's
-    /// bits name is a class cell (`class_base + g * 8`), whose header's high half is the record id, and
-    /// the record is `records + id * record_size` (R4-B2b decision 6).
+    /// bits name is a stub (region 0), whose header's high half is the record id, and the record is
+    /// `records + id * record_size` (R4-B2b decision 6).
     pub(crate) fn prove(builder: &mut FunctionBuilder<'_>, bits: ir::Value,
         records: impl Into<ObjectTable>, class_base: ir::Value, known: Option<typed_ir::VerifiedFact>, miss: ir::Block) -> Self {
         let records = match records.into() {
@@ -117,7 +119,7 @@ impl ObjectRecord {
             emit_js_guard(builder, object, miss);
         }
         let granule = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), granule);
-        let id = departed_record_id(builder, class_base, granule, miss);
+        let id = stub_record_id(builder, class_base, granule, miss);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, id, layout.record_size as i64);
         Self::Indexed { base: records, offset }
     }
@@ -186,7 +188,7 @@ impl ObjectHeader {
         let object = quench_runtime::staged::value::is_direct_object(&mut emit(builder), bits);
         emit(builder).branch_if(object, (object_block, &[]), (function_block, &[]));
         builder.switch_to_block(object_block);
-        let record = departed_record_id(builder, class_base, id, miss);
+        let record = stub_record_id(builder, class_base, id, miss);
         let offset = emit(builder).raw_binary_imm(Binary::Mul, record, layout.record_size as i64);
         let object_record = emit(builder).raw_binary(Binary::Add, records, offset);
         emit(builder).goto(join, &[object_record]);

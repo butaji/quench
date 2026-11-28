@@ -1,6 +1,6 @@
 //! Named reads and stores of a fixed class's receiver (`AotFacts::class_fixed_cell`). Every instance of the class is a class
 //! cell of its union layout from birth, so the receiver's cell is its direct reference's granule (`ObjectRecord::FixedCell`),
-//! and union slot `k` is the cell's field at `fields_offset + field_size * k`. No record presence, departed, class or shape
+//! and union slot `k` is the cell's field at `fields_offset + field_size * k`. No record presence, class or shape
 //! test is made: the class is the fact. A slot of an absent field holds `DELETED`, which a read answers by the union's
 //! `FieldDefault`. A store writes its slot in place, since the union's domain admits every store of the field; a tagged store
 //! first passes the class space's barrier (`Stage::store_gate`), keyed by the cell's granule.
