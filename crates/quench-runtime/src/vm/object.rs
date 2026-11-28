@@ -2868,7 +2868,7 @@ impl Vm {
             // SAFETY: both immutable shapes and the property slot were recorded
             // together after confirming an immediate-prototype data property.
             self.heap
-                .property_get_unchecked(holder, cache.slot as usize)
+                .property_get_unchecked_view(holder, cache.slot as usize)
         };
         Some(FieldCacheHit {
             value,
@@ -2886,14 +2886,14 @@ impl Vm {
     /// same argument as `cached_holder_matches`). Every other case is decided by the lookup,
     /// which is also what a cache hit compares against.
     #[inline(always)]
-    fn non_record_hit_holder(&self, proto: Value, atom: Atom) -> Option<&Object> {
+    fn non_record_hit_holder(&self, proto: Value, atom: Atom) -> Option<ObjectRef<'_>> {
         if let Some(holder) = self.heap.object(proto)
-            && let Some(record) = holder.record_only()
+            && holder.record_only().is_some()
             && !holder.has_exotic_access()
             && atom != self.length_atom
             && !self.atom_class(atom).intersects(AtomClass::FAMILY_SENSITIVE)
         {
-            return Some(record);
+            return Some(holder);
         }
         self.shape_property_lookup(proto, atom)
     }
@@ -3263,6 +3263,7 @@ impl Vm {
             #[cfg(feature = "profile-lane-exits")]
             self.record_field_probe_path(site, atom, 4);
             let proto = self.heap.object(object).map(|object| object.proto());
+            let receiver_shape = receiver.shape();
             match self.heap.live_class_key(object) {
                 // A live cell is keyed by its class, which fixes its prototype link. Its held entry names
                 // the holder cell by granule, so the holder must be a live cell too; a record holder takes
@@ -3283,7 +3284,7 @@ impl Vm {
                     self.record_field_cache(
                         site,
                         FieldCache {
-                            receiver: receiver.shape(),
+                            receiver: receiver_shape,
                             holder: holder_shape,
                             slot: slot as u32,
                             holder_cell,
@@ -4621,7 +4622,7 @@ impl Vm {
         let slot = self.shape_slot(data.shape(), atom)?;
         let attributes = self.slot_attributes(data, slot)?;
         (!attributes.accessor && attributes.writable && attributes.enumerable && attributes.configurable)
-            .then(|| Some(FieldCache::own(data.exact_shape(), u16::try_from(slot).ok()?))).flatten()
+            .then(|| Some(FieldCache::own(data.exact_shape(), u32::try_from(slot).ok()?))).flatten()
     }
 
     /// The prototype shapes a cached add of `key` to `object` must find again, as the depth and
@@ -4802,7 +4803,7 @@ impl Vm {
         (store_owed && self.try_cached_field_store(object, atom, shape, value, site))
             || (extensible
                 && self.field_cache_atom_eligible(atom)
-                && self.try_cached_field_add(object, atom, shape, link, value, site))
+                && self.try_cached_field_add(object, atom, (shape, self.own_receiver_key(object, shape)), link, value, site))
     }
 
     fn try_cached_field_store(
@@ -5095,7 +5096,7 @@ impl Vm {
         // The representation each own field a cache entry names holds across the live objects
         // of its shape, the join of their values' classes (`SlotType`).
         use crate::typed_ir::SlotType;
-        let classes: std::collections::HashMap<(u32, u16), SlotType> = std::collections::HashMap::new();
+        let classes: std::collections::HashMap<(u32, u32), SlotType> = std::collections::HashMap::new();
         // A class cell holds no record, so the census reads no field type from one.
         let mut reps = [0_usize; SlotType::ALL.len()];
         let own_entries = (0..self.field_caches.len()).map(|index| self.field_caches.get(index)).chain(self.megamorphic_fields.iter().flat_map(|set| set.recorded().copied().collect::<Vec<_>>()))
