@@ -124,6 +124,10 @@ pub struct JsStepHead<V> {
     /// refreshed with the other bases, as a callout may move the block list.
     pub array_mark_blocks: usize,
     pub array_mark_block_count: usize,
+    /// The class cells' mark blocks and counts, as (blocks, count) pairs of two words by cell region: entry `r`
+    /// is at byte `16 * r`, region 0 (the stubs, which keep no class mark) is zero. A store of a reference into a
+    /// class cell reads its region's entry (`staged::barrier::class_unmarked`); refreshed with the other bases.
+    pub class_mark_lists: [usize; 12],
     /// The typed arrays' view record directory and its page count (`Heap::typed_view_directory`),
     /// refreshed with the other record bases, and the address of the process's buffer-relocation count
     /// (`buffer_relocations_address`): what a typed array's view proof reads

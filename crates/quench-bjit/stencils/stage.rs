@@ -6,10 +6,10 @@
 
 use crate::layout::{
     JS_STEP_FUNCTION_MARK_BLOCKS, JS_STEP_FUNCTION_MARK_BLOCK_COUNT, JS_STEP_OBJECT_MARK_BLOCKS, JS_STEP_OBJECT_MARK_BLOCK_COUNT, JS_STEP_PROPERTY_BUFFER, JS_STEP_STORE_WATCH,
-    JS_STEP_STORES_SPECIALIZED, JS_STEP_CLASS_BASE,
+    JS_STEP_STORES_SPECIALIZED, JS_STEP_CLASS_BASE, JS_STEP_CLASS_MARK_LISTS,
     LAYOUT_TABLE_BASE, PROPERTY_BUFFER_BASE,
 };
-use crate::staged::barrier::{held_unlogged, store_unlogged, MarkList};
+use crate::staged::barrier::{class_held_unlogged, class_store_unlogged, held_unlogged, store_unlogged, MarkList};
 use crate::staged::{Passed, StagedRecordSpace, Stage, Table};
 use crate::words::{hole, HOLE_FOURTH, HOLE_THIRD, LAST_HOLE};
 use crate::typed_ir::Type;
@@ -256,20 +256,22 @@ impl Stage for StencilStage {
     fn clamp_u8(&mut self, a: u64) -> u64 { crate::units::clamp_u8(a) }
     #[inline(always)]
     fn store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
+        let payload = self.payload;
         let list = match space {
             StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
             StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
+            StagedRecordSpace::Class => return class_store_unlogged(self, payload, JS_STEP_STORE_WATCH, JS_STEP_CLASS_MARK_LISTS, record_id, value, ()).is_some(),
         };
-        let payload = self.payload;
         store_unlogged(self, payload, JS_STEP_STORE_WATCH, list, record_id, value, ()).is_some()
     }
     #[inline(always)]
     fn held_store_gate(&mut self, space: StagedRecordSpace, record_id: u64, value: u64) -> bool {
+        let payload = self.payload;
         let list = match space {
             StagedRecordSpace::Object => MarkList { blocks: JS_STEP_OBJECT_MARK_BLOCKS, count: JS_STEP_OBJECT_MARK_BLOCK_COUNT },
             StagedRecordSpace::Function => MarkList { blocks: JS_STEP_FUNCTION_MARK_BLOCKS, count: JS_STEP_FUNCTION_MARK_BLOCK_COUNT },
+            StagedRecordSpace::Class => return class_held_unlogged(self, payload, (JS_STEP_STORE_WATCH, crate::layout::STORE_WATCH_COUNTS), JS_STEP_CLASS_MARK_LISTS, record_id, value, ()).is_some(),
         };
-        let payload = self.payload;
         held_unlogged(self, payload, (JS_STEP_STORE_WATCH, crate::layout::STORE_WATCH_COUNTS), list, record_id, value, ()).is_some()
     }
     #[inline(always)]

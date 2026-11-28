@@ -874,6 +874,12 @@ impl Heap {
         self.object_records.native_mark_blocks()
     }
 
+    /// Class cell region `region`'s mark blocks (1 to 5) and their count, which a native store into a class cell
+    /// reads through `JsStepHead::class_mark_lists` (`staged::barrier::class_unmarked`).
+    pub fn native_class_mark_blocks(&self, region: u32) -> (*const u8, usize) {
+        self.class_space.native_mark_blocks(region)
+    }
+
     /// The array space's allocation cursor (`records::RecordCursor`), read and bumped by an inline empty
     /// array allocation (`NATIVE_RECORD_CURSOR_LAYOUT`). It is a field of this heap, which stays where it
     /// is while the VM runs; a native entry rereads it with the other record bases.
