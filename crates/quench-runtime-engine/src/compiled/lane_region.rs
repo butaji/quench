@@ -98,7 +98,6 @@ use captures::RootedRead;
 #[path = "lane_region/hoisted_reads.rs"] pub(crate) mod hoisted_reads;
 #[path = "lane_region/loop_hoists.rs"] pub(crate) mod loop_hoists;
 #[path = "lane_region/field_reads.rs"] pub(crate) mod field_reads;
-#[path = "lane_region/own_constants.rs"] pub(crate) mod own_constants;
 #[path = "lane_region/number_domains.rs"] pub(crate) mod number_domains;
 #[path = "lane_region/loop_arrays.rs"] pub(crate) mod loop_arrays;
 #[path = "lane_region/loop_strings.rs"] pub(crate) mod loop_strings;

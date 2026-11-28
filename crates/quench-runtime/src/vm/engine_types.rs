@@ -2892,16 +2892,6 @@ pub enum JobEnd {
 /// digits (`quench_runtime_engine`'s `AHEAD_BUILD_ID_MARK`, which names the engine and the core).
 pub const AHEAD_BUILD_ID_PREFIX: &[u8; 16] = b"QUENCH_BUILD_ID=";
 
-/// An own member a constant-marked object holds (`Vm::own_constant_of`): the object a lane body
-/// guards by identity, the exact shape it depends on (whose write retires the body), and the
-/// value the member holds while the object is marked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OwnConstant {
-    pub object: Value,
-    pub shape: u32,
-    pub value: Value,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NativeFieldLoad {
     pub shape: u32,

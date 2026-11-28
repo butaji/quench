@@ -1454,15 +1454,10 @@ pub(crate) struct OnlineFacts<'a> {
     /// The naming a cache site recorded for a `SetFunctionName`'s atom and the word of the name's string
     /// (`Vm::native_function_name`), whose staged row names a function; `None` where none may be held.
     pub(crate) names: Option<&'a dyn Fn(u16, Atom) -> Option<(quench_runtime::staged::add_plan::Transition, u64)>>,
-    /// The own member of a constant-marked object that the VM holds for `atom` (`Vm::own_constant_of`):
-    /// a read of it folds under an identity guard and a dependency on the object's exact shape.
-    pub(crate) own_constant: &'a dyn Fn(Atom) -> Option<OwnConstant>,
     /// The root constant a capture read at a PC takes (`FactTables::root_constant`): a written-once root
     /// binding's function, with the program whose root it is; `None` where none may be held.
     pub(crate) root_constant: &'a dyn Fn(usize) -> Option<(quench_runtime::vm::program_store::ProgramId, Value)>,
 }
-
-pub(crate) use quench_runtime::vm::engine_types::OwnConstant;
 
 /// A construct plan whose receiver is its fields alone (`ConstructPlanKind::Passed`): its
 /// callee, its receiver's exact shape and, per field in slot order, the field's name and where

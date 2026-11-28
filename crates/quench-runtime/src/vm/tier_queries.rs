@@ -31,6 +31,17 @@ impl Vm {
     #[inline(always)]
     pub fn function_record(&self, value: Value) -> Option<&FunctionRecord> { self.heap.function(value) }
 
+    /// The value the builtin `path` names in the active realm: its global binding, then the member of it
+    /// (`Math`, then `Math.sqrt`). `None` where the realm lacks either. A builtin the closed world never
+    /// writes holds this value in every run, so a tier may take it at load (`Identity::Builtin`).
+    pub fn native_for_path(&self, path: crate::typed_ir::BuiltinPath) -> Option<Value> {
+        let global = self.own_property(self.realm.globals, path.global)?;
+        match path.member {
+            None => Some(global),
+            Some(member) => self.own_property(global, member),
+        }
+    }
+
     /// The heap as a tier reads it: queries only, no writer.
     #[inline(always)]
     pub fn heap_reads(&self) -> HeapReads<'_> { HeapReads(&self.heap) }

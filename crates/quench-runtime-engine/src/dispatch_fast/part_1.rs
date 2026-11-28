@@ -1252,14 +1252,8 @@ pub(super) fn loop_retire_in_lane(cx: *mut LaneContext, ip: Ip, site: &LoopSite)
     // runs before `fuse_rows`): the plain jump takes the loader's pair fusion now, with the
     // `FUSED_TARGET` record where the header's target run holds (`update_fusion`'s `target`).
     if site.backedge > site.header {
-        // A header comparison that ran while the site held its loop took its formed instance (`row_jump`),
-        // which no target run names: it goes back to its plain row (and its record's `mode` to the zero of an
-        // unfused record), as the loader's `fuse_rows` saw it, so the back edge fuses the test again.
-        // SAFETY: the header is a record of the running view, on this thread.
-        if let Some(plain) = lane_frame::unformed_compare_jump(unsafe { (*header).handler }) {
-            unsafe { (*header.cast_mut()).mode = 0 };
-            requicken(header, plain);
-        }
+        // The header keeps the compare-jump form the load gave it (`specialize_compare_jumps`); it is not
+        // re-formed here, so the back edge fuses only when its target run already names that form.
         // SAFETY: the record before the backedge is the loop body's, in the same view as the jump.
         let update = unsafe { ip.sub(1) };
         if let Some((fused, mode)) = update_fusion(unsafe { &*update }, unsafe { &*ip }, Some(header)) {

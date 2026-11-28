@@ -5660,7 +5660,7 @@ use named_keys::named_key_element;
 pub(crate) mod in_place_natives;
 pub(crate) mod root_bindings;
 use root_bindings::frame_capture_at_root;
-pub mod native_calls; pub(crate) mod regexp_calls; pub(crate) mod getters; pub(crate) mod generator_yields;
+pub mod native_calls; mod builtin_calls; pub(crate) mod regexp_calls; pub(crate) mod getters; pub(crate) mod generator_yields;
 pub(crate) mod lane_roots;
 pub(crate) mod lane_trace;
 pub(crate) mod lane_stack_trace;

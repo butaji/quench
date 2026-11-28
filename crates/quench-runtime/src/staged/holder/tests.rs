@@ -37,24 +37,6 @@ fn a_holder_read_needs_the_shape_the_link_and_the_watch() {
     assert_eq!(read(guard, &watch), None, "a retired watch");
 }
 
-#[test]
-fn an_own_constant_read_needs_the_record_itself_and_the_watch() {
-    let mut heap = Heap::new();
-    heap.register_property_shape(1, 1, None);
-    let first = array_of(&mut heap, Value::NULL, &[Value::integer(1)]);
-    let second = array_of(&mut heap, Value::NULL, &[Value::integer(1)]);
-    let (one, other) = (heap.object(first).unwrap().record_only().unwrap(), heap.object(second).unwrap().record_only().unwrap());
-    assert_eq!(one.guard_word(), other.guard_word(), "one layout");
-    let expected = one as *const Object as u64;
-    let watch = Rc::new(PublishedCode::new(()));
-    let value = Value::integer(42);
-    let read = |record: &Object, watch: &Rc<PublishedCode<()>>| unsafe { concrete_own_constant_read(record, expected, Rc::as_ptr(watch), value) };
-    assert_eq!(read(one, &watch), Some(value));
-    assert_eq!(read(other, &watch), None, "another object of the layout");
-    watch.retire();
-    assert_eq!(read(one, &watch), None, "a retired watch");
-}
-
 /// The row's operands are holes in a fixed order: guard, watch, value.
 #[test]
 fn the_holder_read_leaves_its_operands_as_holes() {

@@ -98,7 +98,7 @@ impl Lowering<'_, '_> {
             _ if self.is_capture_row(pc, instruction) => Some(self.capture_step(state, pc, instruction)),
             _ if crate::compiled::meaning_compiled::is_get_field(instruction) && instruction.result_flags() & !(quench_runtime::bytecode::SET_THIS_REGISTER | quench_runtime::bytecode::RETURN_REGISTER) == 0 => {
                 let ran = self.fold_native_member(state, pc, instruction)
-                    .or_else(|| self.fold_own_constant(state, pc, instruction)).or_else(|| self.get_field(state, pc, instruction));
+                    .or_else(|| self.get_field(state, pc, instruction));
                 // A named read of a declared parameter's member enters its destination with the member's type.
                 if ran == Some(true) && !instruction.writes_current_this() && !instruction.returns_from_frame() {
                     if let (Some(base), Some((parts, None))) = (self.field_base(pc, instruction).and_then(|base| base.register_index()), self.field_chain(instruction)) {
