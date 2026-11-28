@@ -125,10 +125,15 @@ pub(super) fn writes_in_lane(instruction: WideInstruction, register: u16) -> boo
 }
 
 /// The handler of a returning record of `kind` (`returning_kind`) in a view that has no leaf form:
-/// each kind is one opcode's (its traits name it), so the record is that opcode's `returning_row`.
-pub(super) fn returning_handler(kind: u8) -> Handler {
+/// each kind is one opcode's (its traits name it), so the record is that opcode's `returning_row`. A returning
+/// `GetField` takes its row at load: a private name its private row (`Vm::is_private_name`, the atom alone decides),
+/// any other the general returning read, which no fact here narrows (a returning own row reads its record's hint).
+pub(super) fn returning_handler(kind: u8, vm: &Vm, instruction: WideInstruction) -> Handler {
     match kind {
-        RETURNING_FIELD => row_returning_field_first::<NOT_LEAF>,
+        RETURNING_FIELD if instruction.b() != quench_runtime::bytecode::FieldBase::NESTED && vm.is_private_name(instruction.imm()) => {
+            field_return_row::<NOT_LEAF>(RETURNING_FIELD_PRIVATE)
+        }
+        RETURNING_FIELD => field_return_row::<NOT_LEAF>(RETURNING_FIELD),
         RETURNING_UNARY => returning_row_of!(quench_runtime::bytecode::UNARY_ROW, RETURNING_UNARY, NOT_LEAF) as Handler,
         RETURNING_BINARY => returning_row_of!(quench_runtime::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
         RETURNING_OBJECT => returning_row_of!(quench_runtime::bytecode::OBJECT_PAIR, RETURNING_OBJECT, NOT_LEAF) as Handler,
@@ -317,7 +322,7 @@ pub(crate) fn derive_lane_view<'live>(
                 // `super(...)`: the parent pushed in place in the frame the lane runs (`derived_frames`).
                 Some(LaneHandler { handler: derived_frames::super_construct_in_frame as Handler, produces: false })
             } else if let Some(kind) = returning_kind(instruction) {
-                Some(LaneHandler { handler: returning_handler(kind), produces: false })
+                Some(LaneHandler { handler: returning_handler(kind, vm, instruction), produces: false })
             } else if let Some(index) = typed_element.filter(|_| acc == ACC_NONE) {
                 Some(LaneHandler {
                     handler: element_typed_row(quench_runtime::staged::element_read_family(op), index),
@@ -1522,12 +1527,13 @@ fn specialize_boolean_flags(records: &mut [LaneInstruction]) {
     }
 }
 
-/// The trusted own-field read of the `GetField` at `pc` (`TRUSTED_*`), where the facts prove its base's class `C`: the
-/// base's cell is a proven {C} (`cell_at` of a register, `this_classes` of `this`), `C`'s instances are fixed cells
-/// (`class_form`), and `C`'s layout holds the field (`field_slot`). Returns the row and the operand word it reads
-/// (`FieldOperand::shape`): the field's slot in `C`'s cell, a spilled slot word past the cell's spill slot
-/// (`spill_from`), with `TRUSTED_HOLE` where `C` may leave the field absent. `None` for a local or nested base, and
-/// where no fact proves the class.
+/// The trusted own-field read of the `GetField` at `pc` (`TRUSTED_*`), where the facts prove its base's classes: the
+/// base's cell is a proven closed set of classes (`cell_at` of a register, `this_classes` of `this`), each class `C` of
+/// the set has its instances as fixed cells (`class_form`) and holds the field (`field_slot`), and all of them read the
+/// same slot word and form (`trusted_operand`), so one row and one word serve every class of the set. Returns the row and
+/// the operand word it reads (`FieldOperand::shape`): the field's slot in the cell, a spilled slot word past the cell's
+/// spill slot (`spill_from`), with `TRUSTED_HOLE` where a class may leave the field absent. `None` for a local or nested
+/// base, and where no fact proves the classes.
 pub(super) fn trusted_named_read(facts: Option<&quench_runtime::compile::aot_facts::AotFacts>, function_id: u32, pc: u32,
     instruction: WideInstruction) -> Option<(Handler, u32)> {
     let facts = facts?;
@@ -1552,12 +1558,36 @@ pub(super) fn trusted_named_read(facts: Option<&quench_runtime::compile::aot_fac
         }
         cell.classes
     };
-    let (class, proven) = classes.single()?;
-    if !proven {
+    if !classes.proven() {
         return None;
     }
     let atom = instruction.imm();
-    let slot = u32::from(function.field_slot(class, atom)?);
+    let mut shared: Option<(quench_runtime::compile::aot_facts::ClassForm, u32)> = None;
+    for &class in classes.ids() {
+        let operand = trusted_operand(facts, class, atom)?;
+        if shared.is_some_and(|first| first != operand) {
+            return None;
+        }
+        shared = Some(operand);
+    }
+    let (form, word) = shared?;
+    let handler = match (form, this) {
+        (quench_runtime::compile::aot_facts::ClassForm::Own, true) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_THIS),
+        (quench_runtime::compile::aot_facts::ClassForm::Own, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER),
+        (quench_runtime::compile::aot_facts::ClassForm::Run, true) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS),
+        (quench_runtime::compile::aot_facts::ClassForm::Run, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER),
+    };
+    Some((handler, word))
+}
+
+/// The storage form and operand word a trusted read of `atom` in instances of `class` takes: the form of the class's
+/// cell (`class_form`) and the field's slot word (`field_slot`, a spilled word past `spill_from`), with `TRUSTED_HOLE` where
+/// the class may leave the field absent (`!field_always_stored`). `None` where the class is no fixed cell, lacks the field,
+/// or its word has the hole bit set, which the operand cannot carry.
+fn trusted_operand(facts: &quench_runtime::compile::aot_facts::AotFacts, class: u32, atom: u32)
+    -> Option<(quench_runtime::compile::aot_facts::ClassForm, u32)> {
+    let form = facts.class_form(class)?;
+    let slot = u32::from(facts.field_slot(class, atom)?);
     let word = match facts.spill_from(class) {
         Some(spill) if slot >= spill => quench_runtime::staged::field_cache_layout::spilled_slot(spill, slot - spill),
         _ => slot,
@@ -1567,13 +1597,7 @@ pub(super) fn trusted_named_read(facts: Option<&quench_runtime::compile::aot_fac
         return None;
     }
     let hole = if facts.field_always_stored(class, atom) { 0 } else { TRUSTED_HOLE };
-    let handler = match (facts.class_form(class)?, this) {
-        (quench_runtime::compile::aot_facts::ClassForm::Own, true) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_THIS),
-        (quench_runtime::compile::aot_facts::ClassForm::Own, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_OWN_REGISTER),
-        (quench_runtime::compile::aot_facts::ClassForm::Run, true) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_THIS),
-        (quench_runtime::compile::aot_facts::ClassForm::Run, false) => generated_row!(FIELD_LEAF_READ, ACC_NONE, TRUSTED_RUN_REGISTER),
-    };
-    Some((handler, word | hole))
+    Some((form, word | hole))
 }
 
 /// The first-run row of a `GetField` whose base is no local slot, chosen at load from its atom and base. A private
@@ -1605,9 +1629,9 @@ fn named_read_row(vm: &quench_runtime::vm::Vm, instruction: WideInstruction, fac
         });
     }
     // The generated own read of the form of no particular hint, which binds the lane's object records on its first
-    // miss where they are not yet bound.
+    // miss where they are not yet bound. A nested base takes the general read: no load-time row reads its hops.
     let (this, register) = (own_formed_handler::<true>(None), own_formed_handler::<false>(None));
-    Some(single_base_handler(base, this, register, row_get_field_miss))
+    Some(single_base_handler(base, this, register, row_get_field_general))
 }
 
 /// The row of a register's `length` read at `pc`, chosen at load from the solve. A base the solve proves a string (its

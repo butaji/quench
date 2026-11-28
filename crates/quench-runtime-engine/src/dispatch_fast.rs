@@ -368,7 +368,6 @@ impl LaneView {
                         returning_row_of!(quench_runtime::bytecode::UNARY_ROW, RETURNING_UNARY, $leaf) as Handler),
                     (returning_row_of!(quench_runtime::bytecode::BINARY_ROW, RETURNING_BINARY, NOT_LEAF) as Handler,
                         returning_row_of!(quench_runtime::bytecode::BINARY_ROW, RETURNING_BINARY, $leaf) as Handler),
-                    (row_returning_field_first::<NOT_LEAF>, row_returning_field_first::<{ $leaf }>),
                     (row_returning_field_miss::<NOT_LEAF>, row_returning_field_miss::<{ $leaf }>),
                     (generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(true, NOT_LEAF)),
                         generated_row!(FIELD_LEAF_READ, ACC_NONE, returning_site(true, { $leaf }))),
@@ -2823,14 +2822,14 @@ pub(crate) const GETTER_REGISTER: u8 = own_site(false, OWN_FORMS.len() + 15);
 
 /// The site fact of a nested read `a.b.c` of two own entries (`get_field_nested_miss`'s steps):
 /// the record's hint is the first step's entry, the site's second entry the second; the row runs
-/// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read that
-/// refreshes the hint.
+/// them as a chain of two own hops (`RecordPlan::nested`), and its miss takes the hand read.
+/// No load installs it: a nested read takes the general read.
 pub(crate) const NESTED_SITE: u8 = own_site(false, OWN_FORMS.len() + 16);
 
 /// The formed nested sites: `NESTED_SITE`'s row with each hop's storage form fixed, the first hop's
 /// (the record's hint) and the second's (the intermediate object's), each a flat run or packed inline
-/// values (`nested_hop_class`). Indexes 43 to 46 are below the returning sites (from 59) and no other
-/// site fact uses them.
+/// values (`nested_mode_parts`). Indexes 43 to 46 are below the returning sites (from 59) and no other
+/// site fact uses them. No load installs them now.
 const NESTED_PAIR_BASE: usize = OWN_FORMS.len() + 34;
 pub(crate) const NESTED_FLAT_FLAT: u8 = own_site(false, NESTED_PAIR_BASE);
 pub(crate) const NESTED_FLAT_INLINE: u8 = own_site(false, NESTED_PAIR_BASE + 1);
@@ -2937,15 +2936,12 @@ macro_rules! own_sites {
 
 
 script_handler! {
-    /// The polymorphic row's miss (`POLYMORPHIC_SITE`): a site whose entries moved to the hash
-    /// takes the hashed row (`HASHED_SITE`) from now on; every other miss takes it as well, which
-    /// reads the hash and misses to `lane_get_field`.
+    /// The polymorphic row's miss (`POLYMORPHIC_SITE`): the general read, which keeps the record. A polymorphic
+    /// read whose classes the load proves one slot for takes its trusted row there (`trusted_named_read`).
     #[inline(never)]
     fn row_polymorphic_miss<>(cx, r, ip, i, view) {
-        if unsafe { vm(cx) }.field_site_hashed(i.c) {
-            requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, HASHED_SITE));
-        }
-        sibling!(generated_row!(FIELD_LEAF_READ, ACC_NONE, HASHED_SITE), r, ip, Carried::script_in(cx, view))
+        let _ = i;
+        sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
 
@@ -3101,102 +3097,17 @@ script_handler! {
 }
 
 script_handler! {
-    /// A miss of a single-entry read (the own-field row, `lane_get_field_holder`, `_inherited`): a nested record moves to
-    /// `lane_get_field`, one whose site went polymorphic to `POLYMORPHIC_SITE`,
-    /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
-    /// an inherited entry to the generated inherited read; the read itself takes
-    /// `lane_get_field`.
+    /// A miss of a single-entry read (the own-field row, or a nested read's base): the general read, which keeps the
+    /// record. The row was chosen at load (`named_read_row`); no miss rewrites it.
     #[inline(never)]
     fn row_get_field_miss<>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        let base = unsafe { single_field_base_in_lane(cx, r, i.b) };
-        let string_base = base.is_some_and(|base| {
-            (unsafe { vm(cx) }).heap_reads().is_string(base)
-        });
-        let geometry_base = base.is_some_and(|base| geometry_read_in_lane(unsafe { vm(cx) }, base, i.imm()).is_some());
-        let handler: Option<Handler> = match field_site_tier_in_lane(unsafe { vm(cx) }, code, i) {
-            // A site that read a typed array's, DataView's, Map's or Set's geometry mostly
-            // reads such views, as a loop over one does: the host read row answers it first.
-            _ if geometry_base => Some(single_base_handler(
-                i.b,
-                general_handler(i.b),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, GEOMETRY_SITE),
-                general_handler(i.b),
-            )),
-            // A string primitive reads `String.prototype`, whatever tier its entries name,
-            // where the site admits that read; any other read of one is the general read's.
-            _ if string_base && (unsafe { vm(cx) }).string_field_site_cacheable(code, i.imm()) => {
-                Some(single_base_handler(
-                    i.b,
-                    protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>(),
-                    generated_row!(FIELD_LEAF_READ, ACC_NONE, STRING_SITE),
-                    protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_STRING as u16 }>(),
-                ))
-            }
-            _ if string_base => Some(general_handler(i.b)),
-            // A number primitive reads `Number.prototype` where the site admits that read, as the
-            // string arm does; a `this` or nested base takes the general read.
-            _ if base.is_some_and(|base| base.as_number().is_some())
-                && (unsafe { vm(cx) }).number_field_site_cacheable(code, i.imm()) =>
-            {
-                Some(single_base_handler(
-                    i.b,
-                    general_handler(i.b),
-                    generated_row!(FIELD_LEAF_READ, ACC_NONE, NUMBER_SITE),
-                    general_handler(i.b),
-                ))
-            }
-            FieldSiteTier::Nested if nested_row_site(unsafe { vm(cx) }, code, i) => Some(generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_SITE)),
-            FieldSiteTier::Nested => Some(protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_NESTED as u16 }>()),
-            FieldSiteTier::General => Some(general_handler(i.b)),
-            // A getter's own-field hint is the generated read (`GETTER_THIS`, `GETTER_REGISTER`); a
-            // local base, which no row names, reads through the getter's activation.
-            FieldSiteTier::Getter => Some(single_base_handler(
-                i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, GETTER_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, GETTER_REGISTER),
-                protocol_handler::<{ quench_runtime::bytecode::FIELD_READ as u16 }, ACC_NONE, { protocol_family::ELEMENT | protocol_misses::element::GET_FIELD_GETTER as u16 }>(),
-            )),
-            FieldSiteTier::Polymorphic if is_single_field_base(i.b) =>
-                Some(generated_row!(FIELD_LEAF_READ, ACC_NONE, POLYMORPHIC_SITE) as Handler),
-            FieldSiteTier::Polymorphic => Some(general_handler(i.b)),
-            // A receiver outside the object records, such as a function, takes the cell lookup.
-            FieldSiteTier::Holder
-                if base.is_some_and(|object| object.direct_object_index().is_none()) =>
-            {
-                Some(if quench_runtime::bytecode::FieldBase(i.b).register_index().is_some() {
-                    generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_CELL_REGISTER)
-                } else {
-                    general_handler(i.b)
-                })
-            }
-            FieldSiteTier::Holder => Some(single_base_handler(
-                i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_SITE_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, HELD_SITE_REGISTER),
-                general_handler(i.b),
-            )),
-            FieldSiteTier::Inherited => Some(single_base_handler(
-                i.b,
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, INHERITED_THIS),
-                generated_row!(FIELD_LEAF_READ, ACC_NONE, INHERITED_REGISTER),
-                general_handler(i.b),
-            )),
-            // An own read takes no row here: a fixed class's read is installed at load (`trusted_named_read`), and any
-            // other own read is the general read, which keeps its record.
-            FieldSiteTier::Own => None,
-        };
-        if let Some(handler) = handler {
-            requicken(ip, handler);
-        }
+        let _ = i;
         sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
     }
 }
 
 
 
-pub(crate) use quench_runtime::vm::engine_types::FieldSiteTier;
 
 
 
@@ -3212,15 +3123,12 @@ pub(crate) use quench_runtime::vm::engine_types::FieldSiteTier;
 
 script_handler! {
     /// A nested `GetField` whose steps hit their entries without guest code
-    /// (`lane_nested_value`); any other read takes the general row (`row_get_field_general`). A miss
-    /// retires a formed instance to `NESTED_SITE`, and a hit re-chooses the instance from the hops read
-    /// (`requicken_nested`).
+    /// (`lane_nested_value`); any other read takes the general row (`row_get_field_general`). The nested
+    /// read is no load-time row, so its record keeps its row either way.
     fn get_field_nested_miss<>(cx, r, ip, i, view) {
-        requicken(ip, generated_row!(FIELD_LEAF_READ, ACC_NONE, NESTED_SITE));
         let Some(value) = (unsafe { lane_nested_value(cx, r, ip, i) }) else {
             sibling!(row_get_field_general, r, ip, Carried::script_in(cx, view))
         };
-        unsafe { requicken_nested(cx, r, ip, i) };
         r.set(i.a, value);
         next!(cx, r, following(ip), Carried::script_in(cx, view))
     }
@@ -6444,8 +6352,7 @@ const RETURNING_BINARY: u8 = 2;
 const RETURNING_OBJECT: u8 = 3;
 const RETURNING_LITERAL: u8 = 4;
 /// A `RETURNING_FIELD` read of a register or `this` at a site that reads neither `name` nor
-/// `length`: the site's primary own entry (`Vm::primary_own_field_hit`), installed by
-/// `row_returning_field_first`.
+/// `length`: the site's primary own entry (`Vm::primary_own_field_hit`). No load installs it now.
 const RETURNING_FIELD_OWN: u8 = 5;
 /// `RETURNING_FIELD_OWN` at a site past one shape (`Vm::polymorphic_field_hit`).
 const RETURNING_FIELD_POLYMORPHIC: u8 = 6;
@@ -6794,65 +6701,12 @@ script_handler! {
 }
 
 script_handler! {
-    /// A returning `GetField`'s first run: a single read that names neither `name` nor
-    /// `length` (`Vm::reads_function_info`) takes `RETURNING_FIELD_OWN`; any other keeps
-    /// `RETURNING_FIELD`, whose cached read prepares them. Every kind keeps the record's leaf
-    /// form (`LEAF`, `LaneView::specialize_leaf_returns`).
-    #[inline(never)]
-    fn row_returning_field_first<LEAF: u8>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let handler = returning_field_first_kind::<LEAF>(unsafe { vm(cx) }, unsafe { &*(*cx).code }, i);
-        requicken(ip, handler);
-        sibling!(handler, r, ip, Carried::script_in(cx, view))
-    }
-}
-
-
-
-script_handler! {
-    /// A miss of a single-entry returning read (`RETURNING_FIELD_OWN`, `_HOLDER`,
-    /// `_INHERITED`): the record moves to the kind its site's tier calls for
-    /// (`field_site_tier_in_lane`), as `row_get_field_miss` moves a plain read; the read itself
-    /// takes `RETURNING_FIELD`.
+    /// A miss of a single-entry returning read (`RETURNING_FIELD_OWN`, `_HOLDER`, `_INHERITED`, `_POLYMORPHIC`): the
+    /// general returning read, which keeps the record. No load installs those kinds now, so only a record that already
+    /// holds one reaches this miss.
     #[inline(never)]
     fn row_returning_field_miss<LEAF: u8>(cx, r, ip, i, view) {
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        // The row's own hint is stale: the primary own entry answers as the single-entry kind did,
-        // and a direct object's hit rebinds the hint the row reads.
-        if let Some(object) = unsafe { single_field_base_in_lane(cx, r, i.b) } {
-            let vm = unsafe { vm(cx) };
-            if let Some(value) = vm.primary_own_field_hit(code, object, i.c) {
-                if object.direct_object_index().is_some() {
-                    // The row compares layout ids (`form_hint`), not the entry's exact shape.
-                    set_field_hint(ip, vm.form_hint(vm.field_cache_entry(i.c), object));
-                }
-                lane_return_value!(cx, ip, value, LEAF);
-            }
-        }
-        // The single-entry tiers read the object records alone; a receiver in a heap cell
-        // keeps the general cached read.
-        let cell_receiver = unsafe { single_field_base_in_lane(cx, r, i.b) }
-            .is_some_and(|object| object.direct_object_index().is_none());
-        let handler: Option<Handler> = match field_site_tier_in_lane(unsafe { vm(cx) }, code, i) {
-            // A local base has no single-base kind (`is_single_field_base`).
-            tier if tier != FieldSiteTier::Nested && !is_single_field_base(i.b) => {
-                Some(field_return_row::<LEAF>(RETURNING_FIELD))
-            }
-            FieldSiteTier::Own | FieldSiteTier::Holder | FieldSiteTier::Inherited if cell_receiver => {
-                Some(field_return_row::<LEAF>(RETURNING_FIELD))
-            }
-            FieldSiteTier::Nested => Some(field_return_row::<LEAF>(RETURNING_FIELD_NESTED)),
-            FieldSiteTier::General => Some(field_return_row::<LEAF>(RETURNING_FIELD)),
-            FieldSiteTier::Getter => Some(field_return_row::<LEAF>(RETURNING_FIELD_GETTER)),
-            FieldSiteTier::Polymorphic => Some(field_return_row::<LEAF>(RETURNING_FIELD_POLYMORPHIC)),
-            FieldSiteTier::Holder => Some(field_return_row::<LEAF>(RETURNING_FIELD_HOLDER)),
-            FieldSiteTier::Inherited => Some(field_return_row::<LEAF>(RETURNING_FIELD_INHERITED)),
-            FieldSiteTier::Own => None,
-        };
-        if let Some(handler) = handler {
-            requicken(ip, handler);
-        }
+        let _ = i;
         sibling!(returning_miss::<RETURNING_FIELD, LEAF>, r, ip, Carried::script_in(cx, view))
     }
 }

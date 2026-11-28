@@ -175,8 +175,8 @@ view_handler! {
                 // the site's (`PropertyFrame::nested_base`). A hop the record does not hold misses.
                 let machine = unsafe { vm(script) };
                 if const { FLAG != crate::dispatch_fast::NESTED_SITE && !crate::dispatch_fast::sink_site(FLAG) } {
-                    // A formed instance's hops are its record's (`requicken_nested`): the hint the first,
-                    // `mode` the second and the base. Their guards are the check, so nothing is looked up.
+                    // A formed instance's hops are its record's: the hint the first, `mode` the second and the
+                    // base. Their guards are the check, so nothing is looked up.
                     let hint = i.field_hint();
                     let (layout, slot, base) = crate::dispatch_fast::nested_mode_parts(i.mode);
                     if base == quench_runtime::bytecode::FieldBase::THIS { frame.this = r.this(); }

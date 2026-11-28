@@ -72,8 +72,7 @@ fn leaf_reads(instruction: WideInstruction, body: &Function, code: &ResidualProg
         // place (`lane_set_field_in_place`) or on the general path, either of which makes
         // the leaf an activation first.
         Some(Operation::SetField { .. }) => return store_leaf(instruction, private),
-        // A returning read requickens by its site's tier in its leaf form
-        // (`row_returning_field_first`, `LaneView::specialize_leaf_returns`).
+        // A returning read takes its row at load, in its leaf form (`LaneView::specialize_leaf_returns`).
         Some(Operation::GetField { .. }) => return field_leaf(instruction, code, private),
         _ => {}
     }
