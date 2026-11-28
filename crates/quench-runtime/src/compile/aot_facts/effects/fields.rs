@@ -4,7 +4,7 @@
 use super::super::accessors::{accessor_definition, accessor_mode, site_holder};
 use super::super::value::{Key, Origin, PrototypeBase, Word};
 use super::{Ctx, Events, decoded, settled};
-use crate::bytecode::WideInstruction;
+use crate::bytecode::{PropertyDefinitionMode, WideInstruction};
 use crate::staged::protocol_literals::LiteralStep;
 use crate::staged::typing;
 use crate::staged::{Operation, Protocol};

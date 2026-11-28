@@ -374,7 +374,7 @@ pub(super) struct Loop {
 
 /// The loops of `function`. A backedge is a normal edge to a block no later than its source; its loop's body is the blocks that reach
 /// the source without passing the header. Backedges sharing a header are one loop, so its body covers all of them.
-pub(super::super) fn loops_of(function: &Function, blocks: &Blocks) -> Vec<Loop> {
+pub(in super::super) fn loops_of(function: &Function, blocks: &Blocks) -> Vec<Loop> {
     let mut preds: Vec<Vec<usize>> = vec![Vec::new(); blocks.ranges.len()];
     for (block, targets) in blocks.targets.iter().enumerate() {
         for &target in targets {
@@ -421,14 +421,14 @@ pub struct IndexRange {
 
 /// The index ranges of the reads a settled solve recorded (`intervals`, by pc), each paired with the outermost loop containing it in
 /// which its forms are unwritten. A read in no such loop has none.
-pub(super::super) fn index_ranges(intervals: &BTreeMap<u32, Interval>, loops: &[Loop], parameters: &[(Register, u16)]) -> BTreeMap<u32, IndexRange> {
+pub(in super::super) fn index_ranges(intervals: &BTreeMap<u32, Interval>, loops: &[Loop], parameters: &[(Register, u16)]) -> BTreeMap<u32, IndexRange> {
     intervals.iter().filter_map(|(&pc, interval)| index_range(pc, interval, loops, parameters).map(|range| (pc, range))).collect()
 }
 
 /// The parameters (`index`, and the register that holds it) no instruction of `function` writes, so each holds its value on entry at
 /// every point: a form over such a register is a form over `Base::Parameter(index)`. A function that reads its `arguments` object may
 /// write its parameters through it, so it has none.
-pub(super::super) fn parameter_registers(function: &Function) -> Vec<(Register, u16)> {
+pub(in super::super) fn parameter_registers(function: &Function) -> Vec<(Register, u16)> {
     let reads_arguments = (0..function.code.len()).any(|pc| function.instruction_at(pc).op().reads_arguments());
     if reads_arguments {
         return Vec::new();
