@@ -9,8 +9,10 @@ use crate::ValueType;
 use super::quiet::{Arguments, BUILTINS, Proofs, Quiet, STRING_METHODS, StringBuiltins, StringMethod};
 use super::value::{Key, Origin};
 
-/// Names that reach the global object as a value (`globalThis`, Node's `global`, and the browser names `self` and `window`).
-const GLOBAL_OBJECT_NAMES: [&str; 4] = ["globalThis", "global", "self", "window"];
+/// The names the realm installs as the global object (`globalThis`, and Node's `global`, which the host installs). A browser
+/// name (`self`, `window`) is unbound unless the program writes it, and a program reaches the global object to write it only
+/// through one of these, its root `this`, or a sloppy call, each of which already makes the global object a value.
+const GLOBAL_OBJECT_NAMES: [&str; 2] = ["globalThis", "global"];
 /// Methods that pass their receiver argument as the `this` of a call (`f.call(undefined)`): a sloppy callee gets the global object.
 const THIS_PASSERS: [&str; 3] = ["call", "apply", "bind"];
 
@@ -68,8 +70,10 @@ pub(super) struct Scope {
     module: bool,
     /// The atoms that name the global object.
     global_objects: Vec<u32>,
+    /// The atoms of the names a builtin reads off an object with no read instruction of the program (`readers::PROTOCOL_NAMES`).
+    pub(super) protocols: std::collections::BTreeSet<u32>,
     /// The atom `globalThis` interns to, if the program names it: the one global name the realm installs as the global
-    /// object itself (`GlobalObject`). `self`, `window` and `global` are not installed, so they carry no such identity.
+    /// object itself (`GlobalObject`). `global` is the host's alias of it, and `self` and `window` are not installed.
     global_this: Option<u32>,
     /// The atoms of the property builtins the program names, with their row of `PROPERTY_BUILTINS`.
     property_adders: Vec<(u32, bool, Descriptors)>,
@@ -130,6 +134,7 @@ impl Scope {
                 .map(|id| program.with_record(id, |function| function.parent))
                 .collect(),
             module: matches!(program.kind, ProgramKind::Module),
+            protocols: program.atoms.iter().enumerate().filter(|(_, name)| super::readers::PROTOCOL_NAMES.contains(&name.as_ref())).map(|(atom, _)| atom as u32).collect(),
             constant_types: program.constants.iter().zip(constant_atoms(program))
                 .map(|(constant, atom)| constant_type(constant, atom)).collect(),
             constant_numbers: program.constants.iter().map(|constant| match constant {
@@ -260,6 +265,16 @@ impl Scope {
     /// Whether the method named `atom` passes its receiver argument as a call's `this` (`THIS_PASSERS`).
     pub(super) fn passes_this(&self, atom: u32) -> bool {
         self.this_passers.contains(&atom)
+    }
+
+    /// The parent of function `function`, None for a root.
+    pub(super) fn parent(&self, function: u32) -> Option<u32> {
+        self.parents.get(function as usize).copied().flatten()
+    }
+
+    /// Whether the program is a Module.
+    pub(super) fn is_module(&self) -> bool {
+        self.module
     }
 
     /// Whether the root's `this` is the global object: a Script's is (sloppy top-level code), a Module's is `undefined`

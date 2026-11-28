@@ -141,6 +141,15 @@ impl Types {
         for function in &escaped {
             if let Some(slots) = types.params.get_mut(function) { slots.iter_mut().for_each(|slot| *slot = Cell::ANY); }
         }
+        // A parameter that lives in a local slot (`FunctionFlow::slotted`) holds its argument there from entry, a write no
+        // instruction makes: the slot's cell joins the parameter's (any value where the calls type no parameter).
+        for (id, flow) in flows.iter().enumerate() {
+            for index in flow.slotted.iter().enumerate().filter(|(_, slotted)| **slotted).map(|(index, _)| index as u16) {
+                let param = types.params.get(&(id as u32)).and_then(|cells| cells.get(usize::from(index))).copied().unwrap_or(Cell::ANY);
+                let joined = types.cells.entry(Key::Slot { owner: id as u32, slot: index }).or_insert(Cell::NEVER);
+                *joined = joined.join(param);
+            }
+        }
         for (id, flow) in flows.iter().enumerate() {
             for call in &flow.calls {
                 for target in targets(id as u32, call, facts, census) {
@@ -197,6 +206,11 @@ impl Types {
         self.unseen = Cell::NEVER;
         self.stored = StoredByClass::default();
         self
+    }
+
+    /// Whether some program write reaches `key`: a key none reaches holds only what the realm put there.
+    pub(super) fn written(&self, key: Key) -> bool {
+        self.cells.contains_key(&key)
     }
 
     /// The cell a read of `key` holds: the join of its writes', its class a guess; `unseen` where none is seen.
@@ -412,6 +426,12 @@ fn call_results(
         let id = id as u32;
         for call in flow.calls.iter().filter(|call| !call.construct) {
             let callees = targets(id, call, facts, census);
+            // A method call on a receiver that is only `null` or `undefined` (or no value yet, a pass from the bottom) throws
+            // before it calls, or runs nothing yet: it returns no value (`escapes::Handed::call` hands it nothing either).
+            if callees.is_empty() && call.receiver.cell.ty.is_subtype(Type::NULLISH) && super::escapes::method_atom(call).is_some() {
+                cells.insert((id, call.pc), Cell::NEVER);
+                continue;
+            }
             let Some((&first, rest)) = callees.split_first() else { continue };
             links.extend(rest.iter().map(|&callee| (ElementClass::Return(callee), ElementClass::Return(first))));
             // A callee no return of reaches never returns: it adds nothing to the join.
@@ -487,7 +507,7 @@ pub(super) fn targets(function: u32, call: &super::flow::Call, facts: &AotFacts,
 /// the parameter it binds, and its receiver's class to the callee's `this`, so the callee's stores into them reach the
 /// caller's arrays. A callee an unresolved call may reach, an escaped one, and one no recorded call reaches are entered with
 /// values the solve does not see: their entry classes join the unnamed class, as the arguments of an escape do (`escapes`).
-fn entry_links(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &BTreeSet<u32>, links: &mut Vec<(ElementClass, ElementClass)>) {
+pub(super) fn entry_links(flows: &[FunctionFlow], facts: &AotFacts, census: &Census, escaped: &BTreeSet<u32>, links: &mut Vec<(ElementClass, ElementClass)>) {
     let mut reached = BTreeSet::new();
     let mut open = escaped.clone();
     for (id, flow) in flows.iter().enumerate() {

@@ -82,6 +82,10 @@ pub(super) struct Events {
     pub(super) wild: Holders,
     /// The holders of each named store's object, by name (`FunctionFlow::member_bases`).
     pub(super) member_bases: Vec<(u32, Holders)>,
+    /// Whether the instruction is a global store of the program's own that names no global (`FunctionFlow::unkeyed_global`).
+    pub(super) unkeyed_global: bool,
+    /// The values a literal's definitions put in it, with the element class of an array literal's (`FunctionFlow::defined`).
+    pub(super) defined: Vec<(Option<ElementClass>, Word)>,
     /// The element-class links the instruction's stores make beyond its `writes` (`Word::link`): a value stored as an
     /// element, whose array joins the unnamed class its element reads come back with.
     pub(super) links: Vec<(ElementClass, ElementClass)>,
@@ -193,6 +197,7 @@ pub(super) fn step(ctx: &Ctx<'_>, pc: usize, instruction: WideInstruction, state
     writes(ctx, pc, instruction, operation, state, &mut events);
     // A literal's element definition joins the element type of the array it defines into (`MakeArray`).
     if instruction.op() == crate::bytecode::Op::DefineArrayElement {
+        events.defined.push((Some(state[usize::from(instruction.register_b())].elements_key()), state[usize::from(instruction.register_a())]));
         let element = state[usize::from(instruction.register_a())].cell;
         let array = usize::from(instruction.register_b());
         state[array].cell.elements = state[array].cell.elements
@@ -293,7 +298,12 @@ fn value_of(
         }
         // `new` defines an object whatever it constructs: a constructor's non-object return is replaced by the
         // object it allocated.
-        if ctx.types.is_some() { return Word::of(Type::language(crate::ValueType::Object)); }
+        // A global the program writes nowhere is the realm's builtin of that name, which makes an object of no program class
+        // (`Origin::Foreign`; `escapes::Reach` takes it so only where no write the analysis cannot follow reaches the globals).
+        if let Some(types) = ctx.types {
+            let foreign = matches!(callee.origin, Some(Origin::Binding(key @ Key::Global(_))) if !types.written(key));
+            return Word { origin: foreign.then_some(Origin::Foreign), ..Word::of(Type::language(crate::ValueType::Object)) };
+        }
     }
     if is_global_load(instruction) {
         let atom = instruction.atom_index();
@@ -554,6 +564,7 @@ fn unfollowed_writes(ctx: &Ctx<'_>, instruction: WideInstruction, operation: Opt
         && !global_store
     {
         events.wild_global = true;
+        events.unkeyed_global = true;
         events.wild_owner = true;
     }
     match operation {
@@ -582,6 +593,7 @@ fn binding_stores(ctx: &Ctx<'_>, pc: usize, operation: Option<Operation<(), ()>>
             Some(owner) => write(ctx, pc, true, events, Key::Slot { owner, slot }, state[usize::from(source)]),
             None => {
                 events.wild_global = true;
+                events.unkeyed_global = true;
                 events.wild_owner = true;
             }
         },

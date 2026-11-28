@@ -57,6 +57,8 @@ pub(super) struct Record {
     reads_this: bool,
     wild: Holders,
     member_bases: Vec<(u32, Holders)>,
+    defined: Vec<(Option<ElementClass>, Word)>,
+    unkeyed_global: bool,
     /// Whether a builtin stores an index into an object that may be a builtin's prototype (`FunctionFlow::prototype_writes`).
     prototype_writes: bool,
     /// Per register, the join of the facts it is defined with.
@@ -138,6 +140,8 @@ impl Record {
             reads_this: false,
             wild: Holders::NONE,
             member_bases: Vec::new(),
+            defined: Vec::new(),
+            unkeyed_global: false,
             prototype_writes: false,
             defs: vec![None; registers],
             unsafe_reads: vec![false; registers],
@@ -318,6 +322,8 @@ impl Record {
         self.global_source |= events.global_source;
         self.wild = self.wild.join(events.wild);
         self.member_bases.extend(events.member_bases);
+        self.defined.extend(events.defined);
+        self.unkeyed_global |= events.unkeyed_global;
         self.wild_elements |= events.wild_elements;
         self.links.extend(events.writes.iter().filter_map(|(key, word)| word.link(key.elements_class())).chain(events.links));
         self.writes.extend(events.writes.into_iter().map(|(key, word)| (pc, key, word)));
@@ -432,6 +438,8 @@ impl Record {
             reads_this: self.reads_this,
             wild: self.wild,
             member_bases: self.member_bases,
+            defined: self.defined,
+            unkeyed_global: self.unkeyed_global,
             prototype_writes: self.prototype_writes,
             wild_elements: self.wild_elements,
             numbers,
@@ -447,6 +455,7 @@ impl Record {
             quiet: self.quiet,
             arity,
             in_register,
+            slotted: Box::default(),
             returns_out,
             strict,
             handed: self.handed,

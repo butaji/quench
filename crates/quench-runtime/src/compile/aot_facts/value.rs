@@ -50,6 +50,9 @@ pub(super) enum Origin {
     Prototype(PrototypeBase),
     /// An instance of class `function` (`new`).
     Instance(u32),
+    /// An object a host constructor makes (`new Error(...)`, a builtin the program binds to nothing): fresh, and an instance of
+    /// no program class, so unseen code that holds it reaches no class's own stores through it (`escapes::Reach`).
+    Foreign,
     /// The array a literal or an array constructor allocates at `pc` of `function` (`effects::value_of`): its own element
     /// class, which only a store or a call joins to another (`Word::link`).
     Alloc { function: u32, pc: u32 },
