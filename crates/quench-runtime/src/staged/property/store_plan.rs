@@ -1,7 +1,7 @@
 //! The proved plans a field store runs: its store arms, join and plan sources.
 
 use super::*;
-use super::super::field_cache_layout::is_class_key;
+use super::super::field_cache_layout::{is_class_key, CLASS_KEY};
 
 /// One own data slot a store site proved: objects of exact `shape` keep the field at `slot`.
 /// `holds` is `None` where the value stored is of a type the slot's type holds. Otherwise it
@@ -46,6 +46,11 @@ impl StoreArm {
     /// Whether the arm's key names a live class cell, not a shape (`field_cache_layout::is_class_key`).
     pub(crate) fn keys_class(self) -> bool {
         is_class_key(self.shape)
+    }
+
+    /// The class id a class-keyed arm names: its key without `CLASS_KEY` (`StoreArm::of_class`).
+    pub(crate) fn class_id(self) -> u32 {
+        self.shape & !CLASS_KEY
     }
 }
 
