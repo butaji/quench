@@ -5,7 +5,7 @@ use super::*;
 /// `GetField`: `base`'s value, as the loop's entry or the record of an OSR region already
 /// holds it, else read through `lookup`'s plan.
 #[inline(always)]
-pub(in super::super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: FieldBase, lookup: FieldLookup,
+pub fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: FieldBase, lookup: FieldLookup,
     miss: S::Miss) -> Option<S::Word> {
     if let Some(word) = frame.hoisted(stage, lookup) { return Some(word); }
     if let Some(word) = frame.entry_field(stage, lookup) { return Some(word); }
@@ -65,7 +65,7 @@ pub(in super::super) fn get_field<S: Stage, F: PropertyFrame<S>>(stage: &mut S, 
 /// The property operations of `step`: the word each produces, or `Unresolved` where the
 /// frame holds no plan or callout for it.
 #[inline(always)]
-pub(in super::super) fn property_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
+pub fn property_step_of<const KIND: u16, S: NumericStage, F: NumericFrame<S>>(stage: &mut S, frame: &mut F,
     operation: Operation<S::Word, S::Proof>) -> Step<S::Word, F::Control> {
     let miss = frame.miss();
     let word = match operation {

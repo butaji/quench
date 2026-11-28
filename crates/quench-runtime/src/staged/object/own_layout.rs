@@ -2,7 +2,6 @@
 
 use super::*;
 
-#[cfg_attr(feature = "test-support", quench_macros::test_visible)]
 /// The layout of the object record at `record`, whose exact shape the caller proved and which
 /// holds `storage_len` values in `form`; `inline` is its `inline_storage`.
 ///
@@ -10,7 +9,7 @@ use super::*;
 /// interpreter); a specializer leaves through `miss` for it, so its residual handles the two
 /// common forms only. A form the site proved is guarded, not decoded.
 #[inline(always)]
-pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, form: Form,
+pub fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Cond, form: Form,
     storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     let payload = stage.load_u64(Region::Payload.mutable(), record, OBJECT.payload_offset as i32);
     let extras = has_extras(stage, payload);
@@ -21,7 +20,7 @@ pub(crate) fn own_layout<S: Stage>(stage: &mut S, record: S::Word, inline: S::Co
 /// its exact shape: the word's storage-form bits (`storage_form`) stand for the header's inline
 /// flag and the payload's extras tag, so neither is loaded to be tested.
 #[inline(always)]
-pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: S::Word, form: Form,
+pub fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: S::Word, form: Form,
     storage_len: usize, access: PackedAccess, miss: S::Miss) -> Option<Layout<S::Word, S::Cond>> {
     // A stage that decides the form takes the arena run, the common form, on one test.
     let bits = stage.and_imm(word, u64::from(OBJECT.inline_form | OBJECT.extras_form | OBJECT.narrow_form));
@@ -42,7 +41,7 @@ pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: 
 /// watched prototype's, a global object's) are the extras' wide inline values or the run whose
 /// start the extras hold, as `extras_slots` reads them. `None` for any other bits.
 #[inline(always)]
-pub(crate) fn proved_own_layout<S: Stage>(stage: &mut S, shaped: super::super::Shaped<S::Word>, bits: u32, storage_len: usize)
+pub fn proved_own_layout<S: Stage>(stage: &mut S, shaped: super::super::Shaped<S::Word>, bits: u32, storage_len: usize)
     -> Option<Layout<S::Word, S::Cond>> {
     // A class-guarded cell's fields are one flat run at the cell: no form bits to read (`cell_fields`).
     if let Some(cell) = shaped.cell() {

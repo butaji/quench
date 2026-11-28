@@ -30,7 +30,7 @@ pub enum Passed<'a, W> {
 
 impl<W> Passed<'_, W> {
     /// How many arguments are passed.
-    pub(crate) fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         match self {
             Self::Window { count, .. } => usize::from(*count),
             Self::List { registers, .. } => registers.len(),
@@ -68,6 +68,7 @@ pub fn fill_by_rows<S: Stage + ?Sized>(stage: &mut S, top: S::Word, undefined: S
 /// only in the mark block list it starts from. `Class` is a class cell, named by its granule (the
 /// class space's granule, whose region and local cell `heap::class_space` derives).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(u8)]
 pub enum StagedRecordSpace {
     Object,
     Function,

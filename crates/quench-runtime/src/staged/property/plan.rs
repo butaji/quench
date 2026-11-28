@@ -15,7 +15,7 @@ pub enum Owner {
 impl Owner {
     /// The owner of a field base: `this` or a register; any other base is the tier's own.
     #[inline(always)]
-    pub(crate) fn of(base: FieldBase) -> Option<Self> {
+    pub fn of(base: FieldBase) -> Option<Self> {
         if base == FieldBase::THIS { return Some(Self::This); }
         base.register_index().map(Self::Register)
     }

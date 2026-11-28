@@ -10,12 +10,12 @@ use super::super::field_cache_layout::{is_class_key, CLASS_KEY};
 /// the VM, which joins the slot's type.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StoreArm {
-    pub(crate) shape: u32,
-    pub(crate) slot: u16,
+    pub shape: u32,
+    pub slot: u16,
     pub holds: Option<Type>,
     /// The slot's type (`slot_ty` of `StoreArm::of`): a Number slot's words are raw doubles, so a
     /// store writes `slot_store::class_word(class, value)` whether or not `holds` tests the value.
-    pub(crate) class: Type,
+    pub class: Type,
     /// Whether `shape` is an ahead image's layout id of a plain arena run (`ImageWord::Layout`):
     /// its guard compares the record's own word, which proves the form, so the store tests none.
     pub layout: bool,
@@ -44,12 +44,12 @@ impl StoreArm {
     }
 
     /// Whether the arm's key names a live class cell, not a shape (`field_cache_layout::is_class_key`).
-    pub(crate) fn keys_class(self) -> bool {
+    pub fn keys_class(self) -> bool {
         is_class_key(self.shape)
     }
 
     /// The class id a class-keyed arm names: its key without `CLASS_KEY` (`StoreArm::of_class`).
-    pub(crate) fn class_id(self) -> u32 {
+    pub fn class_id(self) -> u32 {
         self.shape & !CLASS_KEY
     }
 }

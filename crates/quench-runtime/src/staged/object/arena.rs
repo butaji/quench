@@ -7,7 +7,7 @@ use super::*;
 /// The Cranelift projection of the same read is `ObjectRecord::prove`.
 #[inline(always)]
 #[allow(dead_code)] // read by the stencil build (`quench-bjit/stencils/ic_rows.rs`), which includes this file
-pub(crate) fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, records: S::Word, miss: S::Miss)
+pub fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, records: S::Word, miss: S::Miss)
     -> Option<(S::Word, S::Word)> {
     let object = super::super::value::is_direct_object(stage, bits);
     stage.guard(object, miss)?;
@@ -19,7 +19,7 @@ pub(crate) fn direct_object_record<S: Stage>(stage: &mut S, bits: S::Word, recor
 
 /// The address of the first arena value of the run starting at `start`.
 #[inline(always)]
-pub(crate) fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
+pub fn arena_run<S: Stage>(stage: &mut S, start: S::Word) -> S::Word {
     let start = stage.and_imm(start, u64::from(OBJECT.storage_start_mask));
     let offset = stage.mul_imm(start, OBJECT.property_value_size as u64);
     let base = stage.table(Table::PropertyValues);

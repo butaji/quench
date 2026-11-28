@@ -15,7 +15,7 @@ pub fn receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, obj
 /// The object part a plan's ops read from: a class-keyed plan (its first op guards a class) starts from the
 /// live class cell, every other from the object's record. The key decides it, so no run-time test chooses.
 #[inline(always)]
-pub(super) fn plan_receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
+pub fn plan_receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
     object: S::Word, ops: &[IcOp<'_>], miss: S::Miss) -> Option<Reached<S::Word, S::Cond>> {
     match ops {
         [IcOp::GuardClass(_), ..] => frame.receiver_cell(stage, object, miss),
@@ -26,7 +26,7 @@ pub(super) fn plan_receiver<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame:
 /// The base of a field access: the activation's bound `this`, or a register's tagged word;
 /// a local or nested base is the tier's own.
 #[inline(always)]
-pub(in super::super) fn base_word<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: FieldBase, miss: S::Miss) -> Option<S::Word> {
+pub fn base_word<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, base: FieldBase, miss: S::Miss) -> Option<S::Word> {
     if base == FieldBase::THIS {
         return frame.field_this(stage, miss);
     }
@@ -38,7 +38,7 @@ pub(in super::super) fn base_word<S: Stage, F: PropertyFrame<S>>(stage: &mut S, 
 /// (a stencil row's) folds the match to its one arm; the recursive plans re-enter through
 /// `read_nested`, so this function never calls itself and stays inlinable.
 #[inline(always)]
-pub(in super::super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
+pub fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool),
     object: S::Word, plan: FieldPlan<'_>, miss: S::Miss) -> Option<S::Word> {
     match plan {
         FieldPlan::Ops(ops) => {
@@ -94,7 +94,7 @@ pub(in super::super) fn read_with<S: Stage, F: PropertyFrame<S>>(stage: &mut S, 
 /// A prototype-held read (`FieldPlan::Inherited`) of `owner`'s `object`: the receiver's exact shape and the
 /// holder its proof names, then the constant the holder held.
 #[inline(always)]
-pub(super) fn inherited<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool), object: S::Word,
+pub fn inherited<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool), object: S::Word,
     (shape, constants, proof): (u32, &[(u32, u64)], PrototypeProof), miss: S::Miss) -> Option<S::Word> {
     let at = frame.receiver_record(stage, owner, object, readable, miss)?;
     match proof {
@@ -120,7 +120,7 @@ fn read_nested<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owne
 /// Continues where `owner`'s object has exact shape `shape`: a proof the frame holds emits
 /// nothing, else the guard is made and recorded. `direct` where the receiver is a direct object.
 #[inline(always)]
-pub(in super::super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
+pub fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool),
     at: &Reached<S::Word, S::Cond>, shape: u32, miss: S::Miss) -> Option<super::super::Shaped<S::Word>> {
     if let Some((proven, fact)) = frame.proven_shape(stage, owner) && proven == shape { return Some(super::super::Shaped::by_fact(at.record, fact)); }
     let shaped = ic::guard_shape(stage, at, shape, miss)?;
@@ -130,7 +130,7 @@ pub(in super::super) fn guard_receiver_shape<S: Stage, F: PropertyFrame<S>>(stag
 
 /// `run_owned` of `FieldPlan::Own`: the layout guard and the slot it proves.
 #[inline(always)]
-pub(super) fn own_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool), object: S::Word,
+pub fn own_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, owned: (Owner, bool), object: S::Word,
     at: &Reached<S::Word, S::Cond>, (layout, slot): (u32, u16), miss: S::Miss) -> Option<S::Word> {
     // `run_owned`'s arm of the same two ops.
     word_formed_slot(stage, frame, owned, object, at, layout, (slot, crate::typed_ir::Representation::Tagged, usize::from(slot) + 1), miss)
@@ -139,7 +139,7 @@ pub(super) fn own_slot<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut
 /// `ops` over the record `at` reached, where a leading shape guard is the owner's proof: its
 /// own-slot load reads through the layout the frame kept, or proves and keeps it.
 #[inline(always)]
-pub(super) fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), object: S::Word,
+pub fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, direct): (Owner, bool), object: S::Word,
     ops: &[IcOp<'_>], (at, records): (Reached<S::Word, S::Cond>, Option<S::Word>), miss: S::Miss) -> Option<S::Word> {
     if let [IcOp::GuardLayout(word), IcOp::LoadSlot { slot, storage_len, rep, .. }] = ops {
         return word_formed_slot(stage, frame, (owner, direct), object, &at, *word, (*slot, *rep, *storage_len), miss);
@@ -164,7 +164,7 @@ pub(super) fn run_owned<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mu
 /// The first of `plans` whose shape set holds the record's shape reads it; the last is the guard of the
 /// whole. The member test is the arm's shape guard (`Shaped`): its shapes share the slots it reads.
 #[inline(always)]
-pub(super) fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
+pub fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Word, S::Cond>, records: Option<S::Word>,
     miss: S::Miss) -> Option<S::Word> {
     let ((arm, rest), shaped) = (plans.split_first()?, Reached { shaped: Some(super::super::Shaped::of_guard(at.record)), ..at });
     let exact = ic::shape_word(stage, &at);
@@ -180,7 +180,7 @@ pub(super) fn arms<S: Stage>(stage: &mut S, plans: &[Arm<'_>], at: Reached<S::Wo
 /// The first of `classes` whose class is `class` reads its ops on the live cell `object` is (`Shaped::of_cell`); none
 /// does, `rest` reads. The class is `choose`n once by `read_with`, so each arm costs one compare, as `arms` does for shapes.
 #[inline(always)]
-pub(super) fn classed<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool), object: S::Word,
+pub fn classed<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, (owner, readable): (Owner, bool), object: S::Word,
     (class, classes): (S::Word, &[ClassArm<'_>]), (records, rest): (Option<S::Word>, FieldPlan<'_>), miss: S::Miss) -> Option<S::Word> {
     let Some((arm, others)) = classes.split_first() else { return read_nested(stage, frame, (owner, readable), object, rest, miss) };
     let same = stage.eq_imm(class, u64::from(arm.class));
@@ -195,7 +195,7 @@ pub(super) fn classed<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut 
 /// A nested lookup: each link reads from the previous link's value, the first from `owner`'s
 /// object and the rest from objects no register names.
 #[inline(always)]
-pub(super) fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Owner, bool), base: S::Word,
+pub fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, first: (Owner, bool), base: S::Word,
     links: &[FieldPlan<'_>], miss: S::Miss) -> Option<S::Word> {
     let mut object = base;
     let mut from = first;
@@ -208,7 +208,7 @@ pub(super) fn chain<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F,
 
 /// One own hop of a nested read: `object`'s record, under `guard`, its `slot` in `form`.
 #[inline(always)]
-pub(super) fn nested_hop<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
+pub fn nested_hop<S: Stage, F: PropertyFrame<S>>(stage: &mut S, frame: &mut F, object: S::Word,
     (guard, slot, form): (IcOp<'static>, u16, Form), miss: S::Miss) -> Option<S::Word> {
     let at = frame.receiver_record(stage, Owner::Temporary, object, false, miss)?;
     let ops = [guard, IcOp::LoadSlot { slot, form, storage_len: usize::from(slot) + 1, rep: crate::typed_ir::Representation::Tagged }];

@@ -64,7 +64,7 @@ fn walk_on<S: Stage>(stage: &mut S, records: S::Word, link: S::Word, target: S::
 /// `walk_prototypes` as a loop, for a stage whose words and conditions are the machine's own
 /// (the interpreter, a stencil).
 #[inline(always)]
-pub(crate) fn walk_prototypes_loop<S: Stage<Word = u64, Cond = bool>>(stage: &mut S, records: u64, object: u64,
+pub fn walk_prototypes_loop<S: Stage<Word = u64, Cond = bool>>(stage: &mut S, records: u64, object: u64,
     target: u64, links: u32) -> (bool, bool) {
     let mut record = object;
     for _ in 0..=links {
@@ -80,7 +80,7 @@ pub(crate) fn walk_prototypes_loop<S: Stage<Word = u64, Cond = bool>>(stage: &mu
 
 /// The longest prototype chain an `instanceof` walk follows by words: an instance, its class chain and
 /// `Object.prototype` end well within it, and a longer chain is the VM's to decide.
-pub(crate) const INSTANCEOF_WALK_LINKS: u32 = 16;
+pub const INSTANCEOF_WALK_LINKS: u32 = 16;
 
 /// Whether `value instanceof` a constructor whose `prototype` is the encoded link `target` holds, by the
 /// words of `value` alone (`records` is the object record table's base; that the constructor is steady
@@ -89,7 +89,7 @@ pub(crate) const INSTANCEOF_WALK_LINKS: u32 = 16;
 /// (`Stage::walk_prototypes`). Any other cell (an array, a function, a proxy), a chain the walk does not
 /// decide, or an absent record table leaves at `miss`.
 #[inline(always)]
-pub(crate) fn instanceof_by_words<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word,
+pub fn instanceof_by_words<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word,
     miss: S::Miss) -> Option<S::Cond> {
     let present = stage.ne_imm(records, 0u32);
     stage.guard(present, miss)?;
@@ -101,7 +101,7 @@ pub(crate) fn instanceof_by_words<S: Stage>(stage: &mut S, records: S::Word, val
 /// The walk's decision for `value` as `(decided, holds)`: whether the words decide `instanceof`, and
 /// where they do, whether it holds. A live direct object leaves at `miss` (`object_record_of`).
 #[inline(always)]
-pub(crate) fn instance_decision<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word,
+pub fn instance_decision<S: Stage>(stage: &mut S, records: S::Word, value: S::Word, target: S::Word,
     miss: S::Miss) -> Option<(S::Cond, S::Cond)> {
     let answer = instance_answer(stage, records, value, target, miss)?;
     let undecided = stage.eq_imm(answer, WALK_UNDECIDED);
