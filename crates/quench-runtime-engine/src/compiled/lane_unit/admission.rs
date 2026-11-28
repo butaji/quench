@@ -88,7 +88,5 @@ pub(crate) fn restartable(program: &quench_runtime::ResidualProgram, function: &
     })
 }
 
-/// Whether a call keeps its result in its register or returns it: the two a unit inlines.
-pub(crate) fn returns_or_keeps(instruction: WideInstruction) -> bool {
-    matches!(instruction.result_flags(), 0 | quench_runtime::bytecode::RETURN_REGISTER)
-}
+/// Whether a call keeps its result in its register or returns it: the two a unit inlines (`tier_policy::returns_or_keeps`).
+pub(crate) use quench_runtime::vm::tier_policy::returns_or_keeps;

@@ -1,10 +1,10 @@
 //! The predicted tier of every function (design decision 4.9): a deterministic fixed point over the call graph. A function's
 //! cost in a tier is its own run and compile over its hosted activations, plus, for each call edge it makes, either the
-//! callee's work inlined into its body (where the tier inlines the callee: the one rule `tier_policy::inlines`) or the
+//! callee's work inlined into its body (where the caller's inline plan, `tier_policy::inline_plan`, inlines the callee) or the
 //! crossing into the callee's tier. Pure: no count and no clock.
 
 use super::{
-    charges_growth, inlines, PredictedTier, BJIT_COMPILE_IR_PER_OP, BJIT_IR_PER_OP, CROSSING_IR_INTO_BJIT,
+    charges_growth, inline_plan, inlines, PredictedTier, BJIT_COMPILE_IR_PER_OP, BJIT_IR_PER_OP, CROSSING_IR_INTO_BJIT,
     ENTRY_IR_BJIT_BASE, ENTRY_IR_BJIT_PER_REGISTER, ENTRY_IR_INTERPRETER, ENTRY_IR_UJIT_BASE, ENTRY_IR_UJIT_PER_REGISTER,
     INTERPRETER_IR_PER_OP, UJIT_COMPILE_IR_PER_OP, UJIT_IR_PER_OP,
 };
@@ -12,13 +12,25 @@ use crate::bytecode::ResidualProgram;
 use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
 
 /// One call edge of the program: its frequency (the caller's frequency times the loop weight of the site) and whether a
-/// compiled caller inlines the callee there. An edge inside a call cycle is never inlined: the lowering's depth bound cuts
-/// a recursive inline, so the edge stays a call.
+/// compiled caller inlines the callee there, per compiled tier: the u-jit by the caller's own inline plan (`inline_plan`),
+/// the b-jit by its stitch rule (`inlines`, outside call cycles).
 struct Edge {
     caller: usize,
     callee: usize,
     frequency: u64,
-    inlined: bool,
+    inlined_ultra: bool,
+    inlined_base: bool,
+}
+
+impl Edge {
+    /// Whether a caller in `tier` inlines the callee at this edge; the interpreter never does.
+    fn inlined(&self, tier: PredictedTier) -> bool {
+        match tier {
+            PredictedTier::Interpreter => false,
+            PredictedTier::Base => self.inlined_base,
+            PredictedTier::Ultra => self.inlined_ultra,
+        }
+    }
 }
 
 /// The call graph and program, with each edge and each function's edges by index.
@@ -30,10 +42,6 @@ struct Model<'a> {
     incoming: Vec<Vec<usize>>,
     /// Per function, the indexes of the edges it makes.
     outgoing: Vec<Vec<usize>>,
-}
-
-fn compiled(tier: PredictedTier) -> bool {
-    tier != PredictedTier::Interpreter
 }
 
 /// The tier of `function` in `tiers`; a function past the table runs in the interpreter.
@@ -86,12 +94,14 @@ impl<'a> Model<'a> {
         let mut outgoing = vec![Vec::new(); count];
         for caller in 0..count {
             let weight = graph.frequency(caller as u32);
-            for &(callee, depth) in graph.call_edges(caller as u32) {
-                let inlined = inlines(graph, program, callee) && !graph.cycle_of(caller as u32).contains(&callee);
-                let frequency = weight.saturating_mul(LOOP_WEIGHT.saturating_pow(depth));
+            // The host's own decision for each of its call edges: the lane's plan, which is the one rule an inline is decided by.
+            let plan = inline_plan(graph, program, caller as u32);
+            for (&edge, (_, inlined_ultra)) in graph.call_edges(caller as u32).iter().zip(plan) {
+                let frequency = weight.saturating_mul(LOOP_WEIGHT.saturating_pow(edge.depth));
                 let index = edges.len();
-                edges.push(Edge { caller, callee: callee as usize, frequency, inlined });
-                incoming[callee as usize].push(index);
+                let inlined_base = inlines(graph, program, edge.callee) && !graph.cycle_of(caller as u32).contains(&edge.callee);
+                edges.push(Edge { caller, callee: edge.callee as usize, frequency, inlined_ultra, inlined_base });
+                incoming[edge.callee as usize].push(index);
                 outgoing[caller].push(index);
             }
         }
@@ -104,7 +114,7 @@ impl<'a> Model<'a> {
         let inlined = self.incoming[function]
             .iter()
             .map(|&index| &self.edges[index])
-            .filter(|edge| edge.inlined && compiled(tier_at(tiers, edge.caller)))
+            .filter(|edge| edge.inlined(tier_at(tiers, edge.caller)))
             .fold(0u64, |sum, edge| sum.saturating_add(edge.frequency));
         self.graph.frequency(function as u32).saturating_sub(inlined)
     }
@@ -122,7 +132,7 @@ impl<'a> Model<'a> {
         let mut total = run.saturating_add(bytecodes.saturating_mul(compile_per_op(tier)));
         for &index in &self.outgoing[function] {
             let edge = &self.edges[index];
-            let per_call = if compiled(tier) && edge.inlined {
+            let per_call = if edge.inlined(tier) {
                 let callee = edge.callee as u32;
                 let callee_bytecodes = self.program.function_get(edge.callee).map_or(0, |body| body.instructions().count() as u64);
                 // A callee with one call site is moved into its caller, not copied: only copies compile again.

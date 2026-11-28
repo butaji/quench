@@ -160,10 +160,10 @@ impl Emitter {
     }
 }
 
-/// `function` (`function_id`), each call of which its call plan decides (`plans`, by function and PC): a site inlines the
-/// callees `targets` names where its plan's arms all inline, spliced in transitively under the growth cap
-/// (`tier_policy::INLINE_GROWTH_PERCENT` of the root's own size, spent in program order). A unit with no inlined call
-/// is the function itself.
+/// `function` (`function_id`), each call of which its call plan decides (`plans`, by function and PC): the callees the
+/// host's inline plan decides at each site (`tier_policy::inline_plan`, which spends the growth cap in program order) are
+/// spliced in, each named by `targets` with its binding. The planner lowers those decisions and nothing more. A unit with
+/// no inlined call is the function itself.
 pub(crate) fn unit<'f>(
     program: &quench_runtime::ResidualProgram,
     graph: Option<&CallGraph>,
@@ -175,9 +175,13 @@ pub(crate) fn unit<'f>(
 ) -> Option<Unit> {
     let caller_registers = function.registers;
     let root = decoded(function);
-    let budget = root.len() * INLINE_GROWTH_PERCENT / PERCENT as usize;
-    let mut planner = Planner { program, graph, targets, plans, body, root: function_id, registers: u32::from(caller_registers), budget };
-    let mut plan = planner.plan(function_id, root, function.strict, 0);
+    let inlined: Vec<(u32, u32)> = graph.map_or_else(Vec::new, |graph| {
+        let edges = graph.call_edges(function_id);
+        inline_plan(graph, program, function_id).into_iter().filter(|&(_, inlined)| inlined)
+            .map(|(index, _)| (edges[index].pc, edges[index].callee)).collect()
+    });
+    let mut planner = Planner { program, inlined: &inlined, targets, body, root: function_id, registers: u32::from(caller_registers) };
+    let mut plan = planner.plan(function_id, root);
     // The self tail calls of the root become unit instructions (`self_tail`); their argument temporaries sit above
     // the planned registers, and the undefined value is the program's `undefined` constant, absent from a program that has none.
     let undefined = program.constants.iter().position(|constant| matches!(constant, Constant::Undefined)).and_then(|index| u32::try_from(index).ok());

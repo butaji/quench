@@ -5,9 +5,6 @@ pub(super) struct Plan {
     pub(super) code: Vec<WideInstruction>,
     /// Per PC, the callees its call inlines, as a switch on the callee; empty for none.
     pub(super) calls: Vec<Vec<InlinedPlan>>,
-    /// Whether a call the plan does not inline has run (its site has a call plan): an
-    /// inlined callee's never-run call is an exit of the unit, one that runs is not.
-    pub(super) blocked: bool,
     /// Per root PC, the instructions a self tail call there becomes (`self_tail`); empty for an inlined
     /// callee and for a root with no self tail call.
     pub(super) tails: Vec<Option<Vec<WideInstruction>>>,
@@ -52,133 +49,55 @@ impl Plan {
 
 pub(super) struct Planner<'t, 'f> {
     pub(super) program: &'t quench_runtime::ResidualProgram,
-    /// The program's call graph, which the inlining rule reads (`tier_policy::inlines`, `charges_growth`); None where the
-    /// program has none, so no callee inlines.
-    pub(super) graph: Option<&'t CallGraph>,
-    /// The callees each call site inlines: its call plan's arms (`CallPlans::targets`), less those the caller excludes.
+    /// The root's inlined call sites, as (PC, callee): the host's decision (`tier_policy::inline_plan`), which the planner
+    /// lowers and never re-decides.
+    pub(super) inlined: &'t [(u32, u32)],
+    /// The callees each call site reaches: its call plan's arms (`CallPlans::targets`), which carry each arm's binding.
     pub(super) targets: &'t dyn Fn(u32, u32) -> Vec<CallTarget>,
-    /// The call plan of each call site, by function and PC: a site inlines only where its plan's arms all inline.
-    pub(super) plans: &'t dyn Fn(u32, u32) -> Option<CallPlan>,
     pub(super) body: &'t dyn Fn(u32) -> Option<&'f Function>,
     /// The unit's root function: a call to it is never inlined.
     pub(super) root: u32,
     pub(super) registers: u32,
-    /// The growth the unit has left to add, in callee instructions (`tier_policy::INLINE_GROWTH_PERCENT`).
-    pub(super) budget: usize,
 }
 
 impl Planner<'_, '_> {
-    /// The plan of `function`'s `code`, its calls inlined where the rule and the growth cap allow, in PC order. A callee
-    /// is inlined only whole: every call of its own inlined too.
-    pub(super) fn plan(&mut self, function: u32, code: Vec<WideInstruction>, strict: bool, depth: usize) -> Plan {
-        let mut blocked = false;
-        let calls = code
-            .iter()
-            .enumerate()
-            .map(|(pc, instruction)| {
-                // Strict terminal calls retain the VM's proper-tail-call policy.
-                // A root completion must name a real Return, never the completed Call.
-                let (calls, ran) = if Operation::<u64, ()>::is_plain_call(*instruction) && instruction.returns_from_frame()
-                    && (strict || (depth == 0 && terminal_return(&code).is_none())) {
-                    (Vec::new(), true)
-                } else { self.inline(function, pc as u32, *instruction, depth) };
-                blocked |= calls.is_empty() && ran;
-                calls
-            })
-            .collect();
-        Plan { code, calls, blocked, tails: Vec::new() }
+    /// The plan of `function`'s `code`, each call its site's inlined callees (`inline`), in PC order.
+    pub(super) fn plan(&mut self, function: u32, code: Vec<WideInstruction>) -> Plan {
+        let calls = code.iter().enumerate().map(|(pc, instruction)| self.inline(function, pc as u32, *instruction)).collect();
+        Plan { code, calls, tails: Vec::new() }
     }
 
-    /// The callees the call at `pc` of `function` inlines: every arm of its call plan, as the call's switch, where each
-    /// arm inlines whole (`inlines_whole`) and the growth cap admits it. A site with no plan, or with an arm that does not
-    /// inline, takes the call. With whether the call has run: a call its plan covers counts as run.
-    pub(super) fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction, depth: usize) -> (Vec<InlinedPlan>, bool) {
-        if !Operation::<u64, ()>::is_plain_call(instruction) {
-            return (Vec::new(), false);
+    /// The callees the call at `pc` of `function` inlines, as the call's alternatives: the root's inlined sites
+    /// (`inlined`), each callee's target of the site's call plan, lowered whole (`inline_body`). A callee the lowering
+    /// refuses keeps the call. A callee's own calls are never inlined: the host's scope admits no callee with a call.
+    pub(super) fn inline(&mut self, function: u32, pc: u32, instruction: WideInstruction) -> Vec<InlinedPlan> {
+        if function != self.root || !Operation::<u64, ()>::is_plain_call(instruction) {
+            return Vec::new();
         }
-        if !returns_or_keeps(instruction) || instruction.direct_eval()
-            || instruction.parameter_eval() || depth >= MAX_INLINING_DEPTH
-        {
-            return (Vec::new(), true);
+        let wanted: Vec<u32> = self.inlined.iter().filter(|(at, _)| *at == pc).map(|&(_, callee)| callee).collect();
+        if wanted.is_empty() {
+            return Vec::new();
         }
-        let plan = (self.plans)(function, pc);
-        let ran = plan.is_some();
-        let found: Vec<CallTarget> = match plan {
-            Some(plan) if plan.arms.iter().all(|arm| inlines_whole(self.graph, self.program, arm.function)) => (self.targets)(function, pc)
-                .into_iter().filter(|target| target.function != self.root).collect(),
-            _ => Vec::new(),
-        };
-        // A call of an inlined callee that inlines none of its targets leaves the unit at every run (the lowering
-        // makes calls from the caller's own frame only): it blocks its callee, which stays its own unit.
-        if depth > 0 && found.is_empty() {
-            return (Vec::new(), true);
-        }
-        let (targets, reserved) = (found.len(), (self.registers, self.budget));
-        // A target that does not inline gives back what it reserved (`inline_body`).
-        let alternatives: Vec<_> = found.into_iter().filter_map(|target| self.inline_body(target, instruction, depth)).collect();
-        // A site of a callee that misses a target would leave the unit there: its callee stays its own unit.
-        if depth > 0 && alternatives.len() < targets {
-            (self.registers, self.budget) = reserved;
-            return (Vec::new(), true);
-        }
-        (alternatives, ran)
+        let found: Vec<CallTarget> = (self.targets)(function, pc).into_iter()
+            .filter(|target| target.function != self.root && wanted.contains(&target.function)).collect();
+        found.into_iter().filter_map(|target| self.inline_body(target)).collect()
     }
 
-    /// Whether inlining `callee` is charged to the growth cap: it copies its body (`tier_policy::charges_growth`).
-    pub(super) fn charged(&self, callee: u32) -> bool {
-        self.graph.is_some_and(|graph| charges_growth(graph, callee))
-    }
-
-    /// Whether the callee's code fits the growth the unit has left: a callee that adds no growth always fits.
-    pub(super) fn fits(&self, callee: u32, size: usize) -> bool {
-        !self.charged(callee) || size <= self.budget
-    }
-
-    /// Whether the callee's code fits the inlining cap and the call's arguments fit its registers.
-    pub(super) fn within_budget(&self, target: CallTarget, instruction: WideInstruction, callee: &Function, code: &[WideInstruction]) -> bool {
-        matches!(self.entry(target, callee, code.len()), CallEntry::Inline(_))
-            && ImmediateLayout::argument_count(instruction.imm()) <= callee.registers
-    }
-
-    /// The entry the call's callee takes, which the staged planner decides (`staged::plan_entry`): a
-    /// call plan's arm is Static, and the callee inlines where the rule admits it (`tier_policy::inlines`) and
-    /// its `size` fits the growth cap (`fits`).
-    pub(super) fn entry(&self, target: CallTarget, callee: &Function, size: usize) -> CallEntry {
-        let binding = match target.callee {
-            CalleeBinding::Function => BindingTime::Static,
-            CalleeBinding::Identity(_) | CalleeBinding::Forwarded { .. } => BindingTime::Stable,
-        };
-        let plan = DirectPlan { kind: CalleeKind::Script, identity: Identity::Guarded(target.identity().map_or(0, Value::to_bits)),
-            sloppy: None, registers: callee.registers, returned: super::super::LANE_BODY_RETURNED, bound: None };
-        let inlines = self.graph.is_some_and(|graph| super::super::tier_policy::inlines(graph, self.program, target.function))
-            && self.fits(target.function, size);
-        plan_entry(Some(Resolved { plan, binding }), inlines)
-    }
-
-    /// The callee of `target`, whole, if the rule admits it within the growth cap (`entry`) and its body renames and is
-    /// admitted. An inlined callee copies its body into the unit, charged to the cap unless it has one call site.
-    pub(super) fn inline_body(&mut self, target: CallTarget, instruction: WideInstruction, depth: usize) -> Option<InlinedPlan> {
+    /// The callee of `target`, lowered whole, if its body renames and its activation is admitted (`lowerable`,
+    /// `admit_callee`: the engine's lowering, which the host's plan does not decide). Its registers are reserved here.
+    pub(super) fn inline_body(&mut self, target: CallTarget) -> Option<InlinedPlan> {
         let callee = (self.body)(target.function)?;
         let code = decoded(callee);
-        if !self.within_budget(target, instruction, callee, &code) || !lowerable(&code)
-            || admit_callee(self.program, callee, CalleeUse::Inlined(target.callee)).is_err() {
+        if !lowerable(&code) || admit_callee(self.program, callee, CalleeUse::Inlined(target.callee)).is_err() {
             return None;
         }
         let recovery = if super::super::lane_region::restartable_numeric_function(self.program, callee, code.iter().copied())
             || (target.callee == CalleeBinding::Function && restartable(self.program, callee, &code)) {
             CallRecovery::RestartCall
         } else { CallRecovery::Materialize };
-        // The callee's registers and growth are reserved before its own calls plan, and given
-        // back if one of them is not inlined.
-        let (registers, budget) = (self.registers, self.budget);
         let base = self.registers;
         self.registers += u32::from(callee.registers);
-        if self.charged(target.function) { self.budget -= code.len(); }
-        let plan = self.plan(target.function, code, callee.strict, depth + 1);
-        if plan.blocked {
-            (self.registers, self.budget) = (registers, budget);
-            return None;
-        }
+        let plan = self.plan(target.function, code);
         Some(InlinedPlan { target, recovery, base, registers: callee.registers, plan })
     }
 }

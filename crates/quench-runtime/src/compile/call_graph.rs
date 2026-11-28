@@ -13,6 +13,14 @@ use rustc_hash::FxHashMap;
 /// The `cycle` entry of a function that is in no call cycle.
 const NO_CYCLE: u32 = u32::MAX;
 
+/// One named call site of a function: the callee the site names, the loop depth of the site, and the site's PC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CallEdge {
+    pub callee: u32,
+    pub depth: u32,
+    pub pc: u32,
+}
+
 /// The weight of one loop, or of one recursive call cycle, on a function's static frequency (10^depth).
 pub const LOOP_WEIGHT: u64 = 10;
 
@@ -40,8 +48,8 @@ pub struct CallGraph {
     /// Per regexp literal site (`ResidualProgram::regexp_literal_sites`), the static frequency of its pattern
     /// (`regexp_site_frequencies`).
     regexp_sites: Box<[u64]>,
-    /// Per function, each named call site it makes: the callee and the loop depth of the site, one entry per site.
-    edges: Box<[Box<[(u32, u32)]>]>,
+    /// Per function, each named call site it makes, in PC order: the callee, the loop depth and the PC of the site.
+    edges: Box<[Box<[CallEdge]>]>,
     /// Every function, components in callee-first order (a component's callees come before it).
     callee_first: Box<[u32]>,
     /// The components on the longest call chain: the passes a fixed point over the graph needs (`chain_depth`).
@@ -52,8 +60,8 @@ pub struct CallGraph {
 struct Scan {
     /// Per function, each call site that names it: its caller and the loop depth of the site.
     callers: Vec<Vec<(usize, u32)>>,
-    /// Per function, each named call site it makes: the callee and the loop depth of the site.
-    edges: Vec<Vec<(u32, u32)>>,
+    /// Per function, each named call site it makes, in PC order.
+    edges: Vec<Vec<CallEdge>>,
     /// Per function, the call sites that name it, saturating.
     named: Vec<u32>,
     /// Per function, its work per activation.
@@ -101,9 +109,9 @@ impl CallGraph {
         }
     }
 
-    /// The named call sites of `function`: each one's callee and its loop depth, one entry per site (a site with
-    /// several named callees has one entry for each).
-    pub fn call_edges(&self, function: u32) -> &[(u32, u32)] {
+    /// The named call sites of `function`, in PC order: each one's callee, loop depth and PC, one entry per site (a
+    /// site with several named callees has one entry for each).
+    pub fn call_edges(&self, function: u32) -> &[CallEdge] {
         match self.edges.get(function as usize) {
             Some(edges) => &edges[..],
             None => &[],
@@ -196,7 +204,7 @@ fn scan_body(scan: &mut Scan, function: usize, body: &Function, facts: &AotFacts
             out.push(callee);
             scan.named[callee] = scan.named[callee].saturating_add(1);
             scan.callers[callee].push((function, depth));
-            scan.edges[function].push((callee as u32, depth));
+            scan.edges[function].push(CallEdge { callee: callee as u32, depth, pc: at });
         }
     }
     out.sort_unstable();
