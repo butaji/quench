@@ -5326,8 +5326,8 @@ impl Lowering<'_, '_> {
         let bound = self.entry.as_ref().is_some_and(|entry| entry.fields.iter().any(|(known, _)| *known == site));
         // The class-keyed loads are the class arms, which lead the shape arms: a live cell takes its class's arm
         // (`StoreArm::of_class`, whose cell's gate admits the write, so the slot's type is no test here), and the other
-        // receivers the shape arms. Several class-keyed loads with no shape load are the VM's store.
-        let arms: Vec<StoreArm> = if own.len() > 1 && own.iter().all(|load| load.class.is_some()) { Vec::new() } else {
+        // receivers the shape arms; with no shape arm, a cell of another class leaves for the VM's store.
+        let arms: Vec<StoreArm> = {
             let classes = own.iter().filter(|load| load.valid())
                 .filter_map(|load| load.class.map(|class| StoreArm::of_class(quench_runtime::staged::field_cache_layout::CLASS_KEY | class, load.slot)));
             let shapes = own.iter().filter(|load| load.class.is_none() && load.valid())

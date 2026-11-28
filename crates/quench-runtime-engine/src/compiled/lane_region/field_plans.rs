@@ -56,7 +56,7 @@ impl Fast {
             [load] if load.holder.is_none() && !load.valid() => Self::Host,
             [load] => Self::Single(*load),
             // A class-keyed load beside shape loads: the shape loads are the plan's rest, and the class-keyed loads its
-            // class arms (`with_read_plan`, `FieldPlan::Classed`). Only class-keyed loads: the VM's read.
+            // class arms (`with_read_plan`, `FieldPlan::Classed`). Only class-keyed loads: Classed over the VM's read as the rest.
             loads if loads.iter().any(|load| load.class.is_some()) => {
                 let shapes: Vec<NativeFieldLoad> = loads.iter().filter(|load| load.class.is_none()).copied().collect();
                 if shapes.is_empty() { Self::Host } else { Self::of(&shapes) }
@@ -87,15 +87,16 @@ impl Fast {
     }
 }
 
-/// Whether a link's loads mix class-keyed and shape-keyed reads: the class-keyed loads are the plan's class arms and
-/// the shape loads its rest (`FieldPlan::Classed`).
-fn mixes_keys(loads: &[NativeFieldLoad]) -> bool {
-    loads.iter().any(|load| load.class.is_some()) && loads.iter().any(|load| load.class.is_none())
+/// Whether a link's read dispatches over classes (`FieldPlan::Classed`): its class-keyed loads are the class arms and
+/// its shape loads the rest (the VM's read where there are none). A lone class-keyed load is `Fast::Single`'s.
+fn dispatches_classes(loads: &[NativeFieldLoad]) -> bool {
+    let classes = loads.iter().filter(|load| load.class.is_some()).count();
+    classes > 1 || (classes == 1 && loads.len() > 1)
 }
 
 /// Whether a link's value comes from its loads' native reads, as the VM's own read does not.
 pub(crate) fn reads_natively(loads: &[NativeFieldLoad]) -> bool {
-    !matches!(Fast::of(loads), Fast::Host)
+    dispatches_classes(loads) || !matches!(Fast::of(loads), Fast::Host)
 }
 
 /// The values a holder load folds as constants (its prototypes' links and bits), where the
@@ -243,7 +244,7 @@ pub(crate) fn with_read_plan<R>(links: &[LinkInput], (folds_stable, known): (boo
     let class_arms: Vec<Vec<ClassArm<'_>>> = class_loads.iter().map(|arms| arms.iter()
         .map(|(class, ops)| ClassArm { class: *class, ops: ops.as_slice() }).collect()).collect();
     let sited: Vec<FieldPlan<'_>> = links.iter().zip(&readable).zip(&class_arms).map(|((link, plan), classes)|
-        if mixes_keys(&link.loads) { FieldPlan::Classed { classes, rest: plan } } else { *plan }).collect();
+        if dispatches_classes(&link.loads) { FieldPlan::Classed { classes, rest: plan } } else { *plan }).collect();
     let mut plans: Vec<FieldPlan<'_>> = links.iter().zip(&fasts).zip(&sited).map(|((link, fast), plan)| match fast {
         Fast::Host => *plan,
         _ if link.probed => FieldPlan::Probed { fast: plan, atom: link.atom, site: link.site },
