@@ -114,7 +114,8 @@ impl Lowering<'_, '_> {
 
     /// Prove the flat strings the loop at `header` holds on its entering edge (`loop_strings`). A
     /// register holding a rope takes its flat form from the VM (`LaneHelper::FlattenString`): the
-    /// same string in a record that holds its units, which the register then holds. A register that
+    /// same string in a record that holds its units, which the register then holds. A register the
+    /// solve proves flat (`proven_flat`) is no rope, so it takes no flatten. A register that
     /// is no string, whose text has no record form, or a length past int32 leaves at the header
     /// before the loop runs.
     pub(crate) fn hoist_strings(&mut self, state: &mut State, header: usize) {
@@ -127,23 +128,30 @@ impl Lowering<'_, '_> {
             let bits = self.tagged(state, string.register);
             let ready = self.builder.create_block();
             let parts = [(); 3].map(|()| self.builder.append_block_param(ready, types::I64));
-            let rope = cold_block(&mut self.builder);
             let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
-            let flat = self.flat_record_words(records, bits, rope);
-            self.goto(ready, &flat);
-            // A rope: the VM's flat copy of it, a new record the register holds from here on. The
-            // helper allocates and so may move the bases the lowering holds (`allocated`); a
-            // record it cannot make flat leaves at the header.
-            self.builder.switch_to_block(rope);
-            self.builder.seal_block(rope);
-            let flattened = self.helper_call(LaneHelper::FlattenString, &[self.payload, bits]);
-            let made = self.raw_compare_imm(Relation::NotEqual, flattened, Value::DELETED.to_bits() as i64);
-            emit_js_guard(&mut self.builder, made, exit);
-            self.allocated(state);
-            self.define(state, string.register, flattened, RegisterFact::definition(Type::language(quench_runtime::ValueType::String), Representation::Tagged));
-            let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
-            let flat = self.flat_record_words(records, flattened, exit);
-            self.goto(ready, &flat);
+            if self.proven_flat(header, string.register) {
+                // The solve proves the register flat: it holds no rope, so its record is read directly and
+                // no flatten is made. Its record words can only miss where the solve is wrong: the exit.
+                let flat = self.flat_record_words(records, bits, exit);
+                self.goto(ready, &flat);
+            } else {
+                let rope = cold_block(&mut self.builder);
+                let flat = self.flat_record_words(records, bits, rope);
+                self.goto(ready, &flat);
+                // A rope: the VM's flat copy of it, a new record the register holds from here on. The
+                // helper allocates and so may move the bases the lowering holds (`allocated`); a
+                // record it cannot make flat leaves at the header.
+                self.builder.switch_to_block(rope);
+                self.builder.seal_block(rope);
+                let flattened = self.helper_call(LaneHelper::FlattenString, &[self.payload, bits]);
+                let made = self.raw_compare_imm(Relation::NotEqual, flattened, Value::DELETED.to_bits() as i64);
+                emit_js_guard(&mut self.builder, made, exit);
+                self.allocated(state);
+                self.define(state, string.register, flattened, RegisterFact::definition(Type::language(quench_runtime::ValueType::String), Representation::Tagged));
+                let records = emit_js_payload_word(&mut self.builder, self.payload, std::mem::offset_of!(JsStepDispatch, head.string_record_base));
+                let flat = self.flat_record_words(records, flattened, exit);
+                self.goto(ready, &flat);
+            }
             self.builder.switch_to_block(ready);
             self.builder.seal_block(ready);
             let [record, short, wide] = parts;

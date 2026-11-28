@@ -4743,14 +4743,17 @@ impl Lowering<'_, '_> {
                 ElementViews::Dense => {
                     let view = super::emit_dense_array_view(&mut self.builder, self.payload, bits, array.writable, self.array_access(), exit);
                     if self.int32_loop(array) {
-                        // An int32 loop keeps the backing's exact count of others, which is zero: guarded here
+                        // An int32 loop keeps the backing's exact count of others, which is zero: a backing the solve
+                        // proves plain (`proven_plain_backing`) has that count by its fact; any other is guarded here
                         // before any mark, and kept by its int32 stores (`int32_loop`), so the view marks nothing.
-                        let others = {
-                            let mut stage = super::object_slots::emit(&mut self.builder);
-                            stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
-                        };
-                        let none = self.raw_compare_imm(Relation::Equal, others, 0);
-                        emit_js_guard(&mut self.builder, none, exit);
+                        if !self.proven_plain_backing(header, array.source) {
+                            let others = {
+                                let mut stage = super::object_slots::emit(&mut self.builder);
+                                stage.load_u32(quench_runtime::staged::region::Region::Elements.mutable(), view.values, quench_runtime::tier_surface::OTHERS_FROM_VALUES)
+                            };
+                            let none = self.raw_compare_imm(Relation::Equal, others, 0);
+                            emit_js_guard(&mut self.builder, none, exit);
+                        }
                     } else {
                         // Stores through the hoisted view then write the element alone.
                         if array.writable { super::emit_dense_array_uncounted(&mut self.builder, view); }
