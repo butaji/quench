@@ -2165,10 +2165,6 @@ impl Vm {
         if self.heap.live_class_key(object) != Some(cache.receiver) || cache.holder != NO_FIELD_HOLDER {
             return false;
         }
-        // A frozen or constant class takes its store on the slow path, which clears the mark and checks the flags.
-        if !self.heap.class_admits_cached_store(object) {
-            return false;
-        }
         let open = if LOGS {
             !self.heap.tracks_slot_values()
         } else {
@@ -5203,8 +5199,7 @@ impl Vm {
         }
         let site = self.field_cache_index(site);
         let receiver_key = self.own_receiver_key(object, shape);
-        // A frozen or non-extensible class takes no cached add (`Heap::class_admits_cached_add`).
-        if let Some((_, cache)) = self.field_add_entry(site, receiver_key, atom).filter(|_| self.heap.class_admits_cached_add(object)) {
+        if let Some((_, cache)) = self.field_add_entry(site, receiver_key, atom) {
             let (target_shape, slot) = (cache.target_shape, cache.slot);
             debug_assert!(self.class_field_is_plain_add(object, key));
             self.apply_cached_field_add(object, atom, shape, target_shape, slot, value);

@@ -13,15 +13,9 @@ use super::cell::Object;
 use super::class_space::{header_class, header_record, is_cell_granule, live_header, region_capacity};
 use super::{Heap, OrdinaryRecord, layouts};
 use crate::staged::field_cache_layout::CLASS_KEY;
-use crate::staged::object_encoding::{DEPARTED_CLASS, DICTIONARY_STORAGE, FROZEN, NON_EXTENSIBLE, departed_header};
+use crate::staged::object_encoding::{DEPARTED_CLASS, DICTIONARY_STORAGE, departed_header};
 use crate::value::Value;
 use crate::value_vec::{CONSTANT_FORM, INLINE_PROPERTY_COUNT};
-
-/// The class flags (`layouts::CLASS_FLAG_MASK` positions) that forbid a cached write. A constant mark is cleared by a
-/// write through its key only in `note_cell_write`, so a store fill never takes a constant class; a frozen class takes
-/// no store, and a frozen or non-extensible class takes no add (a sealed object is non-extensible).
-const STORE_FORBIDDEN: u64 = CONSTANT_FORM as u64 | (FROZEN as u64) << u32::BITS;
-const ADD_FORBIDDEN: u64 = ((FROZEN | NON_EXTENSIBLE) as u64) << u32::BITS;
 
 impl Heap {
     /// The granule of `value` when it names a live class cell: one in a cell region whose header
@@ -46,33 +40,18 @@ impl Heap {
     }
 
     /// The receiver key of a field entry for `value` when it is a live class cell outside dictionary
-    /// storage: its class id OR'd with `CLASS_KEY`. A class id names the shape, the prototype link and the
-    /// flags (`layouts::intern_class`), so the key fixes the cell's own slots, its holder and its flags. The
-    /// flags are class bits, so a frozen, sealed or constant cell keys too, and its key differs from the one it
-    /// had before the flag: a cached write through a key is refused where the flags forbid it
-    /// (`class_admits_cached_store`, `class_admits_cached_add`), and reads stay cached. A cell that changes
-    /// class moves to another class id, so the key of its old class matches nothing. `None` for any other
-    /// value, a record, and a departed cell.
+    /// storage and not under a constant mark: its class id OR'd with `CLASS_KEY`. A class id names the
+    /// shape, the prototype link and the flags (`layouts::intern_class`), so the key fixes the cell's own
+    /// slots, its holder and its flags; a flag change is a class change, so the key of the old class
+    /// matches nothing. A frozen or non-extensible class keys: no write to it succeeds, so no store or add
+    /// entry is ever filled from it (the fill is the edge). A constant-marked class has no key: a store
+    /// through a key writes the field without `note_cell_write` and would leave the mark standing. `None`
+    /// for any other value, a record, and a departed cell.
     #[inline(always)]
     pub(crate) fn live_class_key(&self, value: Value) -> Option<u32> {
         let granule = self.live_class_cell(value)?;
         let class = header_class(self.class_space.header(granule));
-        (layouts::class_flags(class) & DICTIONARY_STORAGE as u64 == 0).then_some(class | CLASS_KEY)
-    }
-
-    /// Whether a cached store may write live cell `value` through its class key: no frozen or constant flag
-    /// (`STORE_FORBIDDEN`). A record, or any other value, is not a class cell, so this answers true for it (the
-    /// record's own write checks its flags). The store's constant mark clears in `note_cell_write`.
-    #[inline(always)]
-    pub(crate) fn class_admits_cached_store(&self, value: Value) -> bool {
-        self.live_class_cell(value).is_none_or(|granule| layouts::class_flags(header_class(self.class_space.header(granule))) & STORE_FORBIDDEN == 0)
-    }
-
-    /// Whether a cached add may add to live cell `value` through its class key: not frozen or non-extensible
-    /// (`ADD_FORBIDDEN`). Answers true for any other value, as `class_admits_cached_store`.
-    #[inline(always)]
-    pub(crate) fn class_admits_cached_add(&self, value: Value) -> bool {
-        self.live_class_cell(value).is_none_or(|granule| layouts::class_flags(header_class(self.class_space.header(granule))) & ADD_FORBIDDEN == 0)
+        (layouts::class_flags(class) & (DICTIONARY_STORAGE as u64 | CONSTANT_FORM as u64) == 0).then_some(class | CLASS_KEY)
     }
 
     /// The spill slot of live class `class`, in its region's cell (`layouts::spill_from`): `None` where its shape's
