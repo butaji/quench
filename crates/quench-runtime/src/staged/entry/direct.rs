@@ -1,16 +1,6 @@
-//! Direct reads of an IC entry: the direct record, its shape link and the record and class reads.
+//! Direct reads of an IC entry: the direct object (its class cell) and the function record reads.
 
 use super::*;
-
-/// The id and object record that `object` names in the record table at `records`, whose presence
-/// the caller proved: `None` (leaving at `miss`) where the word is no direct object or its object is live.
-#[inline(always)]
-pub fn direct_record<S: Stage>(stage: &mut S, records: S::Word, object: S::Word, miss: S::Miss) -> Option<(S::Word, S::Word)> {
-    let direct = super::super::value::is_direct_object(stage, object);
-    stage.guard(direct, miss)?;
-    let id = super::super::object::object_record_id_of(stage, object, miss)?;
-    Some((id, super::super::object::object_record_at(stage, records, id)))
-}
 
 /// The folded value of a prototype-held read (`PrototypeProof::Linked`): the receiver `record` has
 /// exact shape `shape` and prototype link `link`, so its holder is the one the read was folded
@@ -36,7 +26,7 @@ pub fn shape_link_matches<S: Stage>(stage: &mut S, record: S::Word, (shape, link
 
 /// The read of the direct object `object` through `entry`: a direct object is a live class cell, so the read is
 /// `direct_class_read`, its own value or its held value. An entry keyed by a shape names no class, matches no cell,
-/// and leaves at `miss`: only functions and other records keep shape keys.
+/// and leaves at `miss`: only a function's record keeps shape keys.
 #[inline(always)]
 pub fn direct_read_in<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     direct_class_read(stage, object, entry, miss)
@@ -51,13 +41,14 @@ fn direct_class_read<S: Stage>(stage: &mut S, object: S::Word, entry: S::Word, m
         #[inline(always)] |stage| class_held_value(stage, object, entry, miss))
 }
 
-/// The read of the record `record` (a function's object) through `entry`: its own value (`own_entry_value`)
-/// or its prototype-held value (`holder_entry_value`).
+/// The read of the record `record` (a function's object) through `entry`: its own value (`own_entry_value`).
+/// A prototype-held entry names an object record, and no link reaches one now (an ordinary object's prototype
+/// is a class cell), so a held entry leaves at `miss`.
 #[inline(always)]
-pub fn record_read_in<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
+pub fn record_read_in<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
     let own = own_entry(stage, entry);
-    stage.choose_leaving(own, #[inline(always)] |stage| own_entry_value(stage, record, entry, miss),
-        #[inline(always)] |stage| holder_entry_value(stage, records, record, entry, miss))
+    stage.guard(own, miss)?;
+    own_entry_value(stage, record, entry, miss)
 }
 
 /// The own value of the direct object `object` through the own entry `entry` (`class_own_value`), at the

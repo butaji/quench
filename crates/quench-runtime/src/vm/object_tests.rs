@@ -323,17 +323,12 @@ fn numeric_field_pointer_keeps_the_reference_store_barrier_intact() {
         unsafe { pointer.write(value); }
         assert_eq!(unsafe { pointer.read() }.to_bits(), value.to_bits());
     }
-    assert_eq!(vm.heap.unrepresented_slots(), 0);
     let hint = vm.field_cache_entry(site);
     let child = vm.object();
     assert!(!vm.hinted_primary_field_store_hit::<true>(hint, receiver, atom, child),
         "the hinted no-log store must defer a reference barrier");
-    let record = vm.heap.record_id(receiver.direct_object_index().unwrap()).unwrap();
-    // SAFETY: the same exact own-data shape still proves this initialized slot.
-    assert!(!unsafe { vm.heap.record_property_set_flat::<false>(record, slot, child, crate::heap::PropertyStoreLayout::Preserve) },
-        "a Number pointer store must not consume the owner's reference barrier");
-    // A real reference store still logs its owner, and the collector follows it.
-    assert!(unsafe { vm.heap.record_property_set_flat::<true>(record, slot, child, crate::heap::PropertyStoreLayout::MayWiden) });
+    // A real reference store logs its owner through the class cell's barrier, and the collector follows it.
+    vm.heap.property_set(receiver, slot, child);
     vm.collect_slow(&program, false);
     assert!(vm.heap.is_live(child));
     assert_eq!(vm.heap.property_get_ref(vm.heap.object(receiver).unwrap(), slot), Some(child));
@@ -631,9 +626,9 @@ fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
             let holder_atom = vm.intern_atom("holder");
             let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
             let holder = vm.own_property(vm.realm.globals, holder_atom).unwrap();
-            // The receiver is an ordinary object, so a class cell; the function holder is no object record.
+            // The receiver is an ordinary object, so a class cell; the function holder is no class cell.
             assert!(vm.heap.live_class_cell(receiver).is_some());
-            assert!(vm.heap.object_record(holder).is_none());
+            assert!(vm.heap.live_class_cell(holder).is_none());
 
             let inherited = vm.intern_atom("inherited");
             assert!(

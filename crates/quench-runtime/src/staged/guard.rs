@@ -44,13 +44,13 @@ pub fn declared<S: Stage>(stage: &mut S, source: S::Word, mask: u64, miss: S::Mi
     stage.guard(held, miss)
 }
 
-/// `prototype`: `source` is a direct object whose record, found in the object record table `records`, has
-/// exact shape and prototype link `(shape, link)` (`entry::shape_link_matches`, the prototype-held read's
-/// receiver check). Any other word leaves.
+/// A guard over a direct object's record (`prototype`, `shape`, and the record arms of the iteration reads): a
+/// direct object is a live class cell and has no object record, so such a guard always leaves at `miss`. The
+/// shape-keyed reads of a live cell take its class key instead (`class`, `entry::class_matches`).
 #[inline(always)]
-pub fn prototype<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, link): (u64, u64), miss: S::Miss) -> Option<super::Shaped<S::Word>> {
-    let (_, record) = super::entry::direct_record(stage, records, source, miss)?;
-    super::entry::shape_link_matches(stage, record, (shape, link), miss).map(super::Linked::shaped)
+pub fn no_record<S: Stage>(stage: &mut S, miss: S::Miss) -> Option<()> {
+    let never = stage.cond_of(false);
+    stage.guard(never, miss)
 }
 
 /// `class`: `source` is a direct object whose live class cell's class is `class` (`ic::guard_class`). The class is one
@@ -65,27 +65,6 @@ pub fn class<S: Stage>(stage: &mut S, source: S::Word, class: u32, miss: S::Miss
     let same = stage.eq_imm(loaded, u64::from(class));
     stage.guard(same, miss)?;
     Some(super::Shaped::of_cell(cell))
-}
-
-/// `shape`: `source` is a direct object whose record, found in the object record table `records`, has exact shape
-/// `shape` (`entry::shape_link_matches` without the link) in storage `form`. `Arena` takes the auxiliary word equal to the
-/// shape, which is a flat run with no storage-form bit (`ic::own_field`'s one compare); `Packed` takes the exact shape
-/// with the inline bit set; `Either` the exact shape alone. Any other word leaves.
-#[inline(always)]
-pub fn shape<S: Stage>(stage: &mut S, records: S::Word, source: S::Word, (shape, form): (u64, Form), miss: S::Miss) -> Option<super::Shaped<S::Word>> {
-    let (_, record) = super::entry::direct_record(stage, records, source, miss)?;
-    let word = super::object::aux_word(stage, record);
-    let recorded = match form {
-        Form::Arena => word,
-        Form::Packed | Form::Either => super::object::recorded_shape(stage, word),
-    };
-    let same = stage.eq_imm(recorded, shape);
-    stage.guard(same, miss)?;
-    if form == Form::Packed {
-        let inline = super::object::storage_form(stage, word, OBJECT.inline_form);
-        stage.guard(inline, miss)?;
-    }
-    Some(super::Shaped::of_guard(record))
 }
 
 /// `stores`: the run's dispatch word `specialized` says its stores specialize (`slot_store::store_admitted`). A region's entry

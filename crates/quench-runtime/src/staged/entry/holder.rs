@@ -49,19 +49,3 @@ pub fn own_entry_value<S: Stage>(stage: &mut S, record: S::Word, entry: S::Word,
     stage.choose_leaving(plain, #[inline(always)] |stage| plain_slot(stage, record, payload, slot, miss),
         #[inline(always)] |stage| holder_value(stage, record, slot, miss))
 }
-
-/// The value a prototype-held entry at `entry` names for the object record at `record`
-/// (`Vm::ordinary_holder_entry_value`): the receiver's shape is the entry's, its prototype link
-/// names an object record of the entry's holder shape, and the value is the holder's at the
-/// entry's slot. `None` (leaving at `miss`) for any other receiver, link or holder, so a changed
-/// prototype is a miss.
-#[inline(always)]
-pub fn holder_entry_value<S: Stage>(stage: &mut S, records: S::Word, record: S::Word, entry: S::Word, miss: S::Miss) -> Option<S::Word> {
-    shape_matches(stage, record, entry, (ENTRY.receiver_offset, ENTRY.receiver_complement), miss)?;
-    let link = super::super::object::proto_link(stage, record);
-    let id = super::super::object::proto_object_record_id(stage, link, miss)?;
-    let holder = super::super::object::object_record_at(stage, records, id);
-    shape_matches(stage, holder, entry, (ENTRY.holder_offset, ENTRY.holder_complement), miss)?;
-    let slot = entry_slot(stage, entry);
-    holder_value(stage, holder, slot, miss)
-}
