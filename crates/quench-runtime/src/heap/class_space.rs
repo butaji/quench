@@ -12,11 +12,9 @@
 
 #![allow(dead_code)]
 
-use super::dictionary_space::DictionarySpace;
 use super::layouts::class_region;
-use super::pacing::PromotionAge;
-use super::records::{AddressRange, ParallelRecordMarks, RecordFamily, RecordId, RecordSpace, RecordValue};
-use super::spill::{SpillSpace, dispose_dead_runs};
+use super::records::{AddressRange, RecordId, RecordSpace, RecordValue};
+use super::spill::SpillSpace;
 use crate::staged::layout_offsets::NATIVE_CLASS_CELL_LAYOUT;
 use crate::staged::object_encoding::{
     CAPACITY_CLASSES, CLASS_HEADER_BYTES, CLASS_RECORD_SHIFT, DEPARTED_CLASS, REGION_MASK, REGION_SHIFT, departed_header,
@@ -97,6 +95,10 @@ macro_rules! with_region_mut {
     };
 }
 
+// The collector's view of the cell regions (`marks`) comes after the region macros it uses.
+mod marks;
+pub(super) use marks::ClassCellMarks;
+
 // A cell region's records are its cells: local id `id` of region `k` is the cell at `granule(k, id)`.
 macro_rules! cell_record_values {
     ($($name:ident: $region:literal;)*) => {$(
@@ -109,36 +111,6 @@ macro_rules! cell_record_values {
 }
 
 cell_record_values! { ClassCell1: 1; ClassCell2: 2; ClassCell3: 3; ClassCell4: 4; ClassCell5: 5; }
-
-/// The cell regions' parallel mark views, one per region `1..CAPACITY_CLASSES` (`ParallelRecordMarks`).
-#[derive(Clone, Copy)]
-pub(super) struct ClassCellMarks<'space> {
-    regions: (
-        ParallelRecordMarks<'space, ClassCell1>,
-        ParallelRecordMarks<'space, ClassCell2>,
-        ParallelRecordMarks<'space, ClassCell3>,
-        ParallelRecordMarks<'space, ClassCell4>,
-        ParallelRecordMarks<'space, ClassCell5>,
-    ),
-}
-
-impl ClassCellMarks<'_> {
-    /// Marks cell `g` for a worker if it is new (`ParallelRecordMarks::mark_if_new`). A stub (region 0) has no
-    /// mark of its own, as `ClassSpace::mark_cell`: it answers false.
-    pub(super) fn mark_if_new(&self, g: u32) -> bool {
-        let (region, local) = locate(g);
-        let regions = &self.regions;
-        match region {
-            0 => false,
-            1 => regions.0.mark_if_new(local),
-            2 => regions.1.mark_if_new(local),
-            3 => regions.2.mark_if_new(local),
-            4 => regions.3.mark_if_new(local),
-            5 => regions.4.mark_if_new(local),
-            _ => unreachable!("a parallel mark of a granule past the cell regions"),
-        }
-    }
-}
 
 /// The bytes a region's granules span, and the bytes of the whole space.
 const REGION_BYTES: usize = CLASS_HEADER_BYTES << REGION_SHIFT;
@@ -157,8 +129,6 @@ pub(super) struct ClassSpace {
     holder_departed: bool,
     /// The spill arena: the runs of the cells whose class spills (`heap::spill`).
     pub(super) spill: SpillSpace,
-    /// The dictionary tables of the cells in dictionary storage (`heap::dictionary_space`).
-    pub(super) dictionaries: DictionarySpace,
     /// The range the regions are cut from. It is the last field, so it unmaps after them.
     range: Option<AddressRange>,
 }
@@ -371,28 +341,6 @@ impl ClassSpace {
         unsafe { &*self.cell_ptr(g) }
     }
 
-    /// Marks granule `g`'s cell in its region (`RecordSpace::mark`); whether it was newly marked. A stub (region
-    /// 0) has no mark of its own, so there this does nothing and its record is marked instead. A departed cell
-    /// in a cell region is marked with its Value: its granule stays live while the Value does.
-    pub(super) fn mark_cell(&mut self, g: u32) -> bool {
-        let (region, local) = locate(g);
-        if region == 0 {
-            return false;
-        }
-        with_region_mut!(self.regions, region, |space| space.mark(local))
-    }
-
-    /// Whether cell `g` is marked in its region (`RecordSpace::is_marked`).
-    pub(super) fn is_marked(&self, g: u32) -> bool {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.is_marked(local))
-    }
-
-    pub(super) fn is_live(&self, g: u32) -> bool {
-        let (region, local) = locate(g);
-        with_region!(self.regions, region, |space| space.is_live(local))
-    }
-
     /// Whether a store of `stored` into cell `g` needs its region's barrier log (`RecordSpace::store_logs`).
     pub(super) fn store_logs(&self, g: u32, stored: Value) -> bool {
         let (region, local) = locate(g);
@@ -411,59 +359,6 @@ impl ClassSpace {
             5 => regions.5.barrier(local),
             _ => unreachable!("a live class cell lies in a cell region"),
         }
-    }
-
-    /// Sweeps the cell regions (`RecordSpace::sweep`): an unmarked cell is freed, and a dead cell that spilled frees its
-    /// run, and a dead dictionary cell its table (`dispose_dead_runs`). `spill_of` gives the spill slot of a class
-    /// (`layouts::class_spill` over its shape). Region 0's stubs die with their records and are not swept here.
-    pub(super) fn sweep_cells(&mut self, full: bool, age: PromotionAge, spill_of: impl Fn(u32) -> Option<u32>) -> (usize, usize) {
-        let ClassSpace { regions, spill, base, dictionaries, .. } = self;
-        let base = *base;
-        let sweeps = [
-            regions.1.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell1, _>(&mut *spill, &mut *dictionaries, base, 1, &spill_of), |_| {}),
-            regions.2.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell2, _>(&mut *spill, &mut *dictionaries, base, 2, &spill_of), |_| {}),
-            regions.3.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell3, _>(&mut *spill, &mut *dictionaries, base, 3, &spill_of), |_| {}),
-            regions.4.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell4, _>(&mut *spill, &mut *dictionaries, base, 4, &spill_of), |_| {}),
-            regions.5.sweep_disposing(full, age, false, dispose_dead_runs::<ClassCell5, _>(&mut *spill, &mut *dictionaries, base, 5, &spill_of), |_| {}),
-        ];
-        sweeps.into_iter().fold((0, 0), |(live, freed), (swept_live, swept_freed)| (live + swept_live, freed + swept_freed))
-    }
-
-    /// The cell regions as record families, which `Heap::record_families` lists after the record spaces.
-    pub(super) fn cell_families(&self) -> [&dyn RecordFamily; CELL_REGIONS] {
-        [
-            &self.regions.1 as &dyn RecordFamily,
-            &self.regions.2 as &dyn RecordFamily,
-            &self.regions.3 as &dyn RecordFamily,
-            &self.regions.4 as &dyn RecordFamily,
-            &self.regions.5 as &dyn RecordFamily,
-        ]
-    }
-
-    pub(super) fn cell_families_mut(&mut self) -> [&mut dyn RecordFamily; CELL_REGIONS] {
-        let regions = &mut self.regions;
-        [
-            &mut regions.1 as &mut dyn RecordFamily,
-            &mut regions.2 as &mut dyn RecordFamily,
-            &mut regions.3 as &mut dyn RecordFamily,
-            &mut regions.4 as &mut dyn RecordFamily,
-            &mut regions.5 as &mut dyn RecordFamily,
-        ]
-    }
-
-    /// The parallel mark's views of the cell regions, taken with the record families' (`ParallelMarkView::new`).
-    pub(super) fn parallel_marks(&mut self) -> (ClassCellMarks<'_>, &SpillSpace, &DictionarySpace) {
-        let regions = &mut self.regions;
-        let marks = ClassCellMarks {
-            regions: (
-                regions.1.parallel_marks(),
-                regions.2.parallel_marks(),
-                regions.3.parallel_marks(),
-                regions.4.parallel_marks(),
-                regions.5.parallel_marks(),
-            ),
-        };
-        (marks, &self.spill, &self.dictionaries)
     }
 
     /// The mark blocks of region `region` and their count (`RecordSpace::native_mark_blocks`), which a native

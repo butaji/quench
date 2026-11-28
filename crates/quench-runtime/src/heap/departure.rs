@@ -6,9 +6,9 @@
 //! are copied into an arena run for the record; the cell keeps its inline field words, which the sweep frees
 //! with the object, and its slack is `Value::DELETED`.
 //!
-//! Departure is the final form only for delete, extras and record-only views. A class whose shape outgrows its cell
-//! spills instead (`heap::spill`), and a dictionary-mode cell keeps its class and takes its fields in a table
-//! (`heap::dictionary_cell`), so a field store, add, initialization or dictionary transition never departs.
+//! Departure is the final form only for extras and record-only views. A class whose shape outgrows its cell spills
+//! instead (`heap::spill`), a dictionary-mode cell keeps its class and takes its fields in a table
+//! (`heap::dictionary_cell`), and a delete is a class transition (`heap::class_delete`), so none of those departs.
 //!
 //! A departed object takes its dictionary class from the VM (`Vm::mark_object_dictionary`), because a
 //! dictionary shape lives in the VM's shape table. The record's class is the cell's class until then.
@@ -19,7 +19,7 @@ use super::{Heap, OrdinaryRecord, layouts};
 use crate::staged::field_cache_layout::CLASS_KEY;
 use crate::staged::object_encoding::{DEPARTED_CLASS, DICTIONARY_STORAGE, departed_header};
 use crate::value::Value;
-use crate::value_vec::{CONSTANT_FORM, INLINE_PROPERTY_COUNT, ValueVec};
+use crate::value_vec::{CONSTANT_FORM, INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
 
 impl Heap {
     /// The granule of `value` when it names a live class cell: one in a cell region whose header
@@ -123,14 +123,14 @@ impl Heap {
     }
 
     /// The fields of live cell `granule` (`length` of them, under `shape`) and the record storage that holds them, for a
-    /// departure. A dictionary cell's table becomes the record's dictionary, and the cell's table is released; any other
-    /// cell's words are the record's values.
+    /// departure. A dictionary cell's table is the record's dictionary by the same id, so nothing is copied or moved;
+    /// any other cell's words are the record's values.
     fn departure_storage(&mut self, granule: u32, shape: u32, length: usize, spill: Option<u32>) -> (Vec<Value>, ValueVec) {
         match self.dictionary_id_of_cell(granule) {
             Some(id) => {
-                let table = self.dictionary_cell_release(id);
+                let table = self.properties.dictionary(id);
                 let fields: Vec<Value> = (0..length).map(|slot| table.get(&(slot as u32)).copied().unwrap_or(Value::DELETED)).collect();
-                (fields, self.properties.with_dictionary(shape, table))
+                (fields, ValueArena::with_dictionary(shape, id))
             }
             None => {
                 let fields: Vec<Value> = (0..length).map(|slot| self.class_space.word(granule, spill, slot)).collect();

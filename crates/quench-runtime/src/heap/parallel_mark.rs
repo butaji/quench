@@ -28,7 +28,7 @@ use super::{
 };
 use super::class_space::{ClassCellMarks, cell_fields_at, live_class_at, stub_record_at};
 use super::layouts;
-use super::dictionary_space::{DictionarySpace, dictionary_id_of};
+use super::dictionary_cell::dictionary_id_of;
 use super::spill::{SpillSpace, split_cell};
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
@@ -74,8 +74,6 @@ macro_rules! parallel_mark_view {
             cells: ClassCellMarks<'heap>,
             /// The spill arena a spilled cell's run is read from (`heap::spill`).
             spill: &'heap SpillSpace,
-            /// The dictionary tables a dictionary cell's edges are read from (`heap::dictionary_space`).
-            dictionaries: &'heap DictionarySpace,
             $($view: ParallelRecordMarks<'heap, $elem>,)*
             /// The keys weak map values wait for, which change only between rounds.
             ephemerons: &'heap weak::EphemeronWork,
@@ -92,7 +90,7 @@ macro_rules! parallel_mark_view {
                 reads_closures: bool,
                 projection_function: Option<u32>,
             ) -> Self {
-                let (cells, spill, dictionaries) = heap.class_space.parallel_marks();
+                let (cells, spill) = heap.class_space.parallel_marks();
                 Self {
                     slots: &heap.slots,
                     properties: &heap.properties,
@@ -101,7 +99,6 @@ macro_rules! parallel_mark_view {
                     class_base: heap.class_space.base,
                     cells,
                     spill,
-                    dictionaries,
                     $($view: heap.$field.parallel_marks(),)*
                     ephemerons,
                     reads_closures,
@@ -304,7 +301,7 @@ impl<'heap> ParallelMarkView<'heap> {
                     let cell = unsafe { cell_fields_at(self.class_base, granule) };
                     let (fields, run, table) = if layouts::class_is_dictionary(class) {
                         // A dictionary cell's edges are its table's; its slot 0 is the dictionary word.
-                        (&[][..], &[][..], Some(self.dictionaries.get(dictionary_id_of(cell[0]))))
+                        (&[][..], &[][..], Some(self.properties.dictionary(dictionary_id_of(cell[0]))))
                     } else {
                         let spill = layouts::class_spill(class, self.properties.shape_length(layouts::class_shape(class)));
                         // SAFETY: as `cell_fields_at`, and the arena is read-only during the round.

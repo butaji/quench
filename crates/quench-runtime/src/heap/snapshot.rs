@@ -239,17 +239,6 @@ fn write_class_cells(writer: &mut Writer, space: &ClassSpace) -> SnapshotResult<
     for list in free {
         writer.u32s(list);
     }
-    // The dictionary tables next: a dictionary cell's word names its table by id in them.
-    let (tables, free) = space.dictionaries.snapshot_parts();
-    writer.len(tables.len());
-    for table in tables {
-        writer.len(table.len());
-        for (&slot, &value) in table {
-            writer.u32(slot);
-            writer.value(value);
-        }
-    }
-    writer.u32s(free);
     let regions = &space.regions;
     write_records(writer, &regions.1, |writer, cell: &ClassCell1| Ok(write_cell(writer, cell.header, &cell.fields)))?;
     write_records(writer, &regions.2, |writer, cell: &ClassCell2| Ok(write_cell(writer, cell.header, &cell.fields)))?;
@@ -290,12 +279,6 @@ fn read_class_cells(reader: &mut Reader<'_>, heap: &mut Heap) -> SnapshotResult<
     let lists = reader.len()?;
     let free = (0..lists).map(|_| reader.u32s()).collect::<SnapshotResult<Vec<Vec<u32>>>>()?;
     heap.class_space.spill = super::spill::SpillSpace::from_snapshot(words, free);
-    let tables = crate::snapshot::read_list(reader, |reader| {
-        let entries = crate::snapshot::read_list(reader, |reader| Ok((reader.u32()?, reader.value()?)))?;
-        Ok(entries.into_iter().collect::<super::dictionary_space::DictionaryTable>())
-    })?;
-    let free = reader.u32s()?;
-    heap.class_space.dictionaries = super::dictionary_space::DictionarySpace::from_snapshot(tables, free);
     let regions = &mut heap.class_space.regions;
     read_cell_region!(reader, regions.1, ClassCell1, 1);
     read_cell_region!(reader, regions.2, ClassCell2, 3);

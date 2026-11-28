@@ -1,16 +1,52 @@
 //! Dictionary storage of class cells (departure-free S3). An ordinary object that goes to dictionary mode while it is a
 //! live class cell stays one: its class takes `DICTIONARY_STORAGE` and the dictionary shape, and its slot 0 holds the
-//! dictionary word, the id of its table in the class space's `DictionarySpace` (`heap::dictionary_space`). Every write
-//! and add to such a cell goes to the table, and no departure is made for it. Only `delete` still departs one
-//! (`Heap::depart_class_cell`, S4 owns it), and the departure reads the table back into the record.
+//! dictionary word, the id of its table in the value arena's dictionary store (`ValueArena::insert_dictionary`), the
+//! one store records keep theirs in. Every write and add to such a cell goes to that table, and no departure is made
+//! for it. A delete of a key other than the last added makes a cell dictionary in place (`cell_to_dictionary`), so no
+//! delete departs a cell.
 
 use super::Heap;
 use super::class_space::{header_class, live_header};
-use super::dictionary_space::{DictionaryTable, dictionary_word};
 use super::layouts;
 use crate::value::Value;
+use crate::value_vec::DictionaryTable;
+
+/// The word a dictionary-mode cell holds in slot 0 for dictionary `id`.
+pub(super) fn dictionary_word(id: u32) -> Value {
+    Value::from_bits(u64::from(id))
+}
+
+/// The dictionary id a dictionary word names.
+#[inline(always)]
+pub(super) fn dictionary_id_of(word: Value) -> u32 {
+    word.to_bits() as u32
+}
 
 impl Heap {
+    /// The dictionary id of live cell `granule` when its class is dictionary storage: its slot 0 word.
+    #[inline(always)]
+    pub(crate) fn dictionary_id_of_cell(&self, granule: u32) -> Option<u32> {
+        let class = header_class(self.class_space.header(granule));
+        layouts::class_is_dictionary(class).then(|| dictionary_id_of(self.class_space.word(granule, None, 0)))
+    }
+
+    /// The table of live cell `granule` when its class is dictionary storage; `None` for an ordinary class cell.
+    #[inline(always)]
+    pub(super) fn cell_dictionary(&self, granule: u32) -> Option<&DictionaryTable> {
+        let id = self.dictionary_id_of_cell(granule)?;
+        Some(self.properties.dictionary(id))
+    }
+
+    /// The edges the collector traces for live cell `granule` of class `class`: its inline and run words, or none for a
+    /// dictionary cell, whose edges are its table's.
+    pub(super) fn cell_marking_parts(&self, granule: u32, class: u32) -> (&[Value], &[Value], Option<&DictionaryTable>) {
+        if layouts::class_is_dictionary(class) {
+            return (&[][..], &[][..], self.cell_dictionary(granule));
+        }
+        let (fields, run) = self.class_space.cell_words(granule, self.class_spill_from(class));
+        (fields, run, None)
+    }
+
     /// The live class cell `value` names when its class is dictionary storage, with its table's id.
     #[inline(always)]
     pub(crate) fn live_dictionary_cell(&self, value: Value) -> Option<(u32, u32)> {
@@ -29,14 +65,14 @@ impl Heap {
     }
 
     /// The dictionary transition of live cell `granule` to dictionary shape `shape` (the shape `mark_object_dictionary`
-    /// appended, over the cell's shape). The cell's fields move into a new table, its spill run is freed, and its
-    /// class takes `DICTIONARY_STORAGE`. A marked holder's fields moved, so the holder edge fires (`holder_fields_moved`).
+    /// appended, over the cell's shape). The cell's fields move into a new table in the arena, its spill run is freed,
+    /// and its class takes `DICTIONARY_STORAGE`. A marked holder's fields moved, so the holder edge fires (`holder_fields_moved`).
     pub(crate) fn cell_to_dictionary(&mut self, granule: u32, shape: u32) {
         let class = header_class(self.class_space.header(granule));
         let length = self.properties.shape_length(layouts::class_shape(class));
         let spill = self.class_spill_from(class);
         let table: DictionaryTable = (0..length).map(|slot| (slot as u32, self.class_space.word(granule, spill, slot))).collect();
-        let id = self.class_space.dictionaries.alloc(table);
+        let id = self.properties.insert_dictionary(table);
         self.class_space.drop_run(granule, spill);
         self.class_space.lay_out(granule, None, &[dictionary_word(id)]);
         let flags = layouts::class_flags(class) | u64::from(crate::staged::object_encoding::DICTIONARY_STORAGE);
@@ -63,7 +99,7 @@ impl Heap {
             self.class_space.barrier(granule);
         }
         self.note_cell_write(granule);
-        self.class_space.dictionaries.get_mut(id).insert(slot as u32, value);
+        self.properties.dictionary_mut(id).insert(slot as u32, value);
     }
 
     /// The add of `value` as slot `slot` of dictionary cell `granule` (table `id`) to shape `after`: the value is observed
@@ -76,7 +112,7 @@ impl Heap {
             self.class_space.barrier(granule);
         }
         self.note_cell_write(granule);
-        self.class_space.dictionaries.get_mut(id).insert(slot as u32, word);
+        self.properties.dictionary_mut(id).insert(slot as u32, word);
         self.cell_takes_shape(granule, after);
     }
 
@@ -87,14 +123,9 @@ impl Heap {
             self.class_space.barrier(granule);
         }
         self.note_cell_write(granule);
-        let table = self.class_space.dictionaries.get_mut(id);
+        let table = self.properties.dictionary_mut(id);
         table.clear();
         table.extend(words.iter().enumerate().map(|(slot, &word)| (slot as u32, word)));
         self.cell_takes_shape(granule, shape);
-    }
-
-    /// Frees dictionary id `id` for a departure, which reads the table's words into the record (`depart_class_cell`).
-    pub(super) fn dictionary_cell_release(&mut self, id: u32) -> DictionaryTable {
-        self.class_space.dictionaries.take(id)
     }
 }

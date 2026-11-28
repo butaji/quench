@@ -216,7 +216,7 @@ pub(crate) fn spill_from(region: u32, fields: usize) -> Option<u32> {
 }
 
 /// Whether class `id` is dictionary storage (`DICTIONARY_STORAGE`): its cell's slot 0 holds the dictionary word, and
-/// its fields are the table's (`heap::dictionary_space`).
+/// its fields are the table's (`heap::dictionary_cell`).
 #[inline(always)]
 pub(crate) fn class_is_dictionary(id: u32) -> bool {
     class_flags(id) & DICTIONARY_STORAGE as u64 != 0
