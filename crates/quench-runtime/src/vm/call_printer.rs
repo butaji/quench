@@ -9,6 +9,7 @@ use super::Vm;
 use crate::bytecode::{ResidualProgram, WideInstruction};
 use crate::heap::Cell;
 use crate::value::Value;
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// The message templates (V8 `kCalledNonCallable`, `kNotConstructor`).
 const NOT_A_FUNCTION: &str = " is not a function";

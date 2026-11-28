@@ -1,4 +1,5 @@
 use super::*;
+#[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 /// Direct-mapped entries of `TypedArrayGeometryProofs`, by name and prototype (a DataView reads
 /// `byteLength` and `byteOffset` through its own): the four geometry names
@@ -527,7 +528,7 @@ impl Vm {
         kind: TypedArrayKind,
         length: usize,
     ) -> Result<Value, JsError> {
-        let name = kind.name();
+        let name = typed_array_kind_name(kind);
         self.construct_typed_array_native(p, &[Value::number(length as f64)], kind, name)
     }
 
@@ -563,7 +564,7 @@ impl Vm {
         let Some(kind) = self.typed_array_kind(this) else {
             return Value::UNDEFINED;
         };
-        let name = kind.name();
+        let name = typed_array_kind_name(kind);
         self.heap.alloc_string(name.into())
     }
 
@@ -925,7 +926,7 @@ fn uint8_array_search(vm: &mut Vm, p: &ResidualProgram, native: Native, this: Va
     // A Number search over a Number kind is the staged search over the elements
     // (`typed_array_find_number`); any other search takes the general comparison.
     let found = match search.as_number() {
-        Some(number) if vm.typed_array_kind(this).is_some_and(|kind| !kind.is_bigint()) => {
+        Some(number) if vm.typed_array_kind(this).is_some_and(|kind| !typed_array_kind_is_bigint(kind)) => {
             vm.typed_array_find_number(this, from, current_length, number, native == Native::Uint8ArrayIncludes)
         }
         _ => (from..current_length).find(|index| {
@@ -1048,7 +1049,7 @@ fn typed_array_with(vm: &mut Vm, p: &ResidualProgram, _native: Native, this: Val
         index
     };
     let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-    let converted = if kind.is_bigint()
+    let converted = if typed_array_kind_is_bigint(kind)
     {
         let value = vm.to_bigint(p, value)?;
         vm.heap.alloc(Cell::bigint(value))

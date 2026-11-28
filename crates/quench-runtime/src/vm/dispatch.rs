@@ -32,6 +32,7 @@ use super::dispatch_frame::{InterpreterFrame, RowRun};
 mod call_forms;
 mod increment;
 pub(super) use increment::number_increment;
+#[cfg(not(stencil_build))] #[allow(unused_imports)] use crate::staged::glue_prelude::*;
 
 impl Vm {
     pub(super) fn module_import_value(
