@@ -221,7 +221,6 @@ impl Lowering<'_, '_> {
         // The allocation is a safepoint: a collection it runs may promote every holder made before it.
         state.proofs.fresh.clear();
         state.proofs.layouts.clear();
-        state.proofs.global = None;
         self.reload_property_arena();
     }
 

@@ -23,8 +23,6 @@ pub struct JsStepHead<V> {
     /// The function record reservation, whose records' own fields reads take
     /// (`ObjectHeader::prove_readable`); zero where absent.
     pub function_record_base: usize,
-    pub object_mark_blocks: usize,
-    pub object_mark_block_count: usize,
     /// Canonical allocator header in this entry's live VM. Its address is fixed
     /// through callouts; growth/compaction update its base/length in place.
     pub property_buffer: usize,

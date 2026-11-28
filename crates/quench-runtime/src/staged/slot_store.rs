@@ -97,7 +97,7 @@ pub fn gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact): (S:
         let open = stage.immediate_store_open();
         return stage.guard(open, miss);
     }
-    let open = stage.store_gate(super::StagedRecordSpace::Object, record_id, value);
+    let open = stage.store_gate(super::StagedRecordSpace::Class, record_id, value);
     stage.guard(open, miss)
 }
 
@@ -109,11 +109,11 @@ pub fn held_gate_open<S: Stage>(stage: &mut S, record_id: S::Word, (value, fact)
         let open = stage.immediate_store_open();
         return stage.guard(open, miss);
     }
-    let open = stage.held_store_gate(super::StagedRecordSpace::Object, record_id, value);
+    let open = stage.held_store_gate(super::StagedRecordSpace::Class, record_id, value);
     stage.guard(open, miss)
 }
 
-/// The store gate of a gated `value` into record `id` of `space` (an object record, or a live class cell's
+/// The store gate of a gated `value` into record `id` of `space` (a function record, or a live class cell's
 /// granule) over the slot's current value `old`: an int over an int widens no observed slot type, whose join
 /// already holds `old` (tracking joins every live value and every store), so only the barrier's log is asked
 /// (`Stage::held_store_gate`); any other store asks the whole gate (`Stage::store_gate`), which refuses while
