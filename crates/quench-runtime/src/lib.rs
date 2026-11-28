@@ -161,7 +161,7 @@ pub use compile::{CompilePhase, Diagnostic, Engine, set_compile_phase_boundary};
 /// Lets this binary compile source after load (`compile::source_routes`).
 pub use compile::source_routes::enable as enable_dynamic_source;
 pub use compile::{CheckedParameters, ParameterSite};
-pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_word, memory_mix_has};
+pub use heap::{HeapMemoryComposition, MemoryPolicy, RootId, double_word};
 pub use heap::layouts::fixed_table_range as fixed_layout_table_range;
 pub use snapshot::{SnapshotReader, SnapshotWriter};
 pub use host::{

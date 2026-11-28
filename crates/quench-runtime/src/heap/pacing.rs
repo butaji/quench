@@ -277,6 +277,7 @@ const AGED_DEATH_TO_KEEP_AGING: u32 = SURVIVAL_SCALE / 2;
 /// promoted anyway.
 mod aging;
 use aging::Aging;
+use crate::vm::tier_policy::memory_mix_has;
 
 /// Work-clock costs, in nanoseconds of a typical host: a full collection's per live weight kept
 /// and the mutator's per weight allocated (median of Splay's full intervals, no-JIT, x86_64,
@@ -546,12 +547,6 @@ impl MemoryPolicy {
         }
         mixed
     }
-}
-
-/// Whether `QUENCH_DEV=memory-mix=a+b` names the memory-first component `part` to take on top
-/// of throughput (TOD-2055: which memory-first settings cost no performance).
-pub fn memory_mix_has(part: &str) -> bool {
-    crate::trace::Dev::MemoryMix.value().is_some_and(|parts| parts.split('+').any(|named| named == part))
 }
 
 /// Throughput pacing, the default (TOD-167): the JetStream lane's table (v2-cloud-jet), which
