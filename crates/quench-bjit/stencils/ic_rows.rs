@@ -5,8 +5,7 @@
 //! Holes. A get: 0 is the destination frame offset with the receiver's above it (`SITE_OBJECT_AT`),
 //! 1 the upper-word table a packed reference decodes through, then the
 //! entry's operands in the order the staged ops name them: the receiver shape (2) and the slot's
-//! byte offset (3); a prototype-held read (`IC_GET_HOLDER_ROW`) names the holder's shape between
-//! them (2, 3 and the slot offset 4). A store: 0 is the receiver's frame offset, 1 the value
+//! byte offset (3). A store: 0 is the receiver's frame offset, 1 the value
 //! (any Number place), then the atom (2), the shape (3) and the slot's byte offset (4). The shape
 //! ids and slot offsets are values the stitcher patches from the site's IC record
 //! (`base_rows::get_entry_holes`); nothing is read from the record at run time.
@@ -33,7 +32,7 @@
 //! covers every id a patch names. The entry's holes would move from `Planned::holes` into a
 //! per-row record of field offsets for this, which the stitcher keeps beside the code.
 
-use crate::codes::{IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, IC_GET_HOLDER_ROW, IC_GET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
+use crate::codes::{IC_GET_CLASS_ROW, IC_GET_HELD_CLASS_ROW, IC_SET_CLASS_ROW, IC_GET_ROW, IC_PROOF_ROW, IC_SET_INT_ROW, MEM};
 use crate::heap_rows::{payload, word_at};
 use crate::numeric::{HOLE_A, Out, S, deliver, number_word};
 use crate::places::{Places, finish_chained, site_object};
@@ -53,22 +52,16 @@ const SET_RECEIVER: u8 = 0;
 /// The first hole of an entry's own operands: the two before it are the row's frame operands.
 const ENTRY_HOLES: u8 = 2;
 
-/// A get: `GetField` of the receiver (above the destination in hole 0) through the entry's ops, the own slot (`GuardShape`,
-/// `LoadSlot`) or the prototype's (`Prototype`, then the holder's shape and its arena slot); the
-/// word goes to the destination `D`.
+/// A shape-keyed get: `GetField` of the receiver (above the destination in hole 0) through the entry's ops, the own
+/// slot (`GuardShape`, `LoadSlot`); the word goes to the destination `D`.
 #[inline(always)]
-fn get_row<const HOLDER: bool, const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
+fn get_row<const CHAINED: bool, const D: u8>(s: S, payload: usize) -> Out {
     let mut stage = StencilStage::with_payload(ENTRY_HOLES, payload as u64);
     // The receiver is the word above the destination's offset in hole 0, not hole 1's (`HOLE_A`).
     let receiver = site_object(&s);
     let mut places = Places::new::<D, MEM, MEM>(s);
-    let step = if HOLDER {
-        let ops = [IcOp::GuardShape(0), IcOp::Prototype, IcOp::GuardShape(0), IcOp::LoadPrototypeSlot(0)];
-        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut received(planned_frame(&mut places, ops, Callout::Plan), receiver), receiver_read())
-    } else {
-        let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: Representation::Tagged }];
-        step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut received(planned_frame(&mut places, ops, Callout::Plan), receiver), receiver_read())
-    };
+    let ops = [IcOp::GuardShape(0), IcOp::LoadSlot { slot: 0, form: Form::Either, storage_len: 1, rep: Representation::Tagged }];
+    let step = step_property_of::<{ op_kind::GET_FIELD }, _, _>(&mut stage, &mut received(planned_frame(&mut places, ops, Callout::Plan), receiver), receiver_read());
     finish_chained::<CHAINED>(places.s, step, |s, word| deliver::<D>(s, word))
 }
 
@@ -153,8 +146,7 @@ fn proof(s: S) -> Out {
 pub(crate) fn run<const KIND: u8, const CHAINED: bool, const D: u8, const A: u8>(s: S) -> Out {
     let payload = payload(&s);
     match KIND {
-        IC_GET_ROW => get_row::<false, CHAINED, D>(s, payload),
-        IC_GET_HOLDER_ROW => get_row::<true, CHAINED, D>(s, payload),
+        IC_GET_ROW => get_row::<CHAINED, D>(s, payload),
         IC_SET_INT_ROW => set_row::<true, CHAINED, A>(s, payload),
         IC_GET_CLASS_ROW => class_get_row::<false, CHAINED, D>(s, payload),
         IC_GET_HELD_CLASS_ROW => class_get_row::<true, CHAINED, D>(s, payload),

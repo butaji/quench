@@ -138,7 +138,6 @@ heap::CONSTANT_ROW - constant load; no kernel isolates it
 heap::APPEND_ROW arr_push
 heap::FOR_IN_ROW v_for_in
 heap::IC_GET_ROW field_read
-heap::IC_GET_HOLDER_ROW v_proto_chain3_field
 heap::IC_SET_ROW field_store
 heap::IC_SET_INT_ROW field_store
 heap::ENV_ROW c_closure_read
