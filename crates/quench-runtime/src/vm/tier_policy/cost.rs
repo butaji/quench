@@ -1,10 +1,10 @@
 //! The predicted tier of every function (design decision 4.9): a deterministic fixed point over the call graph. A function's
 //! cost in a tier is its own run and compile over its hosted activations, plus, for each call edge it makes, either the
-//! callee's work inlined into its body (where the tier inlines the callee: the one rule `tier_policy::inlines`) or the
+//! callee's work inlined into its body (where the caller's inline plan, `tier_policy::inline_plan`, inlines the callee) or the
 //! crossing into the callee's tier. Pure: no count and no clock.
 
 use super::{
-    charges_growth, inlines, PredictedTier, BJIT_COMPILE_IR_PER_OP, BJIT_IR_PER_OP, CROSSING_IR_INTO_BJIT,
+    charges_growth, inline_plan, PredictedTier, BJIT_COMPILE_IR_PER_OP, BJIT_IR_PER_OP, CROSSING_IR_INTO_BJIT,
     ENTRY_IR_BJIT_BASE, ENTRY_IR_BJIT_PER_REGISTER, ENTRY_IR_INTERPRETER, ENTRY_IR_UJIT_BASE, ENTRY_IR_UJIT_PER_REGISTER,
     INTERPRETER_IR_PER_OP, UJIT_COMPILE_IR_PER_OP, UJIT_IR_PER_OP,
 };
@@ -12,8 +12,7 @@ use crate::bytecode::ResidualProgram;
 use crate::compile::call_graph::{CallGraph, LOOP_WEIGHT};
 
 /// One call edge of the program: its frequency (the caller's frequency times the loop weight of the site) and whether a
-/// compiled caller inlines the callee there. An edge inside a call cycle is never inlined: the lowering's depth bound cuts
-/// a recursive inline, so the edge stays a call.
+/// compiled caller inlines the callee there, by the caller's own inline plan (`inline_plan`).
 struct Edge {
     caller: usize,
     callee: usize,
@@ -86,12 +85,13 @@ impl<'a> Model<'a> {
         let mut outgoing = vec![Vec::new(); count];
         for caller in 0..count {
             let weight = graph.frequency(caller as u32);
-            for &(callee, depth) in graph.call_edges(caller as u32) {
-                let inlined = inlines(graph, program, callee) && !graph.cycle_of(caller as u32).contains(&callee);
-                let frequency = weight.saturating_mul(LOOP_WEIGHT.saturating_pow(depth));
+            // The host's own decision for each of its call edges: the lane's plan, which is the one rule an inline is decided by.
+            let plan = inline_plan(graph, program, caller as u32);
+            for (&edge, (_, inlined)) in graph.call_edges(caller as u32).iter().zip(plan) {
+                let frequency = weight.saturating_mul(LOOP_WEIGHT.saturating_pow(edge.depth));
                 let index = edges.len();
-                edges.push(Edge { caller, callee: callee as usize, frequency, inlined });
-                incoming[callee as usize].push(index);
+                edges.push(Edge { caller, callee: edge.callee as usize, frequency, inlined });
+                incoming[edge.callee as usize].push(index);
                 outgoing[caller].push(index);
             }
         }
