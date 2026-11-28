@@ -25,6 +25,7 @@ mod escapes;
 mod flow;
 mod function;
 mod gate;
+mod globals;
 mod length_settle;
 mod lengths;
 mod phase;
@@ -52,6 +53,7 @@ use record::ElementStore;
 pub use class_layout::{FieldDefault, UnionField, UnionLayout};
 pub use function::FunctionFacts;
 pub use gate::World;
+pub use globals::GlobalShape;
 pub use pipeline::{analyze, analyze_as, world};
 pub use registers::{RegisterCells, Source};
 pub use scope::constant_type;
@@ -149,6 +151,10 @@ pub struct AotFacts {
     /// The reads and escapes of the settled program (`readers`): which field keys some read may observe, and the calls
     /// whose result no read follows. None where the type solve did not settle.
     readers: Option<Readers>,
+    /// The atoms no method cache can name (`globals::uncached_atoms`): empty unless the program is closed.
+    uncached: std::collections::BTreeSet<u32>,
+    /// The global object's own properties the closed world fixes (`globals::GlobalShape`); None unless it is closed.
+    global_shape: Option<GlobalShape>,
 }
 
 impl AotFacts {
@@ -183,6 +189,8 @@ impl AotFacts {
             layouts: ClassLayouts::default(),
             unions: BTreeMap::new(),
             readers: None,
+            uncached: std::collections::BTreeSet::new(),
+            global_shape: None,
         }
     }
 
@@ -214,6 +222,20 @@ impl AotFacts {
     /// fact that a forwarding `f.apply(this, arguments)` call's callee is the builtin.
     pub fn apply_is_builtin(&self) -> bool {
         self.apply_builtin
+    }
+
+    /// The atoms of the program that no method cache can name (`globals::uncached_atoms`): a store of one of them, folded
+    /// as unnamed, needs no per-run check that a method cache names it, and the caches' readers retire the fold if one
+    /// later does. Empty in any world but `World::Closed`, so a consumer that takes nothing from an empty set keeps its check.
+    pub fn uncached_atoms(&self) -> &std::collections::BTreeSet<u32> {
+        &self.uncached
+    }
+
+    /// The global object's own properties the closed world fixes (`globals::GlobalShape`): the names the program declares
+    /// and the builtins it reads and never changes. None unless the program is closed, or where a store, define or delete
+    /// may reach the global object by a name the analysis cannot follow.
+    pub fn global_shape(&self) -> Option<&GlobalShape> {
+        self.global_shape.as_ref()
     }
 
     /// Whether no builtin prototype object (`Array.prototype`, `Object.prototype`) has an index property, of any kind, in the

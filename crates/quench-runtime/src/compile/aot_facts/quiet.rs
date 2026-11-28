@@ -117,15 +117,15 @@ pub(super) struct Proofs {
     computed: bool,
     /// The global object may be reachable as a value: some function makes it one (`FunctionFlow::global_source`), or
     /// some sloppy plain call reaches a function that reads its `this` (`FunctionFlow::plain_calls`).
-    global_source: bool,
+    pub(super) global_source: bool,
     /// Some call defines properties on the objects it is given (`Change::Define`).
     defined: bool,
     /// Some store names a key the analysis cannot name (`Change::Any`).
     any_change: bool,
     /// The global names the program writes.
-    written: BTreeSet<u32>,
+    pub(super) written: BTreeSet<u32>,
     /// The property names the program stores or defines by name.
-    stored: BTreeSet<u32>,
+    pub(super) stored: BTreeSet<u32>,
 }
 
 impl Proofs {
@@ -176,6 +176,14 @@ impl Proofs {
     /// global object by a name it cannot follow, nor defines a property. A computed-key store reaches the global object
     /// only if the program makes it a value (`global_source`).
     fn intrinsic(&self, atom: u32) -> bool {
-        !self.wild && !self.global_wild && !(self.computed && self.global_source) && !self.defined && !self.written.contains(&atom)
+        self.global_object_fixed() && !self.written.contains(&atom)
+    }
+
+    /// Whether the program's own stores, defines and deletes leave the global object's properties as the host made them, by
+    /// the names they write: no code reaches a name the analysis cannot follow, no write reaches the global object by a name it
+    /// cannot name, no store through a computed key may write a global name while the global object is a value, and no
+    /// builtin defines a property. Each global name is then fixed by `written` alone (`intrinsic`, `globals::GlobalShape`).
+    pub(super) fn global_object_fixed(&self) -> bool {
+        !self.wild && !self.global_wild && !(self.computed && self.global_source) && !self.defined
     }
 }

@@ -989,3 +989,35 @@ fn a_program_with_no_store_into_a_builtin_prototype_keeps_its_index_properties_e
     let program = program("var a = new Array(3); a[0] = 1; a[1];");
     assert!(analyze(&program).prototype_indices_empty(), "no builtin prototype gains an index property");
 }
+
+#[test]
+fn an_atom_no_method_call_names_is_uncached_in_a_closed_program() {
+    let program = program("var q = 1; var o = { m: function () { return 2; } }; o.m();");
+    let facts = analyze(&program);
+    assert!(facts.uncached_atoms().contains(&atom_named(&program, "q")), "no method call site names q");
+    assert!(!facts.uncached_atoms().contains(&atom_named(&program, "m")), "a method call site names m, which a method cache may hold");
+}
+
+#[test]
+fn a_program_that_can_eval_names_no_uncached_atom_and_no_global_shape() {
+    let program = program("var q = 1; eval('1');");
+    let facts = analyze(&program);
+    assert!(facts.uncached_atoms().is_empty(), "new code may add a method call site");
+    assert!(facts.global_shape().is_none(), "new code may declare or delete a global");
+}
+
+#[test]
+fn the_global_shape_lists_the_declared_globals_and_the_builtins_the_program_reads() {
+    let program = program("var x = 1; function f() { return Math.max(x, 2); } f();");
+    let facts = analyze(&program);
+    let shape = facts.global_shape().expect("a closed program fixes its global object's shape");
+    assert!(shape.declared().contains(&atom_named(&program, "x")), "x is declared by the program");
+    assert!(shape.builtins().contains(&atom_named(&program, "Math")), "Math is a builtin the program reads and never changes");
+    assert!(!shape.builtins().contains(&atom_named(&program, "x")), "a declared global is no builtin");
+}
+
+#[test]
+fn a_computed_store_while_the_global_object_is_a_value_takes_the_global_shape() {
+    let program = program("var k = 'x'; globalThis[k] = 1;");
+    assert!(analyze(&program).global_shape().is_none(), "the store may write any global name the global object holds");
+}

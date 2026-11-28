@@ -14,6 +14,7 @@ use super::escapes;
 use super::phase;
 use super::flow::{self, FunctionFlow};
 use super::gate::{self, World};
+use super::globals;
 use super::length_settle;
 use super::readers::Readers;
 use super::scope::Scope;
@@ -268,6 +269,8 @@ fn solve_with(program: &ResidualProgram, world: World, openers: Option<&[u32]>, 
         facts.index_accessors_absent = gate::index_accessors_absent(program, world, &settled_flows);
         facts.prototype_indices_absent = facts.index_accessors_absent && gate::prototype_writes_absent(&settled_flows);
         facts.apply_builtin = gate::apply_is_builtin(program, world, &settled_flows);
+        facts.global_shape = globals::GlobalShape::of(&settled_flows, world);
+        facts.uncached = globals::uncached_atoms(program, world);
         // The effect signatures are solved over the settled facts above, so a step leaves only where they leave it open
         // (`signatures::solve`).
         facts.signatures = Some(signatures::solve(program, &facts));
