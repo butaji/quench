@@ -347,37 +347,20 @@ impl JitTierManager {
         !self.is_wasm() && self.js(function).is_none() && predicted && numeric
     }
 
-    /// Advance the Wasm call-hotness state. Both the lane handoff and the
-    /// ordinary dispatcher call this transition owner, so the threshold and
-    /// one-shot attempt bit have one implementation.
-    fn note_wasm_entry(&mut self, tiers: &Tiers, function: u32, lane_handoff: bool) -> bool {
+    /// The Wasm root compile of `function`: due where the model picks a compiled tier for it and no
+    /// attempt is claimed yet. A `lane_handoff` entry finds it due without claiming it (the general
+    /// loop claims it), so the one attempt keeps one owner.
+    fn note_wasm_entry(&mut self, predicted: bool, function: u32, lane_handoff: bool) -> bool {
         let Some(state) = self.wasm_mut_or_default(function) else {
             return false;
         };
-        let WasmTierState::Counting(count) = *state else {
-            return false;
-        };
-        let count = count.saturating_add(1);
-        if lane_handoff && count >= tiers.wasm.promotion_entries {
-            return true;
-        }
-        if count < tiers.wasm.promotion_entries {
-            *state = WasmTierState::Counting(count);
+        if !matches!(state, WasmTierState::Untried) || !predicted {
             return false;
         }
-        *state = WasmTierState::Attempted;
+        if !lane_handoff {
+            *state = WasmTierState::Attempted;
+        }
         true
-    }
-
-    /// `note_wasm_tier_backedges`'s transition: one more observation, held below the
-    /// threshold.
-    fn note_wasm_backedges(&mut self, tiers: &Tiers, function: u32) {
-        let Some(state) = self.wasm_mut_or_default(function) else {
-            return;
-        };
-        if let WasmTierState::Counting(count) = state {
-            *count = count.saturating_add(1).min(tiers.wasm.promotion_entries - 1);
-        }
     }
 
     fn js(&self, function: u32) -> Option<&JsTierState> {
@@ -1858,8 +1841,8 @@ impl ProgramStore {
     /// compile failures never turn hot calls into work; a `handoff` entry (the lane's, which
     /// hands the compile to the general loop) finds it due without claiming it.
     pub fn note_wasm_root_entry(&mut self, id: ProgramId, function: u32, handoff: bool) -> bool {
-        let tiers = self.tiers;
-        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_entry(tiers, function, handoff))
+        let predicted = self.predicted_compiled(id, function);
+        self.entry_mut(id).is_some_and(|entry| entry.jit_tiers.note_wasm_entry(predicted, function, handoff))
     }
 
     /// Whether the whole compile of program `id` holds `function`, borrow-only.
@@ -1869,16 +1852,11 @@ impl ProgramStore {
             .is_some_and(|program| program.has_function(function))
     }
 
-    /// Credit `function` with one interpreter entry's worth of loop work, short of the
-    /// threshold: the entry that reaches it claims the compile (`note_wasm_tier_entry`), so
-    /// promotion keeps one owner and a function compiles between calls, never inside a loop.
-    pub fn note_wasm_tier_backedges(&mut self, id: ProgramId, function: u32) {
-        let (policy, tiers) = (self.wasm_module_compile, self.tiers);
+    /// Credit one interpreter entry's worth of loop work to module `id`'s selective tiering.
+    pub fn note_wasm_tier_backedges(&mut self, id: ProgramId) {
+        let policy = self.wasm_module_compile;
         if let Some(entry) = self.entry_mut(id) {
             entry.jit_tiers.note_wasm_module_work(1, policy);
-            if entry.jit_tiers.wasm_promotes_roots() {
-                entry.jit_tiers.note_wasm_backedges(tiers, function);
-            }
         }
     }
 
@@ -3310,11 +3288,11 @@ mod jit_code_cache_tests {
         assert!(!js_tiers.note_js_entry(2, true, false));
 
         let mut wasm_tiers = super::JitTierManager::default();
-        for _ in 1..TierRows::Measured.table().wasm.promotion_entries {
-            assert!(!wasm_tiers.note_wasm_entry(TierRows::Measured.table(), 2, false));
-        }
-        assert!(wasm_tiers.note_wasm_entry(TierRows::Measured.table(), 2, false));
-        assert!(!wasm_tiers.note_wasm_entry(TierRows::Measured.table(), 2, false));
+        assert!(!wasm_tiers.note_wasm_entry(false, 2, false));
+        assert!(wasm_tiers.note_wasm_entry(true, 2, true));
+        assert!(matches!(wasm_tiers.wasm(2), Some(super::WasmTierState::Untried)));
+        assert!(wasm_tiers.note_wasm_entry(true, 2, false));
+        assert!(!wasm_tiers.note_wasm_entry(true, 2, false));
         assert!(matches!(
             wasm_tiers.wasm(2),
             Some(super::WasmTierState::Attempted)

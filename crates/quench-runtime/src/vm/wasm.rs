@@ -5376,8 +5376,6 @@ mod tests {
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
         assert!(vm.programs.wasm_tier(program, 0).is_none(), "an entry never compiles mid-loop");
-        assert!(matches!(vm.programs.wasm_tier_state(program, 0), Some(super::super::program_store::WasmTierState::Counting(n)) if n == crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries - 1),
-            "the loop's work stops one short of the threshold");
 
         assert_eq!(vm.execute_wasm_i32(&function, &[]).unwrap(), expected);
         let tier = vm
@@ -5706,16 +5704,13 @@ mod tests {
         // A small function's `unreachable` lowers to a native trap: the eager artifact holds
         // it, so no tier promotion follows.
         assert_eq!(compiled.native_entries(0), Some(1));
-        for _ in 0..usize::from(crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries) {
+        for _ in 0..2 {
             assert_eq!(
                 vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
                 Some(crate::WasmTrap::Unreachable)
             );
         }
-        assert_eq!(
-            compiled.native_entries(0),
-            Some(1 + u64::from(crate::vm::tier_policy::TierRows::PROCESS.table().wasm.promotion_entries))
-        );
+        assert_eq!(compiled.native_entries(0), Some(3));
         assert!(vm.programs.wasm_tier(program, 0).is_none());
 
         let mut root_vm = Vm::new(crate::SystemHost);

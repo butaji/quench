@@ -139,14 +139,9 @@ pub struct LaneBody {
 
 /// The Wasm function and module tiers.
 pub struct Wasm {
-    /// Promote a Wasm function only after repeated interpreter entries, or the loop work of as
-    /// many (`backedges_per_entry`). Wasm signatures and bytecode are fixed, so this is a
-    /// hotness gate.
-    pub(crate) promotion_entries: u8,
-    /// The backward jumps a lane run of a Wasm function counts as one interpreter entry toward
-    /// `promotion_entries`: a loop of this many iterations does at least the work of an entry
-    /// through a short call, so a function entered rarely but looping hot promotes after
-    /// `promotion_entries` such stretches.
+    /// The backward jumps a lane run of a Wasm function counts as one interpreter entry of
+    /// module work (`WasmModuleTier::Selective`): a loop of this many iterations does at least the
+    /// work of an entry through a short call.
     pub backedges_per_entry: u32,
     /// The size, in bytecodes, up to which a Wasm module compiles whole at its first entry
     /// rather than starting in the interpreter: compiling it costs about what the work budget
@@ -222,7 +217,7 @@ impl crate::vm::Vm {
 const FLOOR: Tiers = Tiers {
     loops: Loops { warmup_taken: 2, ..MEASURED.loops },
     lane_body: LaneBody { site_executions: 2, compile_poll_interval: 0, ..MEASURED.lane_body },
-    wasm: Wasm { promotion_entries: 1, backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
+    wasm: Wasm { backedges_per_entry: 2, eager_module_bytecodes: usize::MAX },
     stitch: MEASURED.stitch,
     priors: MEASURED.priors,
     stress: true,
@@ -292,7 +287,7 @@ const MEASURED: Tiers = Tiers {
         late_call_calls: 4096,
         compile_poll_interval: 64,
     },
-    wasm: Wasm { promotion_entries: 32, backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
+    wasm: Wasm { backedges_per_entry: 1024, eager_module_bytecodes: 4096 },
     stitch: Stitch {
         max_total_instructions: 96,
         window_registers: 32,
