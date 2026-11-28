@@ -34,7 +34,6 @@ reference = ["quench-runtime/reference", "quench-runtime-engine/reference"]
 bench-primitives = ["quench-runtime/bench-primitives", "quench-runtime-engine/bench-primitives"]
 bench-alloc-routes = ["quench-runtime/bench-alloc-routes", "quench-runtime-engine/bench-alloc-routes"]
 verify-replay = ["quench-runtime/verify-replay", "quench-runtime-engine/verify-replay"]
-tier-stress = ["quench-runtime/tier-stress", "quench-runtime-engine/tier-stress"]
 
 [dependencies]
 quench-runtime = { path = "../quench-runtime", default-features = false }

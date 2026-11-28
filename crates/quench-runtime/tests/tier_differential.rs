@@ -1,8 +1,7 @@
 //! Tier differential: random terminating programs run in the interpreter and under the JIT
 //! must end identically. The interpreter is the semantic source, so any difference is a tier
 //! bug. Hot loops push each generated function past the tier thresholds, and late argument
-//! type flips make compiled code leave through its guards. A `tier-stress` build compiles at
-//! the first chance as well. `TIER_FUZZ_SEED` and `TIER_FUZZ_CASES` widen a local campaign.
+//! type flips make compiled code leave through its guards. `TIER_FUZZ_SEED` and `TIER_FUZZ_CASES` widen a local campaign.
 
 use quench_runtime::{Engine, ExecutionMode, MemoryPolicy, Runtime, SystemHost, TierEvent};
 use std::fmt::Write;

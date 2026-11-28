@@ -15,9 +15,6 @@ use crate::staged::Operation;
 pub struct Tiers {
     pub lane_body: LaneBody,
     pub stitch: Stitch,
-    /// Whether every eligible compile is admitted and every JavaScript compilation arm is on, so a
-    /// run checks each tier against the interpreter (`Tiers::admits_all`).
-    pub(crate) stress: bool,
     /// Whether the tier models admit every eligible compile, whatever it would repay.
     pub admits_all: bool,
 }
@@ -91,8 +88,8 @@ pub fn force_admission() { FORCED_ADMISSION.set(true); }
 pub enum TierRows { Measured, Floor }
 
 impl TierRows {
-    /// The rows a process starts with: the floor under a `tier-stress` build, the measured otherwise.
-    pub(crate) const PROCESS: Self = if cfg!(feature = "tier-stress") { Self::Floor } else { Self::Measured };
+    /// The rows a process starts with: the measured ones.
+    pub(crate) const PROCESS: Self = Self::Measured;
 
     /// The rows a VM made now holds: `PROCESS`, admitting every compile where a test forced it.
     pub(crate) fn made() -> &'static Tiers {
@@ -123,7 +120,6 @@ impl crate::vm::Vm {
 const FLOOR: Tiers = Tiers {
     lane_body: LaneBody { compile_poll_interval: 0, ..MEASURED.lane_body },
     stitch: MEASURED.stitch,
-    stress: true,
     admits_all: true,
 };
 
@@ -156,7 +152,6 @@ const MEASURED: Tiers = Tiers {
         window_registers: 32,
         max_depth: 3,
     },
-    stress: false,
     admits_all: false,
 };
 
