@@ -5669,7 +5669,7 @@ impl<'a> InlinedRun<'a> {
 /// Where the lane continues after a run of `method`, `own`'s body, on the activation whose
 /// registers are `r`: the activations of the native frames it left inside first
 /// (`native_frames::advance_into_frames`), then the record its leave names in the innermost, or the
-/// innermost's completion. A leave changes no code: it is traced and counted for diagnostics only.
+/// innermost's completion. A leave changes no code.
 pub(crate) enum LaneBodyLeft {
     /// Irreversible cancellation leaves the lane without dispatching another record.
     Terminated,

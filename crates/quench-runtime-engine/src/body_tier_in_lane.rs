@@ -35,19 +35,6 @@ impl LaneView {
         self.warming()
     }
 
-    /// Its tier state and history, for `QUENCH_TRACE=body-leave`.
-    pub(crate) fn tier_note(&self) -> String {
-        let h = self.tier().history.get();
-        // SAFETY: as `lane_body`; read only.
-        let state = match unsafe { &*self.tier().tier_lane.get() } {
-            LaneBody::Unspecialized => "unspecialized",
-            LaneBody::Compiling { .. } => "compiling",
-            LaneBody::Specialized { .. } => "specialized",
-            LaneBody::Declined => "declined",
-        };
-        format!("{state} unpaid={} demanded={}", h.unpaid, h.demanded)
-    }
-
     /// Native code (a loop region or a body) called this function, which has no body to enter: the
     /// call left that code to run it in the lane, a crossing per call that only its body removes.
     /// Such a caller wants its body whatever its length or entries, as a compiled caller does

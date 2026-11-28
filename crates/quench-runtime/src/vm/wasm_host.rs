@@ -242,7 +242,6 @@ impl Vm {
                     &signature,
                     args,
                     Value::UNDEFINED,
-                    std::ptr::null_mut(),
                 );
             }
         };
@@ -358,7 +357,6 @@ impl Vm {
         receiver: Value,
         args: &[Value],
         current_memory: Value,
-        memcpy_fast_path_hits: *mut u64,
     ) -> Result<Value, JsError> {
         let call_roots = self.active_call_roots.len();
         self.active_call_roots.extend(
@@ -395,7 +393,6 @@ impl Vm {
                     signature,
                     args,
                     current_memory,
-                    memcpy_fast_path_hits,
                 )
             })
         }));
@@ -959,7 +956,6 @@ mod tests {
                 Value::UNDEFINED,
                 &[],
                 memory,
-                std::ptr::null_mut(),
             )
             .unwrap_err();
         assert!(error.is_execution_terminated());

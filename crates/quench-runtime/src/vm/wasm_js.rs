@@ -284,16 +284,6 @@ fn encoding_allocates(ty: WasmType) -> bool {
     matches!(ty, WasmType::I64 | WasmType::F64 | WasmType::V128)
 }
 
-fn note_emscripten_memcpy_fast_path(counter: *mut u64) {
-    if !counter.is_null() {
-        // SAFETY: diagnostics allocate this counter for the duration of the
-        // compiled invocation; normal execution passes a null pointer.
-        unsafe {
-            *counter = (*counter).saturating_add(1);
-        }
-    }
-}
-
 /// The main realm's interface prototypes, which every new Wasm object of the matching kind
 /// receives. Null until the namespace is installed.
 #[derive(Clone, Copy, Debug)]
@@ -1379,7 +1369,6 @@ impl Vm {
         signature: &crate::WasmSignature,
         args: &[Value],
         current_memory: Value,
-        memcpy_fast_path_hits: *mut u64,
     ) -> Result<Value, JsError> {
         let program = self
             .programs
@@ -1412,7 +1401,6 @@ impl Vm {
                 copy_within_atom,
             )?;
             if direct_copy {
-                note_emscripten_memcpy_fast_path(memcpy_fast_path_hits);
                 Value::UNDEFINED
             } else if self.can_inline_emscripten_memcpy(view, copy_within_atom) {
                 let _stack = self.enter_stack()?;

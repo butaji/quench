@@ -422,7 +422,6 @@ pub struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     pub fixed_base: Option<i32>,
-    pub diagnostics: Option<WasmJitDiagnostics>,
 }
 
 /// Publication owns future entry; active runs and direct callers own code leases.
@@ -738,7 +737,7 @@ pub struct ActivationShape {
 pub type BodyEntry = unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64) -> BodyReturn;
 
 /// The ABI prefix of a call context, with the runtime's own field types (`staged::record_heads`).
-pub type CallContextFields = CallContextHead<Value, CompiledProgram, crate::heap::TableWords, ReferenceCallSiteDiagnostics, ProgramId, Option<Raised>>;
+pub type CallContextFields = CallContextHead<Value, CompiledProgram, crate::heap::TableWords, ProgramId, Option<Raised>>;
 
 /// The return trampoline of the native callbacks pushed as plain activations
 /// (`LaneStack::push_callback_header`), as JSC and V8 return into native code through a return
@@ -824,11 +823,6 @@ pub struct InstanceContext {
     pub memory_length: u64,
     pub guard_start: usize,
     pub guard_end: usize,
-    pub call_reference_diagnostic: usize,
-    pub reference_call_sites: *const ReferenceCallSiteDiagnostics,
-    pub reference_call_site_count: usize,
-    pub import_callout_counts: *const std::cell::Cell<u64>,
-    pub import_callout_count: usize,
     /// The base of the memory, which a callee that takes one is passed.
     pub memory_base: u64,
     /// The memory arguments of the artifact's bodies (`MemoryArguments::word`), or
@@ -1084,26 +1078,6 @@ pub struct TargetBody {
     /// records then read of the context: only where the tier could not claim it at the first resolution,
     /// which specialized its returns for good. None for a framed call form, whose entries never run a leaf.
     pub leaf: Option<LeafForm>,
-}
-
-/// Counters allocated only for opt-in benchmark diagnostics. These runs are
-/// intended to explain coverage; their timings are not qualification scores.
-pub struct WasmJitDiagnostics {
-    pub program: u32,
-    pub total_functions: usize,
-    pub compiled_functions: usize,
-    pub code_bytes: usize,
-    pub mapped_bytes: usize,
-    pub native_entry_requests: Vec<std::cell::Cell<u64>>,
-    pub interpreter_fallback_entries: Vec<std::cell::Cell<u64>>,
-    pub compiled_to_vm_callouts: std::cell::Cell<u64>,
-    pub compiled_import_callouts: std::cell::Cell<u64>,
-    pub compiled_known_callouts: std::cell::Cell<u64>,
-    pub compiled_reference_callouts: std::cell::Cell<u64>,
-    pub emscripten_memcpy_fast_path_hits: std::cell::Cell<u64>,
-    pub import_callout_names: Vec<(u32, u32, String, String)>,
-    pub import_callout_counts: Vec<std::cell::Cell<u64>>,
-    pub reference_call_sites: Vec<ReferenceCallSiteDiagnostics>,
 }
 
 /// The objects of one activation's `with` chain, kept inline up to the nesting a function usually has.
@@ -1491,12 +1465,6 @@ pub enum Raised {
     Panic(Box<dyn std::any::Any + Send>),
 }
 
-pub struct ReferenceCallSiteDiagnostics {
-    pub function: usize,
-    pub pc: usize,
-    pub counts: std::cell::Cell<ReferenceCallSiteCounts>,
-    pub targets: std::cell::RefCell<Vec<ReferenceCallTargetCounts>>,
-}
 
 
 /// A forwarding constructor whose activation a construction skipped
@@ -1781,21 +1749,6 @@ pub struct Inlining {
 
 
 
-#[derive(Clone, Copy, Default)]
-pub struct ReferenceCallSiteCounts {
-    pub total: u64,
-    pub native: u64,
-    pub fallback: u64,
-    pub same_artifact_direct: u64,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct ReferenceCallTargetCounts {
-    pub function: usize,
-    pub total: u64,
-    pub native: u64,
-    pub same_artifact_native: u64,
-}
 
 
 
@@ -3723,11 +3676,6 @@ impl InstanceContext {
             memory_length: 0,
             guard_start: 0,
             guard_end: 0,
-            call_reference_diagnostic: 0,
-            reference_call_sites: std::ptr::null(),
-            reference_call_site_count: 0,
-            import_callout_counts: std::ptr::null(),
-            import_callout_count: 0,
             memory_base: 0,
             abi: ABI_NOT_DIRECT,
             global_area: vec![std::ptr::null_mut(); slots].into(),
@@ -4809,103 +4757,6 @@ impl std::ops::DerefMut for CallContext {
     }
 }
 
-impl Drop for CompiledProgram {
-    fn drop(&mut self) {
-        let Some(stats) = &self.diagnostics else {
-            return;
-        };
-        let entries = stats
-            .native_entry_requests
-            .iter()
-            .enumerate()
-            .filter_map(|(function, count)| {
-                let count = count.get();
-                (count > 0).then(|| format!("[{function},{count}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let fallbacks = stats
-            .interpreter_fallback_entries
-            .iter()
-            .enumerate()
-            .filter_map(|(function, count)| {
-                let count = count.get();
-                (count > 0).then(|| format!("[{function},{count}]"))
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let reference_sites = stats
-            .reference_call_sites
-            .iter()
-            .filter_map(|site| {
-                let counts = site.counts.get();
-                (counts.total > 0).then(|| {
-                    format!(
-                        "[{},{},{},{},{}]",
-                        site.function, site.pc, counts.total, counts.native, counts.fallback
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut reference_targets = Vec::new();
-        for site in &stats.reference_call_sites {
-            for target in site.targets.borrow().iter() {
-                if target.total > 0 {
-                    reference_targets.push(format!(
-                        "[{},{},{},{},{},{}]",
-                        site.function,
-                        site.pc,
-                        target.function,
-                        target.total,
-                        target.native,
-                        target.same_artifact_native
-                    ));
-                }
-            }
-        }
-        let reference_targets = reference_targets.join(",");
-        let import_callout_targets = format_import_callout_targets(
-            &stats.import_callout_names,
-            &stats.import_callout_counts,
-        );
-        let attributed_import_callouts = stats
-            .import_callout_counts
-            .iter()
-            .map(std::cell::Cell::get)
-            .fold(0u64, u64::saturating_add);
-        debug_assert_eq!(
-            attributed_import_callouts,
-            stats.compiled_import_callouts.get(),
-            "per-import attribution must account for every compiled import callout"
-        );
-        let same_artifact_direct_hits = stats
-            .reference_call_sites
-            .iter()
-            .map(|site| site.counts.get().same_artifact_direct)
-            .fold(0u64, u64::saturating_add);
-        eprintln!(
-            "QUENCH_WASM_JIT_STATS {{\"program\":{},\"compile_attempts\":1,\"compiled_functions\":{},\"total_functions\":{},\"code_bytes\":{},\"mapped_bytes\":{},\"native_entry_requests\":[{}],\"interpreter_fallback_entries\":[{}],\"compiled_to_vm_callouts\":{},\"compiled_import_callouts\":{},\"compiled_known_callouts\":{},\"compiled_reference_callouts\":{},\"import_callout_targets\":[{}],\"emscripten_memcpy_fast_path_hits\":{},\"reference_call_sites\":[{}],\"same_artifact_direct_reference_hits\":{},\"reference_call_targets\":[{}]}}",
-            stats.program,
-            stats.compiled_functions,
-            stats.total_functions,
-            stats.code_bytes,
-            stats.mapped_bytes,
-            entries,
-            fallbacks,
-            stats.compiled_to_vm_callouts.get(),
-            stats.compiled_import_callouts.get(),
-            stats.compiled_known_callouts.get(),
-            stats.compiled_reference_callouts.get(),
-            import_callout_targets,
-            stats.emscripten_memcpy_fast_path_hits.get(),
-            reference_sites,
-            same_artifact_direct_hits,
-            reference_targets,
-        );
-    }
-}
-
 /// Reads and writes of the head's fields go through the head (`JsStepDispatch::head`).
 impl Deref for JsStepDispatch {
     type Target = JsStepHead<Value>;
@@ -5004,51 +4855,6 @@ pub struct Views {
     pub write: *mut u8,
 }
 
-pub fn format_import_callout_targets(
-    names: &[(u32, u32, String, String)],
-    counters: &[std::cell::Cell<u64>],
-) -> String {
-    debug_assert_eq!(names.len(), counters.len());
-    names
-        .iter()
-        .zip(counters)
-        .filter_map(|((function, import_index, module, name), count)| {
-            let count = count.get();
-            (count > 0).then(|| {
-                format!(
-                    "{{\"function\":{function},\"import_index\":{import_index},\"module\":{},\"name\":{},\"count\":{count}}}",
-                    json_string(module),
-                    json_string(name)
-                )
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-pub fn json_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\u{08}' => escaped.push_str("\\b"),
-            '\u{0C}' => escaped.push_str("\\f"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            character if character <= '\u{1F}' => {
-                use std::fmt::Write;
-                write!(escaped, "\\u{:04x}", character as u32)
-                    .expect("writing to a String cannot fail");
-            }
-            character => escaped.push(character),
-        }
-    }
-    escaped.push('"');
-    escaped
-}
 
 /// Whether the frame header below `window` carries a side record.
 #[inline(always)]

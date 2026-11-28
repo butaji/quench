@@ -199,12 +199,6 @@ pub(crate) unsafe extern "C" fn body_capture_store_in_lane(_vm: u64, _residual: 
     u64::from(stored)
 }
 
-/// Records a run of a lane body that ended at `exit`.
-#[inline(always)]
-pub(in super::super) fn record_end_in_lane(cx: *mut LaneContext, exit: crate::compiled::LaneExit) {
-    crate::compiled::body_leave::body_ended(cx, exit);
-}
-
 pub(in super::super) fn body_left_in_lane(
     cx: *mut LaneContext,
     r: Registers,
@@ -212,7 +206,6 @@ pub(in super::super) fn body_left_in_lane(
     method: &crate::compiled::LaneMethod,
     exit: crate::compiled::LaneExit,
 ) -> LaneBodyLeft {
-    record_end_in_lane(cx, exit);
     if exit == crate::compiled::LaneExit::Terminated {
         // A fault can bypass the native exit's register snapshots. Discard its
         // native frames instead of materializing stale homes for guest execution.

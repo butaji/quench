@@ -110,7 +110,6 @@ pub(crate) fn number_arithmetic(instruction: WideInstruction, operator: u32) -> 
 pub(crate) mod osr_loop;
 pub(crate) mod call_signature;
 pub(crate) mod exit_protocol;
-pub(crate) mod body_leave;
 pub(crate) mod entry_protocol;
 pub(crate) mod region_lend;
 pub(crate) use exit_protocol::{ExitFact, ExitTable, RegionRun};
@@ -1589,20 +1588,11 @@ impl CallContext {
                 call_reference: 0,
                 compiled: std::ptr::null(),
                 program: ProgramId::MAIN,
-                import_callouts: std::ptr::null_mut(),
-                known_callouts: std::ptr::null_mut(),
-                reference_callouts: std::ptr::null_mut(),
                 memory: Value::NULL,
                 memory_length: 0,
                 raised: None,
-                call_reference_diagnostic: 0,
-                reference_call_sites: std::ptr::null(),
-                reference_call_site_count: 0,
                 poll_start: 0,
                 poll_end: 0,
-                emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-                import_callout_counts: std::ptr::null(),
-                import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
                 body_shim: lane_body_abi::body_shim(),
             },
@@ -1653,20 +1643,11 @@ impl CallContext {
                 call_reference: 0,
                 compiled: std::ptr::null(),
                 program: ProgramId::MAIN,
-                import_callouts: std::ptr::null_mut(),
-                known_callouts: std::ptr::null_mut(),
-                reference_callouts: std::ptr::null_mut(),
                 memory: Value::NULL,
                 memory_length: 0,
                 raised: None,
-                call_reference_diagnostic: 0,
-                reference_call_sites: std::ptr::null(),
-                reference_call_site_count: 0,
                 poll_start: poll.map_or(0, |(start, _)| start),
                 poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                emscripten_memcpy_fast_path_hits: std::ptr::null_mut(),
-                import_callout_counts: std::ptr::null(),
-                import_callout_count: 0,
                 adapter_payload: std::ptr::null_mut(),
                 body_shim: lane_body_abi::body_shim(),
             },
@@ -1705,20 +1686,11 @@ impl CallContext {
                 call_reference: self.call_reference,
                 compiled: self.compiled,
                 program: self.program,
-                import_callouts: self.import_callouts,
-                known_callouts: self.known_callouts,
-                reference_callouts: self.reference_callouts,
                 memory: self.memory,
                 memory_length: self.memory_length,
                 raised: None,
-                call_reference_diagnostic: self.call_reference_diagnostic,
-                reference_call_sites: self.reference_call_sites,
-                reference_call_site_count: self.reference_call_site_count,
                 poll_start: self.poll_start,
                 poll_end: self.poll_end,
-                emscripten_memcpy_fast_path_hits: self.emscripten_memcpy_fast_path_hits,
-                import_callout_counts: self.import_callout_counts,
-                import_callout_count: self.import_callout_count,
                 adapter_payload: std::ptr::null_mut(),
                 body_shim: self.body_shim,
             },
@@ -1744,8 +1716,6 @@ const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, head.callout) as 
 const CONTEXT_CALL_REFERENCE: i32 = std::mem::offset_of!(CallContext, head.call_reference) as i32;
 const CONTEXT_MEMORY_LENGTH: i32 = std::mem::offset_of!(CallContext, head.memory_length) as i32;
 const CONTEXT_MEMORY_GROW: i32 = std::mem::offset_of!(CallContext, memory_grow) as i32;
-const CONTEXT_CALL_REFERENCE_DIAGNOSTIC: i32 =
-    std::mem::offset_of!(CallContext, head.call_reference_diagnostic) as i32;
 const CONTEXT_INSTANCE: i32 = std::mem::offset_of!(CallContext, instance) as i32;
 const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots) as i32;
 /// The callout's signature: (context, function index, arguments, result) ->
@@ -1753,7 +1723,6 @@ const CONTEXT_NATIVE_ROOTS: i32 = std::mem::offset_of!(CallContext, native_roots
 type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
 type ReferenceCallout =
     unsafe extern "C" fn(*mut CallContext, u64, u64, u64, u64, *const u64, *mut u64) -> i64;
-type DiagnosticReferenceCallout = ReferenceCallout;
 
 /// Fill an already bounds-checked range in the instance's direct memory.
 /// The compiler checks against the exact current length before calling this
@@ -1806,95 +1775,6 @@ unsafe extern "C" fn compiled_memory_copy(destination: u64, source: u64, length:
     0
 }
 
-fn note_compiled_callout(counter: *mut u64) {
-    if !counter.is_null() {
-        // SAFETY: only diagnostic-enabled calls provide this pointer, and it
-        // points to a counter owned by the suspended native invocation.
-        unsafe {
-            *counter = (*counter).saturating_add(1);
-        }
-    }
-}
-
-unsafe fn note_import_callout_target(
-    counters: *const std::cell::Cell<u64>,
-    counter_count: usize,
-    function: u64,
-) {
-    let Ok(index) = usize::try_from(function) else {
-        return;
-    };
-    if counters.is_null() || index >= counter_count {
-        return;
-    }
-    // SAFETY: diagnostic contexts point at `counter_count` initialized Cells
-    // owned by their CompiledProgram, which remains live across the callout.
-    let counter = unsafe { &*counters.add(index) };
-    counter.set(counter.get().saturating_add(1));
-}
-
-
-
-use quench_runtime::vm::engine_types::ReferenceCallSiteCounts;
-
-use quench_runtime::vm::engine_types::ReferenceCallTargetCounts;
-
-pub(crate) use quench_runtime::vm::engine_types::ReferenceCallSiteDiagnostics;
-
-fn note_reference_call_site(
-    context: &CallContext,
-    site: u64,
-    native: bool,
-    same_artifact_direct: bool,
-    target_function: Option<usize>,
-    target_same_artifact_native: bool,
-) {
-    let Ok(site) = usize::try_from(site) else {
-        return;
-    };
-    if context.reference_call_sites.is_null() || site >= context.reference_call_site_count {
-        return;
-    }
-    // SAFETY: diagnostic call sites are a stable vector owned by the compiled
-    // program for the full native invocation, and generated ids are assigned
-    // from that vector at compile time.
-    let counts = unsafe { &*context.reference_call_sites.add(site) };
-    let mut updated = counts.counts.get();
-    updated.total = updated.total.saturating_add(1);
-    if native {
-        updated.native = updated.native.saturating_add(1);
-    } else {
-        updated.fallback = updated.fallback.saturating_add(1);
-    }
-    if same_artifact_direct {
-        updated.same_artifact_direct = updated.same_artifact_direct.saturating_add(1);
-    }
-    counts.counts.set(updated);
-    if let Some(function) = target_function {
-        let mut targets = counts.targets.borrow_mut();
-        let target_index = if let Some(target_index) = targets
-            .iter()
-            .position(|target| target.function == function)
-        {
-            target_index
-        } else {
-            targets.push(ReferenceCallTargetCounts {
-                function,
-                ..ReferenceCallTargetCounts::default()
-            });
-            targets.len() - 1
-        };
-        let target = &mut targets[target_index];
-        target.total = target.total.saturating_add(1);
-        if native {
-            target.native = target.native.saturating_add(1);
-        }
-        if native && target_same_artifact_native {
-            target.same_artifact_native = target.same_artifact_native.saturating_add(1);
-        }
-    }
-}
-
 fn refresh_memory_length(context: &mut CallContext, vm: &Vm) {
     if context.memory != Value::UNDEFINED
         && let Some((_, length)) = crate::dispatch_fast::direct_memory(vm, context.memory)
@@ -1932,47 +1812,12 @@ unsafe extern "C" fn reference_callout(
     table_slot: u64,
     index: u64,
     signature_index: u64,
-    site: u64,
+    // The emitted call's site id (`reference_site_ids`), part of the call ABI.
+    _site: u64,
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
-    // A stable call-site id is present even without diagnostics so the VM can
-    // find the per-site monomorphic cache without a hash lookup.
-    unsafe {
-        reference_callout_inner::<false>(
-            context,
-            table_slot,
-            index,
-            signature_index,
-            site,
-            args,
-            out,
-        )
-    }
-}
-
-/// Diagnostic-only reference callout. Its extra site id is emitted only when
-/// Wasm JIT diagnostics were enabled at compilation time.
-unsafe extern "C" fn diagnostic_reference_callout(
-    context: *mut CallContext,
-    table_slot: u64,
-    index: u64,
-    signature_index: u64,
-    site: u64,
-    args: *const u64,
-    out: *mut u64,
-) -> i64 {
-    unsafe {
-        reference_callout_inner::<true>(
-            context,
-            table_slot,
-            index,
-            signature_index,
-            site,
-            args,
-            out,
-        )
-    }
+    unsafe { reference_callout_inner(context, table_slot, index, signature_index, args, out) }
 }
 
 /// Builds the validation error of a failed Wasm callout check, out of line.
@@ -1985,19 +1830,15 @@ fn wasm_callout_error(message: &'static str) -> JsError {
 /// Calls an indirect target with no direct native entry and stores its scalar result at `out`.
 #[cold]
 #[inline(never)]
-unsafe fn reference_callout_fallback<const DIAGNOSTICS: bool>(
+unsafe fn reference_callout_fallback(
     vm: &mut Vm,
     program: ProgramId,
-    caller: *const CompiledProgram,
     callee: Value,
     same_program_function: Option<(ProgramId, u32, Value)>,
     params: &[quench_runtime::WasmType],
     result_type: Option<quench_runtime::WasmType>,
-    reference_target_function: Option<usize>,
     args: *const u64,
     out: *mut u64,
-    native_target_hit: &mut bool,
-    target_same_artifact_native: &mut bool,
 ) -> Result<(), JsError> {
     let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
     for (offset, ty) in params.iter().enumerate() {
@@ -2009,17 +1850,6 @@ unsafe fn reference_callout_fallback<const DIAGNOSTICS: bool>(
     let compiled_result = same_program_function.and_then(|(target_program, function, env)| {
         vm.run_compiled(target_program, env, function, &values)
     });
-    *native_target_hit = compiled_result.is_some();
-    if DIAGNOSTICS
-        && *native_target_hit
-        && let Some(function) = reference_target_function
-    {
-        let target_compiled = compiled_reference_target(vm, program, function, caller);
-        *target_same_artifact_native = !caller.is_null()
-            && target_compiled
-                .as_ref()
-                .is_some_and(|compiled| std::ptr::eq(caller, Rc::as_ptr(compiled)));
-    }
     let result = match compiled_result {
         Some(result) => result?,
         None => {
@@ -2040,28 +1870,21 @@ unsafe fn reference_callout_fallback<const DIAGNOSTICS: bool>(
     Ok(())
 }
 
-/// Shared implementation, monomorphized so ordinary callouts have no
-/// diagnostic counter branch or extra site lookup.
-unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
+/// The reference callout's implementation.
+unsafe fn reference_callout_inner(
     context: *mut CallContext,
     table_slot: u64,
     index: u64,
     signature_index: u64,
-    site: u64,
     args: *const u64,
     out: *mut u64,
 ) -> i64 {
     // SAFETY: generated code passes the context, table binding, table index,
     // signature index, argument words, and output storage for this call.
     let context = unsafe { &mut *context };
-    note_compiled_callout(context.reference_callouts);
     let vm_pointer = context.vm.cast::<Vm>();
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
-    let mut native_target_hit = false;
-    let mut same_artifact_direct_hit = false;
-    let mut target_same_artifact_native = false;
-    let mut reference_target_function = None;
     let mut direct_target_root = None;
     let mut direct_status = None;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2119,16 +1942,10 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             });
             (callee, params, result_type, same_program_function, direct_entry)
         };
-        if DIAGNOSTICS {
-            reference_target_function = direct_entry.as_ref().map(|entry| entry.1).or_else(|| {
-                same_program_function
-                    .as_ref()
-                    .map(|(_, function, _)| *function as usize)
-            });
-        }
         if let Some((
-            compiled,
-            function,
+            // Held to the call's end: the entry's executable mapping lives in it.
+            _compiled,
+            _function,
             entry,
             (base, length),
             record,
@@ -2139,7 +1956,8 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // returns.
             let callee_root = unsafe { &mut *vm_pointer }.hold_root(callee);
             direct_target_root = Some(callee_root);
-            compiled.note_direct_reference_entry(function);
+            #[cfg(test)]
+            _compiled.note_direct_reference_entry(_function);
             let mut nested = context.nested_entry();
             // SAFETY: the record belongs to the environment the target runs in.
             nested.enter(unsafe { &*record });
@@ -2148,12 +1966,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
             // checked above. The caller's raw argument/result buffers have
             // the Wasm ABI shape expected by this compiled entry, and `compiled`
             // keeps its executable mapping alive for the duration of the call.
-            native_target_hit = true;
-            if DIAGNOSTICS {
-                same_artifact_direct_hit = !context.compiled.is_null()
-                    && std::ptr::eq(context.compiled, Rc::as_ptr(&compiled));
-                target_same_artifact_native = same_artifact_direct_hit;
-            }
             // SAFETY: as the direct path's call; the nested context outlives the call.
             let status = unsafe {
                 enter_wasm(
@@ -2182,19 +1994,15 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
         // SAFETY: the generated call passes one argument word per parameter of `params` and
         // a result word for `result_type`, the shape the fallback reads and writes.
         unsafe {
-            reference_callout_fallback::<DIAGNOSTICS>(
+            reference_callout_fallback(
                 vm,
                 program,
-                context.compiled,
                 callee,
                 same_program_function,
                 &params,
                 result_type,
-                reference_target_function,
                 args,
                 out,
-                &mut native_target_hit,
-                &mut target_same_artifact_native,
             )
         }?;
         Ok(())
@@ -2203,16 +2011,6 @@ unsafe fn reference_callout_inner<const DIAGNOSTICS: bool>(
     let vm = unsafe { &mut *vm_pointer };
     if let Some(root) = direct_target_root {
         vm.drop_root(root);
-    }
-    if DIAGNOSTICS {
-        note_reference_call_site(
-            context,
-            site,
-            native_target_hit,
-            same_artifact_direct_hit,
-            reference_target_function,
-            target_same_artifact_native,
-        );
     }
     refresh_memory_length(context, vm);
     refresh_wasm_gc_records(context, vm);
@@ -2231,33 +2029,11 @@ unsafe extern "C" fn import_callout(
     // VM is suspended in that call.
     let context = unsafe { &mut *context };
     let vm = unsafe { &mut *context.vm.cast::<Vm>() };
-    let defined = vm
-        .programs
-        .wasm_signatures(context.program)
-        .and_then(|signatures| signatures.defined_index(function as u32))
-        .is_some();
-    note_compiled_callout(if defined {
-        context.known_callouts
-    } else {
-        context.import_callouts
-    });
-    if !defined && !context.import_callout_counts.is_null() {
-        // SAFETY: this pointer is non-null only when the owning compiled
-        // program enabled diagnostic counters for the full native call.
-        unsafe {
-            note_import_callout_target(
-                context.import_callout_counts,
-                context.import_callout_count,
-                function,
-            );
-        }
-    }
     // The VM's own code runs outside compiled code: no guard fault is ours.
     let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
     let program = context.program;
     let env = context.env;
     let current_memory = context.memory;
-    let memcpy_fast_path_hits = context.emscripten_memcpy_fast_path_hits;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // SAFETY: compiled code passes one word per parameter and a result
         // word.
@@ -2267,7 +2043,6 @@ unsafe extern "C" fn import_callout(
                 env,
                 function as u32,
                 current_memory,
-                memcpy_fast_path_hits,
                 args,
                 out,
             )
@@ -2365,29 +2140,17 @@ fn compiled_reference_target(
 }
 
 /// A Wasm program's compile (`compile_wasm_program`), the route `jit_routes` installs.
-pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, bool, usize, admission::CompiledUnit) -> Option<CompiledProgram>;
+pub(crate) type WasmCompile = fn(&Vm, ProgramId, Value, usize, admission::CompiledUnit) -> Option<CompiledProgram>;
 pub(crate) use quench_runtime::vm::engine_types::CompiledProgram;
 
-use quench_runtime::vm::engine_types::WasmJitDiagnostics;
 
 
-
-fn jit_diagnostics_enabled() -> bool {
-    quench_runtime::trace::Channel::WasmJit.on()
-}
 
 #[quench_macros::ext(CompiledProgramOps1)]
 impl CompiledProgram {
     #[cfg(test)]
-    pub(crate) fn emscripten_memcpy_fast_path_hits(&self) -> u64 {
-        self.diagnostics
-            .as_ref()
-            .map_or(0, |stats| stats.emscripten_memcpy_fast_path_hits.get())
-    }
-
     fn note_direct_reference_entry(&self, function: usize) {
         self.note_native_entry(function);
-        #[cfg(test)]
         if let Some(function) = self.function(function) {
             function
                 .direct_reference_entries
@@ -2395,80 +2158,13 @@ impl CompiledProgram {
         }
     }
 
+    #[cfg(test)]
     fn note_native_entry(&self, function: usize) {
-        if let Some(stats) = &self.diagnostics
-            && let Some(entries) = stats.native_entry_requests.get(function)
-        {
-            entries.set(entries.get().saturating_add(1));
-        }
-        #[cfg(test)]
         if let Some(function) = self.function(function) {
             function
                 .native_entries
                 .set(function.native_entries.get().saturating_add(1));
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reference_call_site_counts(&self) -> Option<Vec<(usize, usize, u64, u64, u64)>> {
-        Some(
-            self.diagnostics
-                .as_ref()?
-                .reference_call_sites
-                .iter()
-                .map(|site| {
-                    let counts = site.counts.get();
-                    (
-                        site.function,
-                        site.pc,
-                        counts.total,
-                        counts.native,
-                        counts.fallback,
-                    )
-                })
-                .collect(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reference_call_target_counts(
-        &self,
-    ) -> Option<Vec<(usize, usize, usize, u64, u64, u64)>> {
-        Some(
-            self.diagnostics
-                .as_ref()?
-                .reference_call_sites
-                .iter()
-                .flat_map(|site| {
-                    site.targets
-                        .borrow()
-                        .iter()
-                        .map(|target| {
-                            (
-                                site.function,
-                                site.pc,
-                                target.function,
-                                target.total,
-                                target.native,
-                                target.same_artifact_native,
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn same_artifact_direct_reference_hits(&self) -> Option<u64> {
-        Some(
-            self.diagnostics
-                .as_ref()?
-                .reference_call_sites
-                .iter()
-                .map(|site| site.counts.get().same_artifact_direct)
-                .fold(0u64, u64::saturating_add),
-        )
     }
 
     #[cfg(test)]
@@ -5616,8 +5312,6 @@ pub(crate) struct Emitter<'a, 'b> {
     blocks: Vec<Option<ir::Block>>,
     /// Dense ids for the compiled artifact's actual indirect call sites.
     reference_site_ids: &'a [(usize, usize)],
-    /// Selects the diagnostics ABI at compile time; both ABIs carry site ids.
-    diagnostics_enabled: bool,
     base: ir::Value,
     /// The memory's exact length for checked accesses and bulk operations.
     length: Option<ir::Value>,
@@ -6315,7 +6009,6 @@ impl<'a> Analysis<'a> {
         guarded: bool,
         fixed_base: Option<i32>,
         reference_site_ids: &'a [(usize, usize)],
-        diagnostics_enabled: bool,
     ) -> Option<ir::Function> {
         let function = &self.code.function(index);
         let call_conv = isa.default_call_conv();
@@ -6377,7 +6070,6 @@ impl<'a> Analysis<'a> {
             plan,
             blocks: vec![None; function.code.len()],
             reference_site_ids,
-            diagnostics_enabled,
             base,
             length,
             grows,
@@ -7416,37 +7108,37 @@ impl Vm {
 
     /// Compile function `root` of `program`, and the functions its static closure calls, with `env` as the instance
     /// whose bindings fix global types and memory.
-    fn compile_program_with_diagnostics_and_root(
+    fn compile_program_and_root(
         &self,
         program: ProgramId,
         env: Value,
-        diagnostics_enabled: bool,
         root: usize,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         // Without the JIT's routes (`jit_routes`) the program runs in the interpreter.
-        (crate::jit_routes::jit()?.wasm)(self, program, env, diagnostics_enabled, root, unit)
+        (crate::jit_routes::jit()?.wasm)(self, program, env, root, unit)
     }
 
-    /// `compile_program_with_diagnostics_and_root`'s route, which `jit_routes` installs.
+    /// `compile_program_and_root`'s route, which `jit_routes` installs.
     fn compile_wasm_program(
         &self,
         program: ProgramId,
         env: Value,
-        diagnostics_enabled: bool,
         root: usize,
         unit: admission::CompiledUnit,
     ) -> Option<CompiledProgram> {
         let _ = unit;
+        // Compile-time reports (rejections, rss by body) print only when the `wasm-jit` channel is on.
+        let diagnostics = quench_runtime::trace::Channel::WasmJit.on();
         let code = self.programs.get(program)?;
         let compile_rejections =
-            diagnostics_enabled.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
+            diagnostics.then(|| std::cell::RefCell::new(vec![None; code.functions.len()]));
         let count = code.functions.len();
         let mut selected = vec![false; count];
         let mut pending = vec![root];
         while let Some(index) = pending.pop() {
             let Some(selected_function) = selected.get_mut(index) else {
-                if diagnostics_enabled {
+                if diagnostics {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} invalid-function={index}"
                     );
@@ -7458,7 +7150,7 @@ impl Vm {
             }
             let function = code.function_get(index)?;
             if function.code.len() > MAX_JIT_ROOT_BYTECODES_PER_FUNCTION {
-                if diagnostics_enabled {
+                if diagnostics {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} function={index} bytecodes={} limit={MAX_JIT_ROOT_BYTECODES_PER_FUNCTION}",
                         function.code.len()
@@ -7478,7 +7170,7 @@ impl Vm {
         }
         let selected_count = selected.iter().filter(|selected| **selected).count();
         if selected_count > MAX_JIT_ROOT_FUNCTIONS {
-            if diagnostics_enabled {
+            if diagnostics {
                 eprintln!(
                     "QUENCH_WASM_JIT_ROOT_REJECTION root={root} functions={selected_count} limit={MAX_JIT_ROOT_FUNCTIONS}"
                 );
@@ -7538,13 +7230,12 @@ impl Vm {
             .flatten();
         let isa = {
             let opt_level = "speed";
-            if diagnostics_enabled {
+            if diagnostics {
                 eprintln!("QUENCH_WASM_JIT_OPT_LEVEL {opt_level}");
             }
             quench_runtime::vm::jit_backend::target_isa_at(opt_level)?
         };
         let mut reference_site_ids = vec![Vec::new(); count];
-        let mut reference_call_sites = Vec::new();
         let mut reference_cache_count = 0usize;
         // One pass over each callable function's full plan finds what every body's compilation
         // reads first: its indirect reference sites.
@@ -7565,14 +7256,6 @@ impl Vm {
                 let site_id = reference_cache_count;
                 reference_cache_count += 1;
                 reference_site_ids[index].push((pc, site_id));
-                if diagnostics_enabled {
-                    reference_call_sites.push(ReferenceCallSiteDiagnostics {
-                        function: index,
-                        pc,
-                        counts: std::cell::Cell::new(ReferenceCallSiteCounts::default()),
-                        targets: std::cell::RefCell::new(Vec::new()),
-                    });
-                }
             }
         }
         let mut bytes = Vec::new();
@@ -7601,7 +7284,7 @@ impl Vm {
         build_order.sort_by_key(|&index| std::cmp::Reverse(code.function(index).code.len()));
         let build = build_order.into_iter().map(|index| {
             let full_plan = full_plans[index].as_ref()?;
-            let body_memory_before = diagnostics_enabled.then(jit_memory_snapshot).flatten();
+            let body_memory_before = diagnostics.then(jit_memory_snapshot).flatten();
             let admitted = admission::specialize(admission::UnitRequest { kind: admission::UnitKind::Wasm, facts: Default::default() })?;
             let built = WasmSpecializer {
                 index,
@@ -7609,10 +7292,10 @@ impl Vm {
                 full_plan,
                 reference_site_ids: &reference_site_ids[index],
                 admitted,
-                tier: WasmOptimizing { analysis: &analysis, isa: &*isa, guarded, fixed_base, diagnostics_enabled },
+                tier: WasmOptimizing { analysis: &analysis, isa: &*isa, guarded, fixed_base },
             }
             .specialize(&code);
-            if diagnostics_enabled {
+            if diagnostics {
                 let memory_after = jit_memory_snapshot();
                 eprintln!(
                     "QUENCH_WASM_JIT_BODY_MEMORY function={index} rss_kib_before={:?} rss_kib_after={:?} hwm_kib_before={:?} hwm_kib_after={:?}",
@@ -7633,7 +7316,7 @@ impl Vm {
             let (body, function_calls, entry) = bodies[index].take()?;
             let body_projected_len = projected_code_len(bytes.len(), body.len())?;
             if body_projected_len > MAX_JIT_ROOT_CODE_BYTES {
-                if diagnostics_enabled {
+                if diagnostics {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={body_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
@@ -7647,7 +7330,7 @@ impl Vm {
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let entry_projected_len = projected_code_len(bytes.len(), entry.len())?;
             if entry_projected_len > MAX_JIT_ROOT_CODE_BYTES {
-                if diagnostics_enabled {
+                if diagnostics {
                     eprintln!(
                         "QUENCH_WASM_JIT_ROOT_REJECTION root={root} native-code-bytes={entry_projected_len} limit={MAX_JIT_ROOT_CODE_BYTES}",
                     );
@@ -7660,7 +7343,6 @@ impl Vm {
             link(&mut bytes, offset, &call, offsets[call.callee]?)?;
         }
         let memory = CodeMemory::new(&bytes)?;
-        let mapped_bytes = memory.length();
         let base = memory.pointer() as usize;
         write_perf_map("wasm-function", base, &bytes, &spans);
         for (cell, entry) in entry_cells.iter().zip(&entries) {
@@ -7691,49 +7373,6 @@ impl Vm {
                 }
             })
             .collect();
-        let compiled_functions = functions.len();
-        let diagnostics = diagnostics_enabled.then(|| {
-            let import_callout_names = self
-                .programs
-                .wasm_signatures(program)
-                .map(|signatures| {
-                    signatures
-                        .imports()
-                        .iter()
-                        .enumerate()
-                        .map(|(function, import)| {
-                            (
-                                u32::try_from(function).expect("Wasm function indices fit in u32"),
-                                import.name.index,
-                                import.name.module.clone(),
-                                import.name.name.clone(),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let import_callout_counts = import_callout_names
-                .iter()
-                .map(|_| std::cell::Cell::new(0))
-                .collect();
-            WasmJitDiagnostics {
-                program: program.raw(),
-                total_functions: count,
-                compiled_functions,
-                code_bytes: bytes.len(),
-                mapped_bytes,
-                native_entry_requests: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                interpreter_fallback_entries: (0..count).map(|_| std::cell::Cell::new(0)).collect(),
-                compiled_to_vm_callouts: std::cell::Cell::new(0),
-                compiled_import_callouts: std::cell::Cell::new(0),
-                compiled_known_callouts: std::cell::Cell::new(0),
-                compiled_reference_callouts: std::cell::Cell::new(0),
-                emscripten_memcpy_fast_path_hits: std::cell::Cell::new(0),
-                import_callout_names,
-                import_callout_counts,
-                reference_call_sites,
-            }
-        });
         Some(CompiledProgram {
             _code: memory,
             table,
@@ -7743,7 +7382,6 @@ impl Vm {
             memory_slot,
             guarded,
             fixed_base,
-            diagnostics,
         })
     }
 
@@ -7920,7 +7558,7 @@ impl Vm {
         #[cfg(feature = "jit")]
         {
             self.host.before_native_compilation();
-            let tier = self.wasm_module_unit(program).and_then(|unit| self.compile_program_with_diagnostics_and_root(program, env, jit_diagnostics_enabled(), id as usize, unit)).map(Rc::new);
+            let tier = self.wasm_module_unit(program).and_then(|unit| self.compile_program_and_root(program, env, id as usize, unit)).map(Rc::new);
             tier.is_some_and(|tier| self.programs.install_wasm_tier(program, id, tier))
         }
         #[cfg(not(feature = "jit"))]
@@ -7946,30 +7584,6 @@ impl Vm {
             let raw = self.compiled_raw_args(args, &function.params)?;
             let marker = 0u8;
             let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
-            let mut import_callouts = 0u64;
-            let mut known_callouts = 0u64;
-            let mut reference_callouts = 0u64;
-            let mut emscripten_memcpy_fast_path_hits = 0u64;
-            let (
-                import_callouts_ptr,
-                known_callouts_ptr,
-                reference_callouts_ptr,
-                emscripten_memcpy_fast_path_hits_ptr,
-            ): (*mut u64, *mut u64, *mut u64, *mut u64) = if compiled.diagnostics.is_some() {
-                (
-                    &mut import_callouts as *mut u64,
-                    &mut known_callouts as *mut u64,
-                    &mut reference_callouts as *mut u64,
-                    &mut emscripten_memcpy_fast_path_hits as *mut u64,
-                )
-            } else {
-                (
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                )
-            };
             let poll = self.execution_interrupt.poll_page();
             let mut context = CallContext {
                 head: CallContextFields {
@@ -7987,20 +7601,11 @@ impl Vm {
                     call_reference: reference_callout as ReferenceCallout as usize,
                     compiled: std::ptr::null(),
                     program,
-                    import_callouts: import_callouts_ptr,
-                    known_callouts: known_callouts_ptr,
-                    reference_callouts: reference_callouts_ptr,
                     memory: Value::UNDEFINED,
                     memory_length: 0,
                     raised: None,
-                    call_reference_diagnostic: 0,
-                    reference_call_sites: std::ptr::null(),
-                    reference_call_site_count: 0,
                     poll_start: poll.map_or(0, |(start, _)| start),
                     poll_end: poll.map_or(0, |(start, bytes)| start + bytes),
-                    emscripten_memcpy_fast_path_hits: emscripten_memcpy_fast_path_hits_ptr,
-                    import_callout_counts: std::ptr::null(),
-                    import_callout_count: 0,
                     adapter_payload: std::ptr::null_mut(),
                     body_shim: lane_body_abi::body_shim(),
                 },
@@ -8013,6 +7618,7 @@ impl Vm {
             // SAFETY: the record belongs to the environment the call runs in.
             context.enter(unsafe { &*record });
             let mut out = 0u64;
+            #[cfg(test)]
             compiled.note_native_entry(id as usize);
             // SAFETY: the entry is compiled code for this function's
             // signature; the context, arguments and result outlive the call,
@@ -8028,40 +7634,6 @@ impl Vm {
                     function.entry,
                 )
             };
-            if let Some(stats) = &compiled.diagnostics {
-                stats.compiled_to_vm_callouts.set(
-                    stats
-                        .compiled_to_vm_callouts
-                        .get()
-                        .saturating_add(import_callouts)
-                        .saturating_add(known_callouts)
-                        .saturating_add(reference_callouts),
-                );
-                stats.compiled_import_callouts.set(
-                    stats
-                        .compiled_import_callouts
-                        .get()
-                        .saturating_add(import_callouts),
-                );
-                stats.compiled_known_callouts.set(
-                    stats
-                        .compiled_known_callouts
-                        .get()
-                        .saturating_add(known_callouts),
-                );
-                stats.compiled_reference_callouts.set(
-                    stats
-                        .compiled_reference_callouts
-                        .get()
-                        .saturating_add(reference_callouts),
-                );
-                stats.emscripten_memcpy_fast_path_hits.set(
-                    stats
-                        .emscripten_memcpy_fast_path_hits
-                        .get()
-                        .saturating_add(emscripten_memcpy_fast_path_hits),
-                );
-            }
             if i64::from(status) == TERMINATED_STATUS {
                 return Some(Err(JsError::execution_terminated()));
             }
@@ -8084,12 +7656,6 @@ impl Vm {
                 None => self.programs.constant(program, VOID_RESULT_CONSTANT)?,
             }))
         })();
-        if let Some(stats) = &compiled.diagnostics
-            && result.is_none()
-            && let Some(fallbacks) = stats.interpreter_fallback_entries.get(id as usize)
-        {
-            fallbacks.set(fallbacks.get().saturating_add(1));
-        }
         result
     }
 }
@@ -8135,7 +7701,6 @@ impl Vm {
         env: Value,
         function: u32,
         current_memory: Value,
-        memcpy_fast_path_hits: *mut u64,
         args: *const u64,
         out: *mut u64,
     ) -> Result<(), JsError> {
@@ -8205,7 +7770,6 @@ impl Vm {
                     receiver,
                     &values,
                     current_memory,
-                    memcpy_fast_path_hits,
                 )?
             } else {
                 self.call_value(&code, callee, receiver, &values)?
@@ -9680,29 +9244,6 @@ mod tests {
         assert_eq!(status, i64::from(quench_bjit::call_record::TERMINATED_STATUS), "terminated entry must stop");
         assert!(outcome.is_none());
         assert_eq!(vm.own_property(vm.realm.globals, instruction.atom_index()), None);
-    }
-
-    #[test]
-    fn per_import_callout_counts_use_function_indices_and_escape_json_names() {
-        let names = vec![
-            (0, 2, "env".to_owned(), "copy\"fast".to_owned()),
-            (1, 5, "host\\api".to_owned(), "line\nfeed".to_owned()),
-        ];
-        let counters = [std::cell::Cell::new(0), std::cell::Cell::new(0)];
-        // SAFETY: the pointer covers both initialized counters for their
-        // entire use below.
-        unsafe {
-            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
-            note_import_callout_target(counters.as_ptr(), counters.len(), 1);
-            note_import_callout_target(counters.as_ptr(), counters.len(), 99);
-        }
-        assert_eq!(counters[0].get(), 0);
-        assert_eq!(counters[1].get(), 2);
-        assert_eq!(
-            quench_runtime::vm::engine_types::format_import_callout_targets(&names, &counters),
-            "{\"function\":1,\"import_index\":5,\"module\":\"host\\\\api\",\"name\":\"line\\nfeed\",\"count\":2}"
-        );
-        assert_eq!(quench_runtime::vm::engine_types::json_string("\u{1}\t"), "\"\\u0001\\t\"");
     }
 
     #[test]
