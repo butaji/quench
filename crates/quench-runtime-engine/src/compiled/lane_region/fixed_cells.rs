@@ -124,7 +124,7 @@ impl Lowering<'_, '_> {
             let displacement = self.raw_const(Lane::I64, slot_displacement(fixed.slot));
             return cell.offset_address(&mut self.builder, displacement);
         }
-        let address = cell.address(&mut self.builder);
+        let address = cell.address();
         let payload = self.payload;
         let mut stage = Emit { builder: &mut self.builder, property_values: None, gate: Some(payload), payload: Some(payload),
             facts: Default::default(), fresh: false };
