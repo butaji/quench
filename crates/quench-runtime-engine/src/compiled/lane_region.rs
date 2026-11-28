@@ -4658,6 +4658,19 @@ impl Lowering<'_, '_> {
                         (*known == site).then_some(*binding));
                     Some((*store, binding))
                 }).collect();
+            // A fixed class's receiver is no record: its stores project their union slots in its cell (`fixed_loop_store`).
+            let mut record_stores: smallvec::SmallVec<[(usize, Option<FieldSlotBinding>); INLINE_FIELD_BINDINGS]> = smallvec::SmallVec::new();
+            for (store, binding) in stores {
+                match receiver {
+                    Some((owner, _)) if self.fixed_class(store, Some(owner)).is_some() => {
+                        if let Some(loop_store) = self.fixed_loop_store(state, store, owner) {
+                            self.loop_stores.insert(store, loop_store);
+                        }
+                    }
+                    _ => record_stores.push((store, binding)),
+                }
+            }
+            let stores = record_stores;
             let object_header = if !stores.is_empty() {
                 receiver.map(|(owner, _)| self.object_header(state, Some(owner), false, exit))
             } else { None };
@@ -5039,6 +5052,12 @@ impl Lowering<'_, '_> {
         {
             return Some(true);
         }
+        // A fixed class's receiver reads its union slot in its class cell, with no record (`fixed_cells`).
+        if rest.is_empty() && sink.is_none() && completes.is_none()
+            && self.fixed_field_read(state, pc, instruction, (register, first.0), exit)
+        {
+            return Some(true);
+        }
         let known = match field {
             Some((owner, atom)) => self.owner_word(state, owner)
                 .and_then(|word| state.proofs.fields.iter().copied().find(|field| field.owner == word && field.atom == atom)),
@@ -5193,6 +5212,10 @@ impl Lowering<'_, '_> {
             None => None,
         };
         let exit = self.guard_exit(state, pc as u32);
+        // A fixed class's receiver stores its union slot in place, with no record (`fixed_cells`).
+        if carried.is_none() && self.fixed_field_store(state, pc, instruction, register, exit) {
+            return Some(true);
+        }
         let carried_int = carried.filter(|read| read.representation == Representation::Int32)
             .map(|_| self.int(state, source, exit))
             .or_else(|| carried.filter(|read| read.representation == Representation::Float64)
@@ -5549,6 +5572,7 @@ pub(crate) mod tests;
 #[path = "lane_region/lowering_tests.rs"]
 pub(crate) mod lowering_tests;
 #[path = "lane_region/kept_shapes.rs"] pub(crate) mod kept_shapes;
+#[path = "lane_region/fixed_cells.rs"] pub(crate) mod fixed_cells;
 #[path = "lane_region/loop_receivers.rs"] pub(crate) mod loop_receivers;
 #[cfg(test)]
 #[path = "lane_region/slot_proof_tests.rs"]

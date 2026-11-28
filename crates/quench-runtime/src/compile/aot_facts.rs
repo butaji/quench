@@ -405,6 +405,15 @@ impl AotFacts {
         self.fixed_cells.contains(&class)
     }
 
+    /// Whether every instance of class `class` holds field `atom` before any code can read it: the class is a fixed cell
+    /// (`class_fixed_cell`) and the field is in its instance layout (`class_layout`), which is the fields every construction
+    /// stores on `this` on every path before code that may read the instance can run (a path is sealed at the first such point,
+    /// and a store after it leaves no layout). Derived from those two facts, not solved again. The lane then reads the slot
+    /// with no hole test and no `FieldDefault`.
+    pub fn field_always_stored(&self, class: u32, atom: u32) -> bool {
+        self.class_fixed_cell(class) && self.class_layout(class).is_some_and(|fields| fields.contains(&atom))
+    }
+
     /// The classes of `this` in `function`: the join of the receivers its recorded calls pass (`FactKey::Receiver`, settled in
     /// `cells`). `Classes::Many` where new code may call the function (`live`), or where the solve kept no cell.
     pub fn this_classes(&self, function: u32) -> crate::typed_ir::Classes {

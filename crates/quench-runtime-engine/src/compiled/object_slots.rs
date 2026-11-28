@@ -45,10 +45,12 @@ impl From<CheckedObjectTable> for ObjectTable {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObjectHeader {
     pub(crate) record: ObjectRecord,
-    pub(crate) shape: ir::Value,
-    pub(crate) inline: ir::Value,
-    /// The record's address, computed once for the header loads and every later read.
+    /// The record's address, computed once for the header loads and every later read; a fixed class cell's cell.
     pub(crate) address: ir::Value,
+    /// The exact shape the record holds (`None` for a fixed class cell, which holds no record shape: its class is the fact).
+    pub(crate) shape: Option<ir::Value>,
+    /// The record's inline-storage flag (`None` for a fixed class cell, whose storage form the union layout fixes).
+    pub(crate) inline: Option<ir::Value>,
     /// The record's layout id, where it was loaded (`IcOp::GuardLayout`).
     pub(crate) word: Option<ir::Value>,
     /// The record's auxiliary word (exact shape and storage-form bits) the header read, which a
@@ -80,9 +82,23 @@ pub(crate) enum ObjectRecord {
     /// A record address already admitted by the region's receiver entry.
     Address(ir::Value),
     Indexed { base: ir::Value, offset: ir::Value },
+    /// The class cell of a fixed class (`AotFacts::class_fixed_cell`): every instance is this cell from birth, so no record
+    /// exists, and no presence, departed or class test is made. The address is the cell (`class_base + granule * 8`), whose
+    /// fields are the union slots (`offset_address`).
+    FixedCell(ir::Value),
 }
 
 impl ObjectRecord {
+    /// The class cell of a fixed class's direct object reference `bits` (`staged::object::cell_at_granule`): the granule
+    /// the reference names, in the class space at `class_base`. The class is the fact, so nothing is tested.
+    pub(crate) fn prove_fixed(builder: &mut FunctionBuilder<'_>, bits: ir::Value, class_base: ir::Value) -> Self {
+        use quench_runtime::staged::layout_offsets::CLASS_CELL_GRANULE_BYTES;
+        let granule = emit(builder).raw_unary(Unary::Narrow(Lane::I32), bits);
+        let granule = emit(builder).raw_unary(Unary::ZeroExtend(Lane::I64), granule);
+        let offset = emit(builder).raw_binary_imm(Binary::Mul, granule, CLASS_CELL_GRANULE_BYTES as i64);
+        Self::FixedCell(emit(builder).raw_binary(Binary::Add, class_base, offset))
+    }
+
     /// The Cranelift projection of staged `object::object_record_of`: the granule the direct object's
     /// bits name is a class cell (`class_base + g * 8`), whose header's high half is the record id, and
     /// the record is `records + id * record_size` (R4-B2b decision 6).
@@ -106,18 +122,20 @@ impl ObjectRecord {
         Self::Indexed { base: records, offset }
     }
 
+    /// The record's address, or a fixed class's cell (which holds no record).
     pub(crate) fn address(self, builder: &mut FunctionBuilder<'_>) -> ir::Value {
         match self {
-            Self::Address(address) => address,
+            Self::Address(address) | Self::FixedCell(address) => address,
             Self::Indexed { base, offset } => emit(builder).raw_binary(Binary::Add, base, offset),
         }
     }
 
     /// Combine the slot displacement with the record index before projecting
-    /// an address, so the record's summed pointer need not span the guards.
+    /// an address, so the record's summed pointer need not span the guards. A fixed class's
+    /// displacement is from its cell, whose fields are the union slots.
     pub(crate) fn offset_address(self, builder: &mut FunctionBuilder<'_>, displacement: ir::Value) -> ir::Value {
         let (base, offset) = match self {
-            Self::Address(address) => (address, displacement),
+            Self::Address(address) | Self::FixedCell(address) => (address, displacement),
             Self::Indexed { base, offset } => (base, emit(builder).raw_binary(Binary::Add, offset, displacement)),
         };
         emit(builder).raw_binary(Binary::Add, base, offset)
@@ -125,12 +143,16 @@ impl ObjectRecord {
 
     pub(crate) fn header(self, builder: &mut FunctionBuilder<'_>, known: Option<typed_ir::VerifiedFact>) -> ObjectHeader {
         let address = self.address(builder);
+        // A fixed class's cell holds no record: no shape or storage form is read from it, and its class is the fact.
+        if let Self::FixedCell(_) = self {
+            return ObjectHeader { record: self, address, shape: None, inline: None, word: None, auxiliary: None, shape_fact: None };
+        }
         let (loaded, word, inline, auxiliary) = shape_and_inline(builder, address);
         let (shape, word, shape_fact) = match known.and_then(|fact| ShapeFact::of_type(fact.ty)) {
             Some((shape, fact)) => (emit(builder).raw_const(Lane::I32, i64::from(shape)), None, Some(fact)),
             None => (loaded, Some(word), None),
         };
-        ObjectHeader { record: self, shape, inline, address, word, auxiliary: Some(auxiliary), shape_fact }
+        ObjectHeader { record: self, address, shape: Some(shape), inline: Some(inline), word, auxiliary: Some(auxiliary), shape_fact }
     }
 }
 
@@ -171,7 +193,7 @@ impl ObjectHeader {
         emit(builder).goto(join, &[function_object]);
         builder.switch_to_block(join);
         let (shape, word, inline, auxiliary) = shape_and_inline(builder, record);
-        Self { record: ObjectRecord::Address(record), shape, inline, address: record, word: Some(word), auxiliary: Some(auxiliary), shape_fact: None }
+        Self { record: ObjectRecord::Address(record), address: record, shape: Some(shape), inline: Some(inline), word: Some(word), auxiliary: Some(auxiliary), shape_fact: None }
     }
 }
 

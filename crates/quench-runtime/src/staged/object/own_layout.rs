@@ -44,6 +44,10 @@ pub(crate) fn formed_own_layout<S: Stage>(stage: &mut S, record: S::Word, word: 
 #[inline(always)]
 pub(crate) fn proved_own_layout<S: Stage>(stage: &mut S, shaped: super::super::Shaped<S::Word>, bits: u32, storage_len: usize)
     -> Option<Layout<S::Word, S::Cond>> {
+    // A class-guarded cell's fields are one flat run at the cell: no form bits to read (`cell_fields`).
+    if let Some(cell) = shaped.cell() {
+        return Some(cell_fields(stage, cell, storage_len));
+    }
     let slots = match bits {
         bits if bits == OBJECT.inline_form => Slots::Packed(Packed::Record(shaped.record())),
         0 => {

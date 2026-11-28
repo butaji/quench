@@ -237,6 +237,15 @@ impl Vm {
         self.heap.claim_fixed_cell(shape, crate::heap::ProtoLink::of(prototype).bits(), &fields[..length])
     }
 
+    /// The store of `value` to union slot `slot` (named `atom`) of a fixed class's cell `this` (R4-F), in place. The
+    /// cell's shape already names the slot, so no add runs; the method caches that may name `atom` are invalidated.
+    pub fn store_fixed_cell_slot(&mut self, this: Value, slot: usize, atom: crate::bytecode::Atom, value: Value) {
+        self.heap.set_fixed_cell_slot(this, slot, value);
+        if self.method_caches_may_name(atom) {
+            self.invalidate_method_caches_for_prototype_add(this, atom);
+        }
+    }
+
     /// The union shape of a fixed class (R4-F): the shape `start` reaches by the names of `constructor`'s class's union
     /// layout (`AotFacts::class_union_layout`) in slot order, and how many leading constant-layout names of `entry`
     /// match its leading union names. `(NOT_FIXED, 0)` where the class has no union, the union holds more than a

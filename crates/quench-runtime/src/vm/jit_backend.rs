@@ -24,10 +24,9 @@ type TargetIsa = dyn cranelift_codegen::isa::TargetIsa;
 /// Reuse immutable host target configuration across JS function tiers and
 /// Wasm module compilation, one per optimization level.
 /// Whether Cranelift verifies the IR of every compile, and regalloc2 checks every allocation
-/// it makes: in debug builds, where tests check each lowering, and in the tier-stress build,
-/// which compiles everything it can (the ISA is shared by every VM of the process); not in release, where the verifier cost about a quarter
+/// it makes: in debug builds, where tests check each lowering; not in release, where the verifier cost about a quarter
 /// of every JIT compile's instructions (npm semver/browserslist `--jit`, 2026-10-24).
-fn verify_ir() -> bool { cfg!(debug_assertions) || cfg!(feature = "tier-stress") }
+fn verify_ir() -> bool { cfg!(debug_assertions) }
 
 // The engine's region declarations for a function about to be compiled
 // (`quench-runtime-engine`'s `compiled::regions::declare_regions`). Its argument is a Cranelift

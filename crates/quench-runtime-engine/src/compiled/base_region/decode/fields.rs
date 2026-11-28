@@ -27,6 +27,7 @@ fn folded_read(known: Known, site: u16) -> Option<(Folded, u64)> {
 /// key (`class | CLASS_KEY`) and field index, with the holder cell's granule where the read is held (`IcHeldClass`).
 fn ic_entry(load: crate::compiled::object_slots::NativeFieldLoad) -> IcEntry {
     match load.class {
+        // fixed classes: lane_region/fixed_cells.rs (a fixed receiver takes its union slot, not this row)
         Some(class) => IcEntry::Class {
             key_slot: u64::from(quench_runtime::staged::field_cache_layout::CLASS_KEY | class) | u64::from(load.slot) << u32::BITS,
             holder: load.holder.and(load.holder_cell),

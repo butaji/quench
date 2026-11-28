@@ -182,6 +182,9 @@ pub(crate) enum Heap {
     /// object whose exact shape and prototype link are the pair in hole 1 (`entry::shape_link_matches`), else the entry
     /// leaves with nothing written.
     Prototype,
+    /// The entry test of a live class cell (`base_region::link::entry_rows`): the register at hole 0 holds a direct object
+    /// whose live class cell's class is the one in hole 1 (`guard::class`), else the entry leaves with nothing written.
+    Class,
     /// The entry test of a loop-invariant receiver (`base_region::link::entry_rows`): the register at hole 0 holds a direct
     /// object of the exact shape in hole 1 (`guard::shape`), else the entry leaves with nothing written.
     Shape,
@@ -303,7 +306,7 @@ impl Heap {
     /// Whether the row reads a word of its operand's frame slot (a fast arm that tests the word),
     /// which a register held in a pinned register as a Number does not have there.
     pub(crate) fn reads_frame_word(self) -> bool {
-        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
+        matches!(self, Heap::Object | Heap::Key | Heap::ForIn | Heap::Declared | Heap::Prototype | Heap::Class | Heap::Shape | Heap::ShapeFlat | Heap::TypeofIndex | Heap::TypeofString | Heap::Instanceof | Heap::TypeofIs { .. })
     }
 
     /// Whether the row's result is a Number a double holds (a typed element), whatever the site's feedback.
@@ -346,7 +349,7 @@ mod catalog_tests {
             Heap::ThisSite, Heap::ThisChain, Heap::Length, Heap::CharCodeAt, Heap::ParseInt, Heap::SiteStore, Heap::ThisStore,
             Heap::IcGet, Heap::IcGetClass, Heap::IcHeldClass, Heap::IcSetClass, Heap::AddClass, Heap::IcKnownGet, Heap::IcKnownGetFlat, Heap::IcProof, Heap::CaptureSet(0), Heap::This, Heap::LoadLocal(0), Heap::EnvLocal(0),
             Heap::EnvStore(0), Heap::EnvDefine(0), Heap::StoreLocal(0), Heap::LoadChecked(0), Heap::StoreChecked(0), Heap::Identity,
-            Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Shape, Heap::ShapeFlat, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
+            Heap::Declared, Heap::CaptureIdentity, Heap::Prototype, Heap::Class, Heap::Shape, Heap::ShapeFlat, Heap::Stores, Heap::Held, Heap::ThisHeld, Heap::Realm,
             Heap::Live, Heap::Object, Heap::Key, Heap::TypeofIndex, Heap::TypeofString, Heap::Instanceof, Heap::GlobalRead,
             Heap::GlobalStore, Heap::LexicalRead, Heap::LexicalWrite, Heap::Word, Heap::CalleeCapture, Heap::Append, Heap::ForIn,
         ];

@@ -148,6 +148,10 @@ pub enum Operation<W, P> {
     /// receiver, whose shape and form its accesses then keep (`base_region::proofs`).
     #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
     GuardShape { source: W, records: W, shape: u64, form: super::object::Form },
+    /// Continue where `source` is a direct object whose live class cell's class is `class`, which fixes its exact shape and
+    /// prototype link (`guard::class`). The receiver is the cell, read as a flat run (`object::cell_fields`), no record.
+    #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
+    GuardClass { source: W, class: u32 },
     /// Continue where the run stores specialized, the dispatch word `specialized` (`guard::stores`): a region's entry test
     /// of the stores it admits without a test of their own (`base_region::proofs`).
     #[allow(dead_code)] // no opcode decodes to it: a tier row builds it
@@ -419,6 +423,7 @@ pub mod kind {
     pub const WASM_VECTOR: u16 = 90;
     pub const PROLOGUE: u16 = 91;
     pub const BODY_ENTRY: u16 = 92;
+    pub const GUARD_CLASS: u16 = 93;
 
     /// Whether a dispatcher instantiated for `kind` runs an arm of `variants`.
     pub const fn admits(kind: u16, variants: &[u16]) -> bool {
