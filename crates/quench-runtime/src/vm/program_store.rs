@@ -736,15 +736,13 @@ impl ProgramStore {
         })))
     }
 
-    /// The predicted tier of each function of program `id` (`tier_policy::predicted_tier`), solved on its first call from
-    /// `call_graph`. The one table the lane's tier picks read (`lane_facts::body_pick`).
+    /// The predicted tier of each function of program `id` (`tier_policy::predicted_tiers`, the fixed point over the call
+    /// graph), solved on its first call from `call_graph`. The one table the lane's tier picks read (`lane_facts::body_pick`).
     pub fn predicted_tiers(&self, id: ProgramId) -> Option<std::sync::Arc<[crate::vm::tier_policy::PredictedTier]>> {
         let entry = self.entry(id)?;
         let graph = self.call_graph(id)?;
         Some(std::sync::Arc::clone(entry.predicted_tiers.get_or_init(|| {
-            (0..entry.residual.functions.len() as u32)
-                .map(|function| crate::vm::tier_policy::predicted_tier(&graph, &entry.residual, function))
-                .collect()
+            crate::vm::tier_policy::predicted_tiers(&graph, &entry.residual).into()
         })))
     }
 
