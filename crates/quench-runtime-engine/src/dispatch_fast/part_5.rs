@@ -167,7 +167,6 @@ pub(crate) fn derive_lane_view<'live>(
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
     sites: &[quench_runtime::bytecode::FieldSite],
     plan: crate::compiled::admission::RecordPlan,
-    diagnostics: bool,
     facts: Option<&quench_runtime::compile::aot_facts::AotFacts>,
     planned: Vec<quench_runtime::vm::engine_types::PlannedSite>,
 ) -> LaneView {
@@ -456,7 +455,7 @@ pub(crate) fn derive_lane_view<'live>(
     // A Wasm view's records take no JavaScript context (`script_handler!`): it has no environment windows.
     let environment_window = (kind != quench_runtime::bytecode::ProgramKind::Wasm)
         .then(|| specialize_environment_window(function, &decoded, &mut records)).flatten();
-    let (loops, osr_rejections) = if loop_tier && kind != quench_runtime::bytecode::ProgramKind::Wasm {
+    let loops = if loop_tier && kind != quench_runtime::bytecode::ProgramKind::Wasm {
         install_loop_sites(
             function_id,
             function,
@@ -464,7 +463,6 @@ pub(crate) fn derive_lane_view<'live>(
             constants,
             sites,
             live,
-            diagnostics,
             &mut records,
         )
     } else {
@@ -590,13 +588,6 @@ pub(crate) fn derive_lane_view<'live>(
         tier: std::cell::OnceCell::new(),
         entry: crate::compiled::entry_cell::EntryCell::new(crate::compiled::lane_body_abi::entry_stub()),
         accumulator_registers: accumulator_registers.into_boxed_slice(),
-        plain_backward_jump_sites: decoded
-            .iter()
-            .enumerate()
-            .filter(|(pc, instruction)| quench_runtime::staged::jumps(instruction.op()) && instruction.jump_target() <= *pc as u32)
-            .count(),
-        osr_rejections: (!osr_rejections.is_empty())
-            .then(|| osr_rejections.into_boxed_slice()),
         field_records,
         proven_counters: proven_counters.into_boxed_slice(),
         planned_calls: planned,
@@ -638,9 +629,8 @@ pub(super) fn install_loop_sites<'live>(
     constants: &[Value],
     sites: &[quench_runtime::bytecode::FieldSite],
     live: &dyn Fn() -> Option<&'live std::rc::Rc<quench_runtime::compile::liveness::RegisterMasks>>,
-    diagnostics: bool,
     records: &mut [LaneInstruction],
-) -> (Box<[LoopSite]>, Vec<(crate::compiled::RegionRejection, usize)>) {
+) -> Box<[LoopSite]> {
     let backward = jump_row::<JUMP>(true) as *const ();
     let table_entries = branch_table_entry_records(decoded);
     // A fused record ahead of a jump runs that jump itself, reading its offset from the jump's
@@ -660,7 +650,6 @@ pub(super) fn install_loop_sites<'live>(
     // --jit: axios -3.6%, playwright -2.5% instructions).
     let masks = std::cell::OnceCell::new();
     let live = || *masks.get_or_init(live);
-    let mut rejections = Vec::new();
     let sites: Vec<(usize, LoopSite)> = (0..records.len())
         .filter(|pc| records[*pc].handler == backward && matches!(quench_runtime::staged::Operation::<(), ()>::decode(decoded[*pc], quench_runtime::staged::DecodeContext::EMPTY), Some(quench_runtime::staged::Operation::Jump)) && !fused_into(*pc))
         .map(|pc| {
@@ -690,16 +679,6 @@ pub(super) fn install_loop_sites<'live>(
                     )
                 }
                 Err(failure) => {
-                    let reason = failure.reason;
-                    if diagnostics {
-                        if let Some((_, count)) =
-                            rejections.iter_mut().find(|(existing, _)| *existing == reason)
-                        {
-                            *count += 1;
-                        } else {
-                            rejections.push((reason, 1));
-                        }
-                    }
                     // A loop the region analysis rejects gets no site (`is_admitted`): its plain jump stays.
                     (std::cell::OnceCell::new(), false, Some(failure), Vec::new())
                 }
@@ -719,17 +698,6 @@ pub(super) fn install_loop_sites<'live>(
                     hookable: holds_no_call_link(decoded[header as usize].op()),
                     entering: std::cell::Cell::new(true),
                     enclosing: std::cell::OnceCell::new(),
-                    diagnostics,
-                    lane_backedge_count: std::cell::Cell::new(0),
-                    native_entry_attempts: std::cell::Cell::new(0),
-                    native_region_runs: std::cell::Cell::new(0),
-                    tier_ups: std::cell::Cell::new(0),
-                    body_runs: std::cell::Cell::new(0),
-                    entry_guard_misses: std::cell::Cell::new(0),
-                    native_exits: std::cell::Cell::new(0),
-                    widenings: std::cell::Cell::new(0),
-                    compile_attempts: std::cell::Cell::new(0),
-                    compile_successes: std::cell::Cell::new(0),
                     tier: std::cell::RefCell::default(), body: std::cell::RefCell::new(LoopBody::IDLE),
                     enclosed: std::cell::Cell::new(true),
                 },
@@ -765,7 +733,7 @@ pub(super) fn install_loop_sites<'live>(
             records[site.header as usize].call_link.set((pc - site.header as usize) as u16);
         }
     }
-    (sites, rejections)
+    sites
 }
 
 /// Gives each `Binary` record that a `Return` consumes its returning form
@@ -2228,8 +2196,6 @@ pub(super) unsafe fn reenter_prepared_values_in_lane<const N: usize>(
                 && vm(cx).lane_stack.top_frame().is_some_and(|frame| frame.window_ptr() == registers),
             "a returning activation's context is its own"
         );
-        let vm = vm(cx);
-        vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
         // SAFETY: the program store keeps a derived view alive with its program.
         (*entry.view).start()
     }
@@ -2267,7 +2233,6 @@ pub(super) unsafe fn enter_filled_in_lane(
     let vm = unsafe { vm(cx) };
     unsafe { vm.lane_stack.values.set_top(registers.add(entry.size + lane_values::CONTEXT)) };
     install_entry_in_lane(cx, entry, registers);
-    vm.programs.record_js_jit_lane_entry(entry.program, entry.function);
     // SAFETY: the program store keeps a derived view alive with its program.
     unsafe { (*entry.view).start() }
 }

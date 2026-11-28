@@ -279,7 +279,6 @@ unsafe fn getter_activation(context: *mut (), r: Registers, ip: Ip, _record: *co
     depth: usize, this: Value) -> Resumed {
     let cx = context.cast::<LaneContext>();
     let (vm, target) = unsafe { (vm(cx), &*target) };
-    vm.programs.record_js_jit_lane_entry(target.body.program(), target.body.function);
     if leaf_binds_this(target.body.entry.leaf_form())
         && let Some((registers, base)) = unsafe { leaf_getter(cx, r, ip, target, this) }
     {

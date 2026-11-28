@@ -187,7 +187,6 @@ pub(crate) mod ext_traits {
     pub use crate::compiled::entry_cell::EntryCellOps1 as _;
     pub use crate::compiled::exit_protocol::ExitKindOps1 as _;
     pub use crate::compiled::exit_protocol::LaneExitOps2 as _;
-    pub use crate::compiled::exit_protocol::LoopRegionOps3 as _;
     pub use crate::compiled::exit_protocol::ExitTableOps1 as _;
     pub use crate::compiled::fault_handler::NativeFaultHandlerOps1 as _;
     pub use crate::compiled::frameless::CalleeAdmissionsOps1 as _;
@@ -272,7 +271,6 @@ pub(crate) mod ext_traits {
     pub use crate::dispatch_fast::generator_windows::WindowPlanOps1 as _;
     pub use crate::dispatch_fast::generator_yields::DispatchFastGeneratorYieldsVm as _;
     pub use crate::dispatch_fast::in_place_natives::DispatchFastInPlaceNativesVm as _;
-    pub use crate::dispatch_fast::lane_body_stats::LaneBodyStatsOps1 as _;
     pub use crate::dispatch_fast::lane_eval::LaneStackOps10 as _;
     pub use crate::dispatch_fast::lane_frames::ActivationViewOps1 as _;
     pub use crate::dispatch_fast::lane_frames::SidePayloadOps1 as _;

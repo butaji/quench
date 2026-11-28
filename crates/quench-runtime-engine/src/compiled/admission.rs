@@ -1,33 +1,20 @@
 //! The one admission policy for compiles: every question that decides whether a callee or a
-//! body compiles, and every reason it does not, lives here. A refused compile records its
-//! `Refusal`.
+//! body compiles, and every reason it does not, lives here. A refused callee or region names
+//! its `Refusal`.
 
 #[allow(unused_imports)]
 use crate::ext_traits::*;
 use super::lane_unit::CalleeBinding;
 use quench_runtime::vm::tier_policy::{lane_body_tier, PredictedTier};
 use quench_runtime::bytecode::{Function, ResidualProgram};
-use crate::dispatch_fast::lane_body_stats::{miss, Miss};
 use quench_runtime::vm::Vm;
 
-/// Why a compile or a callee's admission is refused. Each variant is one refusal site. The OSR region reasons (`RegionRejection`) share this enum
-/// through `From`.
+/// Why a callee's admission is refused, or a region's shape. Each variant is one refusal site. The OSR region
+/// reasons (`RegionRejection`) share this enum through `From`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Refusal {
-    /// The predicted tier is the interpreter (`PredictedTier::Interpreter`, `PlanNotAmortized`).
-    NotAmortized,
     /// The callee may not run inline (`CalleeUse::Inlined`) or frameless (`CalleeUse::Frameless`).
     CalleeNotEligible,
-    /// The unit does not plan from the function's body (`lane_unit::unit`).
-    NoUnit,
-    /// An inlined frame of the unit is not admitted.
-    FrameNotAdmitted,
-    /// The unit has no instruction at the entry header.
-    NoEntry,
-    /// The lowering produced no native code.
-    NothingNative,
-    /// The compiled body's dependencies would not subscribe.
-    Dependencies,
     // OSR region refusals (`osr_loop::RegionRejection`, converted by `From`).
     RegionTooLarge,
     UnsupportedInstruction(u16),
@@ -38,28 +25,6 @@ pub(crate) enum Refusal {
     FieldStoreLimit,
     FieldMutation,
     ArrayRedefined,
-}
-
-impl Refusal {
-    /// The plan-stage miss the lane diagnostics count this refusal as, if it has one.
-    fn miss(self) -> Option<Miss> {
-        Some(match self {
-            Self::NotAmortized => Miss::PlanNotAmortized,
-            Self::NoUnit => Miss::PlanNoUnit,
-            Self::FrameNotAdmitted => Miss::PlanFrameNotAdmitted,
-            Self::NoEntry => Miss::PlanNoEntry,
-            Self::NothingNative => Miss::PlanNothingNative,
-            Self::Dependencies => Miss::PlanDependencies,
-            _ => return None,
-        })
-    }
-
-}
-
-/// Where the lane diagnostics name `refusal` as a plan miss, counts it (`lane_body_stats::miss`,
-/// which also names the decline reason).
-pub(crate) fn refuse(vm: &Vm, refusal: Refusal) {
-    if let Some(reason) = refusal.miss() { miss(vm, reason); }
 }
 
 /// The kinds of unit whose tier gate `may_compile` decides.
@@ -183,11 +148,6 @@ pub(crate) use quench_runtime::vm::tier_policy::Tier;
 /// Whether the lane-body tier is enrolled in this VM (`ProgramStore::js_jit_lane_methods_enabled`).
 #[inline]
 pub(crate) fn lane_bodies_enrolled(vm: &Vm) -> bool { quench_runtime::vm::tier_policy::lane_bodies_claim(&vm.programs) }
-
-/// Whether the JIT diagnostics (`QUENCH_TRACE=js-jit`) record their counters. Diagnostics only: no tier
-/// decision reads it.
-#[inline]
-pub(crate) fn diagnosing(vm: &Vm) -> bool { vm.programs.js_jit_diagnostics_enabled() }
 
 /// The unit of a loop region that `policy` lets compile: the policy's loop tier, through `specialize`.
 pub(crate) fn region_unit_under(policy: quench_runtime::MemoryPolicy) -> Option<CompiledUnit> {

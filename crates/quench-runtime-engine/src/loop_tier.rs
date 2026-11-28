@@ -49,9 +49,6 @@ impl LoopTier {
                 if !self.is_published() { site.entering.set(false); }
             }
         }
-        if site.diagnostics && self.is_published() {
-            site.compile_successes.set(site.compile_successes.get().saturating_add(1));
-        }
         false
     }
 

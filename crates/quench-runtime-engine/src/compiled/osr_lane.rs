@@ -166,6 +166,5 @@ pub(crate) unsafe fn enter(
         std::panic::resume_unwind(panic);
     }
     let exit = super::entry_protocol::exit(&descriptor, returned, || dispatch.returned_pc);
-    // A leave with native frames on the lane stack is read in the innermost of them.
-    RegionRun { exit, nested: vm.lane_stack.native_depth() != 0 }
+    RegionRun { exit }
 }

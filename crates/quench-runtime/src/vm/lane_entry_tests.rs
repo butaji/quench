@@ -1,8 +1,7 @@
 use super::*;
 use crate::Engine;
 use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
-use crate::vm::tier_events::Event;
+use crate::vm::test_oracle::{assert_tier_agrees, Tier};
 
 /// Cache sites of a program wide enough to outgrow the field cache table's first mapping.
 const WIDE_PROGRAM_SITES: usize = 20_000;
@@ -37,26 +36,6 @@ fn a_program_install_that_moves_the_field_cache_table_leaves_lane_entries_readin
     assert_eq!(answer(&mut vm, drive, "drive-again.js"), before);
 }
 
-/// The interpreter's calls into one hot callee enter its body over and over inside one lane run.
-const HOT_CALLEE: &str = r#"(function () {
-  function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
-  let total = 0;
-  for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
-  globalThis.answer = total;
-})();"#;
-
-/// The entries of one lane run bind its words once: the run's VM, program, residual, lane
-/// context, field cache entries, stack limit and payload stand (`BodyRunContext::bind_run`), so an
-/// entry that changes any of them is one that bound a run, and the runs are a small fraction of
-/// the entries. What an entry writes itself is its window and the stacks' room.
-#[test]
-fn entries_of_one_lane_run_rewrite_no_word_of_the_run() {
-    let events = assert_tier_agrees(HOT_CALLEE, Tier::Full, Expect::ENGAGED).events;
-    let (entries, binds) = (events.count(Event::Entered), events.count(Event::RunBound));
-    assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-    assert!(binds * 200 < entries, "{binds} runs bound for {entries} entries");
-}
-
 /// A recursive numeric function calls itself through its scalar entry (`lane_region::scalar`):
 /// its results, an overflow that restarts the call generically, and a redefinition of its binding,
 /// which retires the entry, agree with the interpreter.
@@ -70,6 +49,6 @@ fn a_recursive_numeric_function_agrees_with_the_interpreter_through_its_scalar_e
         format!("{wide} globalThis.answer = wide(6) + wide(12);"),
         format!("{fib} {redefined}"),
     ] {
-        assert_tier_agrees(&source, Tier::Full, Expect::ENGAGED);
+        assert_tier_agrees(&source, Tier::Full);
     }
 }

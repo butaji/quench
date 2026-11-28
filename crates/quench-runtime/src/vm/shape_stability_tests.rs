@@ -2,7 +2,7 @@
 //! `lane_region::kept_shapes`) is seen at the code's next use: each way a shape can be left,
 //! from a callee and from outside the compiled function, ends as the interpreter's run does.
 
-use crate::vm::test_oracle::{assert_tier_agrees, Expect, Tier};
+use crate::vm::test_oracle::{assert_tier_agrees, Tier};
 
 /// A program whose hot `read` reads `a.x`, calls `f(a)`, then reads `a.y` (and `a.z`, which no
 /// object has until the departure) and stores `a.x`; the one object that departs its shape does
@@ -40,7 +40,7 @@ const FROM_CALLEE: &[(&str, &str)] = &[
 fn an_object_leaving_a_held_shape_from_a_callee_ends_as_the_interpreter_does() {
     for (name, callee) in FROM_CALLEE {
         eprintln!("departure from a callee: {name}");
-        assert_tier_agrees(&program(callee, ""), Tier::Full, Expect::ENGAGED);
+        assert_tier_agrees(&program(callee, ""), Tier::Full);
     }
 }
 
@@ -50,6 +50,6 @@ fn an_object_leaving_a_held_shape_from_outside_ends_as_the_interpreter_does() {
         ("accessor", "Object.defineProperty(pts[0], 'y', { get() { return 40; }, configurable: true });"),
         ("prototype", "Object.setPrototypeOf(pts[0], { z: 7 });"), ("freeze", "Object.freeze(pts[0]);")] {
         eprintln!("departure from outside: {name}");
-        assert_tier_agrees(&program("same", between), Tier::Full, Expect::ENGAGED);
+        assert_tier_agrees(&program("same", between), Tier::Full);
     }
 }

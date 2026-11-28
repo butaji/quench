@@ -790,7 +790,6 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
     let vm = unsafe { vm(cx) };
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    let diagnostics = crate::compiled::admission::diagnosing(vm);
     let direct = |vm: &mut Vm| code.function_get(function as usize).map(|body| direct_callees_in_lane(vm, own, function, code, body)).unwrap_or_default();
     // A start waits for callees still compiling (`body_tier_in_lane::callees_compiling`), calling their bodies by their entries.
     let starting = matches!(work, crate::compiled::LaneBodyWork::Start { .. });
@@ -809,11 +808,7 @@ pub(crate) fn jit_lane_body(cx: *mut LaneContext, own: &LaneView, function: u32,
         crate::compiled::admission::LaneRoute::Ahead => unreachable!("an ahead image's program returned above"),
         crate::compiled::admission::LaneRoute::Lane => {}
     }
-    let outcome = vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, None);
-    if diagnostics && let crate::compiled::LaneBodyOutcome::Published(method) = &outcome {
-        if let Some(method) = method.lease() { own.tier().body_stats.compiled(function, &method.inlined); }
-    }
-    outcome
+    vm.body_work_in_lane(code, function, &|callee| callee_captures_in_lane(cx, callee), &direct, work, None)
 }
 
 /// Gives a loop site that will not enter native code again its plain backward jump back, so each iteration takes

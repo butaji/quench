@@ -32,7 +32,7 @@ impl Lowering<'_, '_> {
         if let Some(record) = record {
             return self.step_in_place(state, pc, instruction, record);
         }
-        self.exit(state, pc as u32);
+        self.leave_at(state, pc as u32);
         false
     }
 

@@ -119,7 +119,7 @@ impl Lowering<'_, '_> {
                 eprintln!("aot-lanes: function {} call at unit pc {pc} leaves: origin {:?}, raises from {}, decoded as a call site {}", self.function_id,
                     self.unit.origins.get(pc), self.raises_from(pc), matches!(decoded, Some(Operation::Call(CallOperation::Site(_)))));
             }
-            self.exit(state, pc as u32);
+            self.leave_at(state, pc as u32);
             return false;
         };
         let missed = self.guard_exit(state, pc as u32);

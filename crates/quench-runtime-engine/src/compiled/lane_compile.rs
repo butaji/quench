@@ -24,7 +24,6 @@ pub(crate) use jobs::*;
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use crate::compiled::tier_policy::LANE_BACKTRACKING_MAX_INSTS;
 #[cfg(test)] #[path = "lane_compile/ahead.rs"] pub(crate) mod ahead;
-use super::admission::{refuse, Refusal};
 #[cfg_attr(not(feature = "jit"), allow(unused_imports))]
 use lane_facts::{unit_closed, bind_callees, Census, plan_key, entry_pc, unit_direct_calls};
 
@@ -61,14 +60,14 @@ impl Vm {
     /// inlines is admitted.
     fn plan_unit_in_lane(&mut self, program: &ResidualProgram, function: u32, graph: Option<&quench_runtime::compile::call_graph::CallGraph>,
         plans: &lane_region::bindings::CallPlans<'_>, targets: &dyn Fn(u32, u32) -> Vec<CallTarget>) -> Option<lane_unit::Unit> {
-        let Some(body) = program.function_get(function as usize) else { refuse(self, Refusal::NoUnit); return None; };
+        let Some(body) = program.function_get(function as usize) else { return None; };
         let unit = lane_unit::unit(program, graph, function, body, targets, &|caller, pc| plans.at(caller, pc),
-            &|callee| program.function_get(callee as usize)).or_else(|| { refuse(self, Refusal::NoUnit); None })?;
+            &|callee| program.function_get(callee as usize))?;
         // Every planned callee binds by its function (`CalleeBinding::Function`). Any such frame is admitted, whatever
         // its body: a frame that leaves mid-body leaves through the frame-materialization exit (`leave_at`,
         // `materialize_inlined`), or restarts its call where its recovery says so (`CallRecovery`).
         unit.frames.iter().all(|frame| frame.target.callee == CalleeBinding::Function)
-            .then_some(unit).or_else(|| { refuse(self, Refusal::FrameNotAdmitted); None })
+            .then_some(unit)
     }
 
     /// Plans `function`'s lane body: its unit, proofs and lowering, and the function the code
@@ -85,8 +84,8 @@ impl Vm {
         let invalidation = quench_runtime::code_dependencies::Invalidation::default();
         let job = self.lowering_job(LoweringProgram::Running(program), function, &unit, &fields, global_reads, direct_sites,
             captures, invalidation.address(), entry);
-        let mut lowered = job.run().or_else(|| { refuse(self, Refusal::NothingNative); None })?;
-        if lowered.region.native == 0 { refuse(self, Refusal::NothingNative); return None; }
+        let mut lowered = job.run()?;
+        if lowered.region.native == 0 { return None; }
         let native = std::mem::replace(&mut lowered.region.function, ir::Function::new());
         Some((LanePlan { unit, lowered, fields, direct, closed, function, invalidation }, native))
     }
@@ -104,7 +103,7 @@ impl Vm {
         let plans = lane_region::bindings::CallPlans::new(program, aot.as_deref(), graph.as_deref());
         let targets = planned_targets(&plans, excluded);
         let unit = self.plan_unit_in_lane(program, function, graph.as_deref(), &plans, &targets)?;
-        let entry = entry_pc(&unit, entry).or_else(|| { refuse(self, Refusal::NoEntry); None })?;
+        let entry = entry_pc(&unit, entry)?;
         let mut fields = self.unit_fields_in_lane(program, &unit, function, view);
         // Admitting the stores' writes once, here, widens what they widen; the fields then read the widened slots.
         let domains = lane_region::store_domains(&unit.instructions, |site| lane_region::site_loads(&fields, site).map(Vec::as_slice),
@@ -201,9 +200,8 @@ impl Vm {
         // nothing, whoever calls the function.
         let level = super::jit_backend::CompileLevel::Optimized;
         let pick = self.lane_pick(program, function);
-        if quench_runtime::vm::tier_policy::lane_body_tier(pick).is_none() { refuse(self, Refusal::NotAmortized); return Err(Unstarted::Unpaid) }
-        let Some(graph) = self.call_graph_of(program) else { refuse(self, Refusal::NoUnit); return Err(Unstarted::Declined) };
-        super::base_region::count(super::base_region::Event::BodyPlanned);
+        if quench_runtime::vm::tier_policy::lane_body_tier(pick).is_none() { return Err(Unstarted::Unpaid) }
+        let Some(graph) = self.call_graph_of(program) else { return Err(Unstarted::Declined) };
         // A body whose key a published body holds is known before its lowering. A member of the cycle is called, not inlined: inlined, its call back to `function`
         // leaves the body (a direct call runs only from the body's own frame), while called it
         // is a direct call of its own body once one exists, as `function`'s self calls are.
@@ -234,7 +232,7 @@ impl Vm {
             global_reads.clone(), direct_sites, captures, invalidation.address(), entry_at);
         let callee_summaries = direct.iter().map(|callee| callee.summary().is_some()).collect();
         let taken = TakenFacts { tables: job.tables.clone(), global_reads, frame_captures: job.frame_captures.clone(), callee_summaries };
-        let census = crate::compiled::admission::diagnosing(self).then(|| Census {
+        let census = quench_runtime::trace::Channel::JsJit.on().then(|| Census {
             function, osr: entry.is_some(), unit: unit.instructions.len(), ir: 0, key: key.3,
             direct: direct.len(), closed });
         let plan = LanePlan { unit, lowered: lane_region::LoweredLane::default(), fields, direct, closed, function, invalidation };
@@ -314,7 +312,6 @@ impl Vm {
                 facts.hold_roots(&watch, pending.plan.lowered.region.stable.roots.clone());
                 let watcher: Rc<dyn quench_runtime::code_dependencies::DependentCode> = watch.clone();
                 if !pending.plan.dependencies().subscribe(&pending.plan.lowered.region.stable, &watcher, &mut facts) {
-                    refuse(self, Refusal::Dependencies);
                     return LaneBodyOutcome::Declined;
                 }
                 let PendingLaneMethod { plan, .. } = *pending;

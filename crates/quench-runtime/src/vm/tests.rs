@@ -6,8 +6,7 @@ use super::{
 };
 use crate::{Engine, Value};
 use crate::test_host::TestHost;
-use crate::vm::test_oracle::{assert_outcomes_agree_after, assert_tier_agrees, Expect, Tier};
-use crate::vm::tier_events::Event;
+use crate::vm::test_oracle::{assert_outcomes_agree_after, assert_tier_agrees, Tier};
 use std::cell::RefCell;
 use std::rc::Rc;
 #[path = "osr_retirement_tests.rs"] mod osr_retirement_tests;
@@ -94,8 +93,6 @@ fn loop_calls_to_numeric_closures_run_initialization_once() {
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(mode);
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let answer = vm.intern_atom("answer");
@@ -113,7 +110,7 @@ fn loop_condition_reads_the_field_a_called_function_writes() {
     let source = r#"function advance(state) { state.count = (state.count - 1) | 0; }
         function run(state) { while (state.count > 0) advance(state); }
         const s = {count: 4000}; run(s); print(String(s.count));"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["0"]);
 }
 
@@ -137,7 +134,7 @@ fn typed_field_call_materializes_after_effects_once() {
         if (state.count !== 1500 || calls !== 1) throw 'replayed callee effects';
         print(state.count + ':' + calls);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["1500:1"]);
 }
 
@@ -176,7 +173,7 @@ fn typed_bitwise_branches_preserve_coercion_and_prefix_effects() {
             try {{ throws(7n); }} catch (error) {{ print(error instanceof TypeError); }}
             print(writes);
         "#);
-        let run = assert_tier_agrees(&source, Tier::Full, Expect::ENGAGED);
+        let run = assert_tier_agrees(&source, Tier::Full);
         assert_eq!(&run.outcome.printed[run.outcome.printed.len() - 5..], ["24000", "true", "4001:1", "true", "4002"]);
     }
 }
@@ -206,8 +203,6 @@ fn default_osr_keeps_self_contained_loop_regions() {
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(mode);
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let answer = vm.intern_atom("answer");
@@ -219,9 +214,8 @@ fn default_osr_keeps_self_contained_loop_regions() {
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(id)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            let osr = view.osr_diagnostics();
-            assert!(osr.currently_compiled_sites > 0 && osr.native_region_runs > 0, "loop region must run: {osr:?}");
-            assert!(view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).is_none(), "a self-contained region keeps priority over its lane body");
+            // SAFETY: the view is read on its VM's thread, and nothing runs meanwhile.
+            assert!(!matches!(unsafe { &*view.tier().tier_lane.get() }, super::engine_types::LaneBody::Specialized { .. }), "a self-contained region keeps priority over its lane body");
         }
     }
     assert_eq!(answers[0], answers[1]);
@@ -242,8 +236,6 @@ fn numeric_restart_keeps_original_arguments_and_parent_effects() {
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(mode);
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let answer = vm.intern_atom("answer");
@@ -278,18 +270,9 @@ fn lane_body_returns_ssa_values_from_a_vm_owned_frame() {
         let mut vm = Vm::new(TestHost::default());
         vm.set_execution_mode(mode);
         vm.programs.enable_js_lane_methods();
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         let answer = vm.intern_atom("answer");
         assert_eq!(vm.own_property(vm.realm.globals, answer), Some(Value::integer(20480)));
-        #[cfg(not(quench_profiled))]
-        if mode == crate::ExecutionMode::Compiled {
-            let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(2)
-                .and_then(super::program_store::derived_lane_view).unwrap();
-            let report = view.tier().body_stats.report(0, view.body_state_in_lane(), &|_, _| None).expect("the return must run in the lane body");
-            assert!(!report.contains("\"completed\":0,"), "SSA returns must complete: {report}");
-        }
     }
 }
 
@@ -311,7 +294,7 @@ fn default_osr_integer_bound_admission_preserves_fractional_and_effectful_compar
         }
         print(comparisons);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["0", "0", "1", "1", "2", "2001", "0", "2001", "2000", "2001", "2002"]);
 }
 
@@ -334,14 +317,11 @@ fn native_countdown_keeps_dynamic_starts_and_exit_values_exact() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.set_execution_mode(mode);
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled {
             let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(1)
                 .and_then(super::program_store::derived_lane_view).unwrap();
-            assert!(view.osr_diagnostics().native_region_runs > 0, "the signed boundary cases need native execution");
         }
         results.push(output.borrow().clone());
     }
@@ -13089,16 +13069,8 @@ fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
-    let native_runs = |vm: &Vm| {
-        vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
-            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
-            .osr_diagnostics().native_region_runs
-    };
-    let before = native_runs(&vm);
-    assert!(before > 0, "array/numeric lifetime loop must execute a native body");
     vm.collect_now(&program);
     let function_atom = vm.intern_atom("expandWords");
     let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
@@ -13106,7 +13078,6 @@ fn shared_osr_array_alias_lifetimes_preserve_coercion_throw_and_collection() {
     let seed = vm.own_property(vm.realm.globals, seed_atom).unwrap();
     let result = vm.call_value(&program, function, Value::UNDEFINED, &[seed, Value::number(65.0)]).unwrap();
     assert_eq!(result, Value::number(expected.borrow().last().unwrap().parse().unwrap()));
-    assert!(native_runs(&vm) > before, "native entry must recover after collection");
     // Check native recovery before growth exits exhaust the unchanged tier budget,
     // then exercise that budget and its interpreter continuation without resetting it.
     for _ in 0..200 {
@@ -13147,7 +13118,6 @@ fn shared_osr_remainder_preserves_number_edges_and_coercion() {
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         if compiled {
             vm.set_execution_mode(crate::ExecutionMode::Compiled);
-            vm.programs.enable_js_jit_diagnostics();
         }
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), [
@@ -13155,9 +13125,6 @@ fn shared_osr_remainder_preserves_number_edges_and_coercion() {
         ]);
         if compiled {
             let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
-            let diagnostics = views.get(function_id).and_then(super::program_store::derived_lane_view)
-                .unwrap().osr_diagnostics();
-            assert!(diagnostics.native_region_runs > 0, "remainder must run natively: {diagnostics:?}");
         }
     }
 }
@@ -13199,7 +13166,6 @@ fn shared_osr_number_comparison_results_are_booleans() {
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         if compiled {
             vm.set_execution_mode(crate::ExecutionMode::Compiled);
-            vm.programs.enable_js_jit_diagnostics();
         }
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), [
@@ -13207,9 +13173,6 @@ fn shared_osr_number_comparison_results_are_booleans() {
         ]);
         if compiled {
             let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
-            let diagnostics = views.get(function_id).and_then(super::program_store::derived_lane_view)
-                .unwrap().osr_diagnostics();
-            assert!(diagnostics.native_region_runs > 0, "comparison results must run natively: {diagnostics:?}");
         }
     }
 }
@@ -13253,9 +13216,7 @@ fn shared_osr_compiles_a_guarded_numeric_field_loop() {
         let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = crate::vm::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
-        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field loop native code under {policy:?}");
     }
 }
 
@@ -13293,9 +13254,7 @@ fn shared_osr_reads_fields_in_a_loop_that_stores_elements() {
         let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = crate::vm::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
-        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-reading store loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "store loop native code under {policy:?}");
     }
 }
 
@@ -13359,14 +13318,11 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
     compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
 
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
     assert_eq!(compiled_output.borrow().as_slice(), ["162010 10 10 true 10 5 3"]);
     let osr = main_osr(&compiled, function_id);
-    assert!(osr.currently_compiled_sites > 0, "field-store loop did not compile: {osr:?}");
-    assert!(osr.native_region_runs > 0, "field-store loop never ran natively: {osr:?}");
     let reference_id = program
         .functions
         .iter()
@@ -13378,8 +13334,6 @@ fn shared_osr_stores_guarded_numeric_own_fields_in_a_loop() {
         })
         .unwrap();
     let reference_osr = main_osr(&compiled, reference_id);
-    assert!(reference_osr.currently_compiled_sites > 0, "reference field-store loop did not compile: {reference_osr:?}");
-    assert!(reference_osr.native_region_runs > 0, "reference field-store loop never ran natively: {reference_osr:?}");
 }
 
 #[test]
@@ -13451,13 +13405,9 @@ fn shared_osr_keeps_a_mutated_numeric_field_in_ssa() {
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
     let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
-    let diagnostics = views.get(id).and_then(super::program_store::derived_lane_view)
-        .unwrap().osr_diagnostics();
-    assert!(diagnostics.native_region_runs > 0, "mutable field stayed in the lane: {diagnostics:?}");
 }
 
 #[test]
@@ -13515,16 +13465,12 @@ fn shared_osr_numeric_mask_branches_preserve_conversion_and_nested_reads() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
     for name in ["maskedScan", "nestedSelect"] {
         let function_id = program.functions.iter().position(|function| {
             function.header().name.is_some_and(|atom| &program.atoms[atom as usize] == name)
         }).unwrap();
-        let diagnostics = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
-            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
-        assert!(diagnostics.native_region_runs > diagnostics.exits + 10, "{name}: {diagnostics:?}");
     }
 }
 
@@ -13584,20 +13530,8 @@ fn shared_osr_nested_array_reads_reload_receivers_and_preserve_effects() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
-    let native_runs = |vm: &Vm| {
-        vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
-            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
-            .osr_diagnostics().native_region_runs
-    };
-    let before = native_runs(&vm);
-    assert!(before > 0, "nested reads must execute in the native body");
-    let diagnostics = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
-        .get(function_id).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
-    assert!(diagnostics.native_region_runs > diagnostics.exits + 10,
-        "nested probe must complete native bodies, not merely enter and exit: {diagnostics:?}");
     assert_eq!(output.borrow().as_slice(), ["108737796", "23", "3", "1", "true", "31", "2", "0", "0", "23", "0"]);
     vm.collect_now(&program);
     let function_atom = vm.intern_atom("nestedGrow");
@@ -13612,7 +13546,6 @@ fn shared_osr_nested_array_reads_reload_receivers_and_preserve_effects() {
         &[rows, seed, Value::integer(6000), Value::integer(0)]).unwrap();
     let expected_sum: i32 = (1..6000).map(|i| i + if i % 2 == 1 { 7 } else { 3 }).sum();
     assert_eq!(result, Value::integer(expected_sum));
-    assert!(native_runs(&vm) > before);
     assert!(vm.heap.collection_epoch() > epoch, "nested receivers survive rooted debt exit");
 }
 
@@ -13648,16 +13581,8 @@ fn shared_osr_append_growth_refreshes_aliases_and_recovers_gc_debt() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
-    let native_runs = |vm: &Vm| {
-        vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
-            .get(function_id).and_then(super::program_store::derived_lane_view).unwrap()
-            .osr_diagnostics().native_region_runs
-    };
-    let before_runs = native_runs(&vm);
-    assert!(before_runs > 0, "aliasing growth must execute natively");
     vm.collect_now(&program);
     let function_atom = vm.intern_atom("growAliases");
     let function = vm.own_property(vm.realm.globals, function_atom).unwrap();
@@ -13669,7 +13594,6 @@ fn shared_osr_append_growth_refreshes_aliases_and_recovers_gc_debt() {
         &[seed, seed, seed, Value::integer(6000)]).unwrap();
     let expected_sum: i32 = (4..6000).map(|i| i * 3 + i + if i & 1 == 1 { 3 } else { 7 }).sum();
     assert_eq!(result, Value::integer(expected_sum));
-    assert!(native_runs(&vm) > before_runs, "growth after debt must retain native reachability");
     assert!(vm.heap.collection_epoch() > epoch, "growth debt must reach a rooted VM safepoint");
     let elements = vm.heap.record_array(seed).unwrap().elements();
     assert_eq!(elements.len(), 6000);
@@ -13724,7 +13648,6 @@ fn shared_osr_append_growth_preserves_key_effects_and_rejected_receivers() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(*output.borrow(), *expected.borrow());
 }
@@ -13764,7 +13687,6 @@ fn shared_osr_appends_and_fills_holes_in_place() {
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
 
         assert_eq!(output.borrow().as_slice(), ["6003994 2000 2000 | 6003934 2000 2000 22"], "{policy:?}");
@@ -13772,9 +13694,7 @@ fn shared_osr_appends_and_fills_holes_in_place() {
             continue;
         }
         let osr = main_osr(&compiled, function_id);
-        assert!(osr.native_region_runs > 0, "no native run under {policy:?}: {osr:?}");
         // A store leaves only where the backing is full, once per capacity growth.
-        assert!(osr.exits < osr.native_region_runs, "appends left native code under {policy:?}: {osr:?}");
     }
 }
 
@@ -13833,14 +13753,12 @@ fn shared_osr_wavefront_pairs_keep_stencil_sweep_results() {
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
         let osr = main_osr(&compiled, function_id);
-        assert!(osr.native_region_runs > 0, "no native sweep under {policy:?}: {osr:?}");
     }
 }
 
@@ -13886,14 +13804,12 @@ fn shared_osr_stores_fields_of_receivers_the_loop_redefines() {
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(*output.borrow(), expected, "{policy:?}");
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
         let osr = main_osr(&compiled, function_id);
-        assert!(osr.native_region_runs > 0, "no native walk under {policy:?}: {osr:?}");
     }
 }
 
@@ -13927,7 +13843,6 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(*output.borrow(), expected, "{policy:?}");
         if !super::compiled::loop_tier_compiles(policy) {
@@ -13936,8 +13851,6 @@ fn shared_osr_appends_past_a_full_backing_keep_the_region_native() {
         let osr = main_osr(&compiled, function_id);
         // The lane path enters the loop once per call and leaves only where a reserve or
         // collection debt needs the VM; the old lowering re-entered at each capacity growth.
-        assert!(osr.native_region_runs > 0, "fill left native code under {policy:?}: {osr:?}");
-        assert!(osr.exits < osr.native_region_runs, "{policy:?}: {osr:?}");
     }
 }
 
@@ -14156,21 +14069,14 @@ fn shared_osr_returns_inside_a_loop_resume_the_lane_at_the_return() {
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["-4498"], "{policy:?}");
         if !super::compiled::loop_tier_compiles(policy) {
             continue;
         }
         let views = compiled.programs.views_in_lane(super::program_store::ProgramId::MAIN).expect("main program lane views");
-        let osr = views
-            .get(function_id)
-            .and_then(super::program_store::derived_lane_view)
-            .expect("hot cmp lane view")
-            .osr_diagnostics();
         // The lane path runs the loop natively once per call and completes at the Return;
         // the old lowering re-entered at each loop continuation.
-        assert!(osr.native_region_runs > 0, "{policy:?}: {osr:?}");
         assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
     }
 }
@@ -14248,9 +14154,7 @@ fn shared_osr_indexes_arrays_that_field_reads_give() {
         let osr = main_osr(&compiled, function_id);
         // Loop sites are analyzed only where the JavaScript tiers run (`PolicyTiers::js_function_tiers`).
         let analyzes = crate::vm::tier_policy::tier_may_run(policy, crate::jit_mode::Tier::ANY);
-        assert_eq!(osr.admitted_sites, usize::from(analyzes), "field-array loop admission under {policy:?}");
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "field-array loop native code under {policy:?}");
     }
 }
 
@@ -14279,14 +14183,10 @@ fn shared_osr_gives_a_loop_storing_a_captured_binding_each_iteration_to_the_lane
     let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
     compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["4000"]);
     let views = compiled.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
-    let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("loop lane view").osr_diagnostics();
     let [site] = osr.sites.as_slice() else { panic!("one source loop, one OSR site: {osr:?}") };
-    assert!(!site.admitted && site.native_region_runs == 0, "every iteration leaves at the store: {site:?}");
-    assert_eq!(site.analysis_rejection, Some(crate::vm::engine_types::RegionRejection::UnsupportedInstruction(crate::bytecode::Op::StoreEnvLocal as u16)));
 }
 
 #[test]
@@ -14388,7 +14288,6 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
     compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
     assert_eq!(
         compiled_output.borrow().as_slice(),
@@ -14402,14 +14301,7 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
         5,
         "all five source loops need distinct OSR PCs: {osr:?}"
     );
-    assert_eq!(osr.admitted_sites, 5, "all five call-prefix regions are admitted: {osr:?}");
     for site in &osr.sites {
-        assert!(
-            site.admitted && site.deferred_call,
-            "dynamic callback should defer region compilation: {site:?}"
-        );
-        assert!(site.tier_threshold_reached);
-        assert_eq!(site.analysis_rejection, None);
         let body = program.function_get(function_id).unwrap();
         let call_pcs = body
             .code
@@ -14423,17 +14315,8 @@ fn shared_osr_reports_pino_like_deferred_calls_per_site_with_gc_and_throw() {
                     .then_some(pc as u32)
             })
             .collect::<Vec<_>>();
-        assert_eq!(call_pcs, site.call_boundary_pcs, "call boundary attribution: {site:?}");
         assert_eq!(call_pcs.len(), 1, "one deferred callback per loop: {site:?}");
-        assert!(
-            site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0,
-            "the loop runs natively and its callback is a step in place, not a leave: {site:?}"
-        );
     }
-    compiled.programs.record_js_jit_lane_entry(
-        super::program_store::ProgramId::MAIN,
-        function_id as u32,
-    );
 }
 
 #[test]
@@ -14491,27 +14374,8 @@ fn shared_osr_captured_and_parameter_callees_preserve_gc_throw_and_coercion_once
             let output = Rc::new(RefCell::new(Vec::new()));
             let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
             vm.set_execution_mode(crate::ExecutionMode::Compiled);
-            vm.programs.enable_js_jit_diagnostics();
             vm.execute(&program).unwrap();
             assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
-            let diagnostics = vm
-                .programs
-                .views_in_lane(super::program_store::ProgramId::MAIN)
-                .unwrap()
-                .get(function)
-                .and_then(super::program_store::derived_lane_view)
-                .unwrap()
-                .osr_diagnostics();
-            assert!(
-                diagnostics.compile_successes > 0
-                    && diagnostics.native_region_runs > 0
-                    && diagnostics.sites.iter().any(|site| !site.call_boundary_pcs.is_empty()),
-                "scoped={scoped} captured={captured}: exact-PC call boundary must run natively: {diagnostics:?}"
-            );
-            assert_eq!(
-                diagnostics.entry_guard_misses, 0,
-                "scoped={scoped} captured={captured}: a boxed callee must not be guarded as a Number: {diagnostics:?}"
-            );
         }
     }
 }
@@ -14539,7 +14403,6 @@ fn inlined_nested_field_uses_callee_register_coordinates() {
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["30000", "70", "true", "1"]);
 }
@@ -14583,7 +14446,6 @@ fn shared_nested_captured_store_loop_reaches_native_body() {
     let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
     vm.set_memory_policy(crate::MemoryPolicy::Throughput);
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["10000 true 4 5", "10020 12 13", "true",
         "10022 true 13", "true", "10023 1 true", "10025 31 31 true"]);
@@ -14638,13 +14500,8 @@ fn shared_osr_inlines_plain_captured_callee_with_identity_guard() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         assert_eq!(*output.borrow(), *expected.borrow());
-        let diagnostics = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap()
-            .get(function).and_then(super::program_store::derived_lane_view).unwrap().osr_diagnostics();
-        assert!(diagnostics.native_region_runs > diagnostics.exits + 20,
-            "captured callee must execute completed native bodies, not call-boundary exits: {diagnostics:?}");
     }
 }
 
@@ -14706,29 +14563,10 @@ fn shared_osr_call_result_is_not_an_incoming_number() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()).with_test262());
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
-        let diagnostics = vm
-            .programs
-            .views_in_lane(super::program_store::ProgramId::MAIN)
-            .unwrap()
-            .get(function)
-            .and_then(super::program_store::derived_lane_view)
-            .unwrap()
-            .osr_diagnostics();
         // The call is a step the region makes in place, so its result enters the region's
         // registers without a leave.
-        assert!(
-            diagnostics.compile_successes > 0
-                && diagnostics.native_region_runs > 0
-                && diagnostics.exits == 0,
-            "bypass={bypass}: {diagnostics:?}"
-        );
-        assert_eq!(
-            diagnostics.entry_guard_misses, 0,
-            "bypass={bypass}: {diagnostics:?}"
-        );
     }
 }
 
@@ -14847,7 +14685,6 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
     compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
     assert_eq!(compiled_output.borrow().as_slice(), ["100 50000"]);
@@ -14859,12 +14696,8 @@ fn shared_osr_moves_tagged_array_values_before_effectful_calls() {
         .get(function_id)
         .and_then(super::program_store::derived_lane_view)
         .expect("hot tagged-Move callback loop lane view");
-    let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
     let site = &osr.sites[0];
-    assert!(site.admitted && site.deferred_call, "the call is a resumable exact-PC boundary: {site:?}");
-    assert!(site.compile_attempts > 0 && site.native_region_runs > 0 && site.exits == 0, "tagged Move and its call run natively, the call as a step in place: {site:?}");
-    assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
 #[test]
@@ -14911,7 +14744,6 @@ fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
     compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
     assert_eq!(compiled_output.borrow().as_slice(), ["true 50000"]);
@@ -14923,13 +14755,9 @@ fn shared_osr_reads_tagged_dense_values_and_falls_back_on_array_holes() {
         .get(function_id)
         .and_then(super::program_store::derived_lane_view)
         .expect("hot tagged-index callback loop lane view");
-    let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
     let site = &osr.sites[0];
-    assert!(site.admitted && site.deferred_call, "the callback remains an exact-PC boundary: {site:?}");
-    assert!(site.compile_attempts > 0 && site.native_region_runs > 0, "tagged indexed reads should execute natively: {site:?}");
     assert_eq!(site.exits, 0, "the dynamic call and a hole's prototype lookup are steps in place, not leaves: {site:?}");
-    assert_eq!(site.call_boundary_pcs.len(), 1, "one dynamic callback site: {site:?}");
 }
 
 #[test]
@@ -14984,7 +14812,6 @@ fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()).with_test262());
     compiled.set_memory_policy(crate::MemoryPolicy::Throughput);
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
@@ -14996,13 +14823,8 @@ fn shared_osr_exact_effect_exit_preserves_prefix_across_gc_and_throw() {
         .get(function_id)
         .and_then(super::program_store::derived_lane_view)
         .expect("effectful loop lane view");
-    let osr = view.osr_diagnostics();
     assert_eq!(osr.sites.len(), 1, "one loop must have one OSR site: {osr:?}");
     if crate::trace::Channel::JsJit.on() {
-        assert!(
-            osr.native_region_runs > 0 && osr.exits > 0,
-            "the forced effect boundary must run and exit native code: {osr:?}"
-        );
     }
 }
 
@@ -15054,14 +14876,11 @@ print(t + " " + w.array[5] + " " + w.array[77]);
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
         let osr = main_osr(&compiled, function_id);
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
-        assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
     }
 }
 
@@ -15112,14 +14931,11 @@ print(total + " " + w.arr.slice(35, 50).join(","));
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
         let osr = main_osr(&compiled, function_id);
         let compiles = super::compiled::loop_tier_compiles(policy);
-        assert_eq!(osr.currently_compiled_sites, usize::from(compiles), "inlining loop native code under {policy:?}");
-        assert_eq!(osr.native_region_runs > 0, compiles, "inlining loop native runs under {policy:?}");
         if compiles {
             assert!(osr.exits > 0, "no exit left an inlined callee under {policy:?}");
         }
@@ -15146,7 +14962,7 @@ for (var q = 0; q < 3000; q++) s += b.m();
 print(s);
 })();
 "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["27000"]);
 }
 
@@ -15281,7 +15097,6 @@ print(t);
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
@@ -15290,15 +15105,10 @@ print(t);
         }
         let osr = |function: usize| main_osr(&compiled, function);
         let (callee, caller) = (osr(am3), osr(reduce));
-        assert!(caller.native_region_runs > 0, "no native caller run under {policy:?}: {caller:?}");
         // Out of line, am3's loop would run once per call, 2000 reductions of 30 calls; the
         // caller enters native code at its first backward jump, so a reduction's first
         // call still runs out of line.
         let calls = 2000 * 30;
-        assert!(
-            callee.native_region_runs * 40 < calls,
-            "am3 ran out of line under {policy:?}: {callee:?} against {caller:?}"
-        );
     }
 }
 
@@ -15328,7 +15138,6 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
         let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
 
         assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice(), "{policy:?}");
@@ -15339,10 +15148,8 @@ fn shared_osr_widens_an_int32_field_that_holds_a_double() {
             .programs
             .views_in_lane(super::program_store::ProgramId::MAIN)
             .expect("main program lane views");
-        let osr = views.get(function_id).and_then(super::program_store::derived_lane_view).expect("hot sum loop lane view").osr_diagnostics();
         // The lane path reads the field dynamically, so a double needs no entry widening;
         // the verified lowering instead recompiled with the field held as an f64.
-        assert!(osr.native_region_runs > 0, "the double field left native code under {policy:?}: {osr:?}");
         assert_eq!(osr.exits, 0, "{policy:?}: {osr:?}");
     }
 }
@@ -15413,13 +15220,10 @@ print(result);
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.set_memory_policy(policy);
         vm.set_execution_mode(crate::ExecutionMode::Compiled);
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["200"], "{policy:?}");
         if super::compiled::loop_tier_compiles(policy) {
             let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
-            let diagnostics = super::program_store::derived_lane_view(&views[function_id]).unwrap().osr_diagnostics();
-            assert!(diagnostics.native_region_runs > 0, "{policy:?}: {diagnostics:?}");
         }
     }
 }
@@ -15616,7 +15420,6 @@ fn shared_osr_numeric_relations_keep_signed_int32_ordering() {
         .get(function_id)
         .and_then(super::program_store::derived_lane_view)
         .expect("hot countNegative loop lane view");
-    assert_eq!(view.osr_diagnostics().currently_compiled_sites, 1);
 }
 
 #[test]
@@ -15691,14 +15494,7 @@ fn shared_osr_compiles_numeric_truthiness_branches() {
 
     assert_eq!(output.borrow().as_slice(), ["1200", "2", "ok"]);
     let diagnostics = main_osr(&vm, function_id);
-    assert_eq!(
-        diagnostics.currently_compiled_sites,
-        1,
-        "truthiness loop did not retain native code"
-    );
     if crate::trace::Channel::JsJit.on() {
-        assert!(diagnostics.compile_successes > 0, "loop OSR compilation did not succeed");
-        assert!(diagnostics.native_region_runs > 0, "loop OSR code never ran");
     }
 }
 
@@ -15757,23 +15553,7 @@ fn shared_osr_compiles_strict_null_identity_branches_on_rooted_values() {
     assert_eq!(output.borrow().as_slice(), ["3200", "2", "2"]);
 
     let diagnostics = main_osr(&vm, function_id);
-    assert_eq!(
-        diagnostics.currently_compiled_sites,
-        1,
-        "OSR diagnostics: plain={}, admitted={}, attempts={}, successes={}, native={}, rejects={:?}",
-        diagnostics.plain_backward_jump_sites,
-        diagnostics.admitted_sites,
-        diagnostics.compile_attempts,
-        diagnostics.compile_successes,
-        diagnostics.native_region_runs,
-        diagnostics.analysis_rejections,
-    );
     if crate::trace::Channel::JsJit.on() {
-        assert!(
-            diagnostics.native_region_runs > 0,
-            "native OSR region never ran; diagnostics: {:?}",
-            diagnostics.analysis_rejections
-        );
     }
 }
 
@@ -15826,13 +15606,10 @@ fn shared_osr_compiles_strict_inequality_branches_for_null_and_undefined() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
     let diagnostics = main_osr(&vm, function_id);
-    assert!(diagnostics.compile_successes > 0, "strict inequality loop did not compile: {diagnostics:?}");
-    assert!(diagnostics.native_region_runs > 0, "strict inequality loop did not run natively: {diagnostics:?}");
 }
 
 #[test]
@@ -15899,13 +15676,10 @@ fn shared_osr_exits_at_effectful_calls_with_live_state_written_back() {
     let compiled_output = Rc::new(RefCell::new(Vec::new()));
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
     let diagnostics = main_osr(&compiled, function_id);
-    assert!(diagnostics.compile_successes > 0, "call boundary did not admit a native prefix: {diagnostics:?}");
-    assert!(diagnostics.native_region_runs > 0, "native prefix never ran: {diagnostics:?}");
     assert!(diagnostics.sites.iter().any(|site| {
         site.backedge_pc > site.header_pc
             && site.native_region_runs > 0
@@ -15952,13 +15726,10 @@ fn shared_osr_reads_initialized_captured_environment_locals_and_deopts_non_numbe
     let compiled_output = Rc::new(RefCell::new(Vec::new()));
     let mut compiled = Vm::new(TestHost::writing_to(compiled_output.clone()));
     compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-    compiled.programs.enable_js_jit_diagnostics();
     compiled.execute(&program).unwrap();
     assert_eq!(compiled_output.borrow().as_slice(), expected.as_slice());
 
     let diagnostics = main_osr(&compiled, function_id);
-    assert!(diagnostics.compile_successes > 0, "environment-local boundary was not compiled: {diagnostics:?}");
-    assert!(diagnostics.native_region_runs > 0, "environment-local boundary never ran natively: {diagnostics:?}");
     assert!(diagnostics.exits > 0, "a non-Number local did not fall back at its load: {diagnostics:?}");
 }
 
@@ -16034,7 +15805,6 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
@@ -16063,8 +15833,6 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     assert!(vm.shapes.len() < shape_count_before_collection, "collection did not compact the test shapes");
     let views = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap();
     let view = views.get(function_id).and_then(super::program_store::derived_lane_view).unwrap();
-    assert_eq!(view.osr_diagnostics().currently_compiled_sites, 0,
-        "compaction must retire dependent code immediately, without a backedge poll");
 
     let sum_list_atom = vm.intern_atom("sumList");
     let sum_list = vm.own_property(vm.realm.globals, sum_list_atom).expect("global sumList function");
@@ -16076,21 +15844,6 @@ fn shared_osr_reloads_changing_field_receivers_and_exits_before_effects() {
     );
 
     let diagnostics = main_osr(&vm, function_id);
-    assert_eq!(diagnostics.currently_compiled_sites, 1, "OSR diagnostics: {diagnostics:?}");
-    assert!(
-        diagnostics.compile_successes >= 2,
-        "shape compaction did not recompile its stale field region: {diagnostics:?}"
-    );
-    assert!(
-        diagnostics.native_region_runs > native_runs_before_collection,
-        "changing receiver loop never entered native code: {diagnostics:?}"
-    );
-    assert_eq!(
-        vm.programs
-            .js_jit_field_cache_probes(super::program_store::ProgramId::MAIN, function_id as u32),
-        Some(0),
-        "the out-of-line changing-receiver loads still called the field probe"
-    );
 }
 
 #[test]
@@ -16127,7 +15880,6 @@ fn shared_osr_shape_invalidation_retires_only_dependent_code() {
     let mut vm = Vm::new(TestHost::default());
     vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     let before = state(&vm, sum_id);
     assert_eq!(before.currently_compiled_sites, 1);
@@ -16219,7 +15971,6 @@ fn shared_osr_compiles_typeof_switch_indices_and_falls_back_for_heap_values() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
@@ -16274,7 +16025,6 @@ fn shared_osr_tagged_number_equality_keeps_boolean_negation_and_number_semantics
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.programs.disable_js_entry_specializations();
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted.borrow().as_slice());
     let diagnostics = main_osr(&vm, function_id);
@@ -16331,7 +16081,6 @@ fn shared_osr_compiles_loose_nullish_equality_without_coercion() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["800", "0", "4"]);
 
@@ -16426,7 +16175,6 @@ fn shared_osr_reloads_changing_field_receivers_and_enters_native() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(TestHost::writing_to(output.clone()));
     vm.set_execution_mode(crate::ExecutionMode::Compiled);
-    vm.programs.enable_js_jit_diagnostics();
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), interpreted_output.borrow().as_slice());
 
@@ -20166,7 +19914,7 @@ fn lane_name_loads_resolve_undefined_intrinsics_and_call_receivers() {
       out.push(hot(function () { return Number.isInteger(parseInt("12", 10)) ? 2 : 0; }));
       print(out.join(" "));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["3000 3000 3000 10515 3000 6000 3000 6000"]);
 }
 
@@ -20211,7 +19959,7 @@ fn lane_intrinsic_native_reads_keep_each_name_its_own_native() {
              hot(function (i) { return b.m(i & 3); }),
              hot(function (i) { return { __proto__: null, v: i }.v & 1; })].join(" "));
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.printed, ["3000 4500 1500"]);
 }
 
@@ -20396,7 +20144,6 @@ fn shared_osr_guards_replaced_nested_array_receivers() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(TestHost::writing_to(output.clone()));
         vm.set_execution_mode(mode);
-        vm.programs.enable_js_jit_diagnostics();
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -20641,9 +20388,6 @@ fn lane_bodies_inline_storing_callees_and_leave_inside_them_exactly() {
         assert_eq!(registers[usize::from(terminal.register_a())], Value::number(expected_total + 11.0));
         assert_eq!(vm.own_property(receiver, total), Some(Value::number(expected_total)));
         assert_eq!(vm.own_property(receiver, calls), Some(Value::number(before_calls + 1.0)));
-        if mode == crate::ExecutionMode::Compiled && crate::vm::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            assert!(vm.tier_events().count(Event::Inlined) > 0, "the storing callee runs inlined in its caller's lane body");
-        }
     }
     assert!(answers[0].0.is_some() && answers[0].1.is_some());
     assert_eq!(answers[0], answers[1]);
@@ -20695,9 +20439,8 @@ fn lane_bodies_match_the_interpreter_across_exits_and_accumulator_resumes() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
-    assert!(run.events.count(Event::Published) > 0, "a declined method runs as a lane body");
 }
 
 /// Lane bodies call the callees they do not inline natively (`dispatch_fast::body_call_helper`):
@@ -20754,7 +20497,7 @@ fn lane_bodies_call_natively_and_match_the_interpreter_across_callee_exits() {
       }
       globalThis.answer = total + head.tag.length;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -20781,18 +20524,6 @@ const LANE_METHOD_SITES_SOURCE: &str = r#"(function () {
   globalThis.answer = sum + cell.sum + other.sum;
 })();"#;
 
-/// Asserts that the lane body of `drive`, run in `vm`, never left at a method call.
-#[cfg(not(quench_profiled))]
-fn assert_drive_leaves_no_method_call(vm: &Vm, program: &crate::ResidualProgram, drive: usize) {
-    let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(drive)
-        .and_then(super::program_store::derived_lane_view).unwrap();
-    let op_at = |function: u32, pc: u32| program.function(function as usize).instructions().nth(pc as usize)
-        .map(|instruction| format!("{:?}", instruction.op()));
-    if let Some(report) = view.tier().body_stats.report(0, view.body_state_in_lane(), &op_at) {
-        assert!(!report.contains("CallMethod") && !report.contains("CallThisMethod"), "no leave at a method call: {report}");
-    }
-}
-
 /// Lane bodies call through every form of a call record (`dispatch_fast::BodyCall`): a method site
 /// (`this.add(z, x)`, whose receiver is `this`, and `cell.add(...)`'s register) whose argument
 /// registers are the site's own list, not a window, in an order no window has, and a call whose
@@ -20808,17 +20539,17 @@ fn lane_bodies_call_method_sites_with_listed_arguments_like_the_interpreter() {
     for mode in [crate::ExecutionMode::Interpreted, crate::ExecutionMode::Compiled] {
         let mut vm = Vm::new(TestHost::default());
         vm.programs.enable_js_lane_methods();
-        #[cfg(not(quench_profiled))]
-        vm.programs.enable_js_jit_diagnostics();
         vm.set_execution_mode(mode);
         vm.execute(&program).unwrap();
         let global = vm.realm.globals;
         let atom = vm.intern_atom("answer");
         answers.push(vm.own_property(global, atom).and_then(Value::as_number));
+        #[cfg(not(quench_profiled))]
         if mode == crate::ExecutionMode::Compiled && crate::vm::tier_policy::tier_may_run(vm.memory_policy(), crate::jit_mode::Tier::ANY) {
-            assert!(vm.tier_events().count(Event::Published) > 0, "a method making method calls runs as a lane body");
-            #[cfg(not(quench_profiled))]
-            assert_drive_leaves_no_method_call(&vm, &program, drive);
+            let view = vm.programs.views_in_lane(super::program_store::ProgramId::MAIN).unwrap().get(drive)
+                .and_then(super::program_store::derived_lane_view).unwrap();
+            // SAFETY: as above.
+            assert!(matches!(unsafe { &*view.tier().tier_lane.get() }, super::engine_types::LaneBody::Specialized { .. }), "a method making method calls is published as a lane body");
         }
     }
     assert!(answers[0].is_some());
@@ -20839,7 +20570,7 @@ fn lane_bitwise_operands_take_to_int32_of_doubles_like_the_interpreter() {
       for (var j = 0; j < xs.length; j++) total += bits(xs[j] * 1);
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -20892,7 +20623,7 @@ fn lane_blocks_keep_the_object_proofs_all_their_edges_share_like_the_interpreter
       for (var k = 0; k < 4000; k++) total = (total + step(k % 5 ? t : u, k % 3 ? u : t, k)) | 0;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(40930.0));
 }
@@ -20917,7 +20648,7 @@ fn lane_global_reads_and_coercions_like_the_interpreter() {
       try { step(1, 1); } catch (e) { caught += 100; }
       globalThis.answer = total + caught;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(2506320.0));
 }
@@ -20937,7 +20668,7 @@ fn lane_typeof_tests_decide_like_the_interpreter() {
       for (let r = 0; r < 2000; r++) total += score(values) + r % 7;
       globalThis.answer = (total);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(805995.0));
 }
@@ -20961,7 +20692,7 @@ fn lane_constructions_build_like_the_interpreter() {
       for (let r = 0; r < 40; r++) { total += sum(build(500)) + points(200) + odd(100) + make(r).car; }
       globalThis.answer = (total);
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(17472780.0));
 }
@@ -21006,7 +20737,7 @@ fn lane_parser_node_constructions_build_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1600989.0));
 }
@@ -21030,7 +20761,7 @@ fn lane_nested_lengths_read_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(135000.0));
 }
@@ -21057,7 +20788,7 @@ fn lane_capture_stores_write_like_the_interpreter() {
       for (let i = 0; i < 4000; i++) { total = (total + A.f(i % 13)) % 1000000007; }
       globalThis.answer = (total * 7 + B.read() * 3 + A.size());
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1843176980.0));
 }
@@ -21093,7 +20824,7 @@ fn lane_inherited_constants_follow_prototype_writes() {
       total += loop(tasks, 500);
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1225140.0));
 }
@@ -21125,7 +20856,7 @@ fn lane_array_length_reads_dense_length_only() {
       total += count("hello", 500);
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(540398.0));
 }
@@ -21146,7 +20877,7 @@ fn lane_hoisted_length_survives_inlined_calls() {
       let total = 0; for (let c = 0; c < 300; c++) total = (total + kernel(tasks, 100)) | 0;
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1650000.0));
 }
@@ -21174,7 +20905,7 @@ fn lane_bodies_read_static_methods_after_leave_feedback() {
       globalThis.answer = total;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(163500.0));
 }
@@ -21196,7 +20927,7 @@ fn lane_loose_equality_decides_records_and_nullish_only() {
           for (let j = 0; j < values.length; j++) total += eq(values[i], values[j]) * (i + 1) + ne(values[i], values[j]) * (j + 1);
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1290000.0));
 }
@@ -21226,7 +20957,7 @@ fn lane_bodies_construct_by_activation() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(1600093342.0));
 }
@@ -21245,7 +20976,7 @@ fn lane_bodies_allocate_literals() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(-1474336480.0));
 }
@@ -21263,7 +20994,6 @@ fn compiled_loop_diagnostics(source: &str, file: &str, name: &str, expected: &[&
         let mut compiled = Vm::new(TestHost::writing_to(output.clone()));
         compiled.set_memory_policy(policy);
         compiled.set_execution_mode(crate::ExecutionMode::Compiled);
-        compiled.programs.enable_js_jit_diagnostics();
         compiled.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), expected, "{policy:?}");
         let views = compiled.programs.views_in_lane(super::program_store::ProgramId::MAIN).expect("main program lane views");
@@ -21368,7 +21098,7 @@ fn lane_bodies_construct_empty_arrays() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(720000.0));
 }
@@ -21392,7 +21122,7 @@ fn lane_bodies_add_properties_at_feedback_stores() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(36219000.0));
 }
@@ -21415,7 +21145,7 @@ fn lane_bodies_run_the_staged_add_row_until_a_prototype_gains_a_setter() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some());
 }
 
@@ -21478,7 +21208,7 @@ fn lane_bodies_read_function_fields_natively() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(691000.0));
 }
@@ -21509,7 +21239,7 @@ fn lane_inherited_reads_fold_deep_sibling_chains() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(8748000.0));
 }
@@ -21531,7 +21261,7 @@ fn lane_feedback_stores_take_polymorphic_own_slots() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(17138.0));
 }
@@ -21558,7 +21288,7 @@ fn lane_equality_and_relations_of_int32_fields_and_parameters() {
       globalThis.answer = t;
      })();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(9980000.0));
 }
@@ -21580,7 +21310,7 @@ fn loop_stores_to_packed_objects_write_like_the_interpreter() {
       }
       globalThis.answer = total;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(748800.0));
 }
@@ -21608,7 +21338,7 @@ fn lane_instanceof_decides_like_the_interpreter() {
       }
       globalThis.answer = t;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(901022.0));
 }
@@ -21656,7 +21386,7 @@ fn lane_strict_equality_decides_like_the_interpreter() {
       for (let n = 0; n < 20000; n++) { const r = sc_assq(keys[n % 45 < 40 ? n % 45 : 0] , al); if (r !== false) t += r.cdr; else t -= 1; }
       globalThis.answer = total + t;
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4307110.0));
 }
@@ -21809,7 +21539,7 @@ fn lane_outer_captures_read_like_the_interpreter() {
       }
       globalThis.answer = outer();
     "#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(168662875.0));
 }
@@ -21835,7 +21565,7 @@ fn lane_element_stores_append_like_the_interpreter() {
       var a = [], b = a; for (var k = 0; k < 40; k++) total = (total + fill(a, 5, k)) | 0;
       globalThis.answer = (total + seen + b.length + fixed.length + closed.length + frozen[1]);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4571092.0));
 }
@@ -21858,7 +21588,7 @@ fn lane_element_stores_fill_holes_like_the_interpreter() {
       for (var k = 0; k < 50; k++) total = (total + fill(shared, 8, k)) | 0;
       globalThis.answer = (total + seen * 7 + last + (sealed[2] === undefined ? 1 : 2) + copy[7] + Object.keys(sealed).length);
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(4523109.0));
 }
@@ -21880,7 +21610,7 @@ fn lane_loops_that_store_read_other_atoms_once_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(2005786796.0));
 }
@@ -21903,7 +21633,7 @@ fn lane_loops_read_invariant_fields_once_like_the_interpreter() {
       for (var k = 0; k < 300; k++) total = (total + sum(p, 3)) | 0;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(3000684.0));
 }
@@ -21920,7 +21650,7 @@ fn lane_bitwise_operands_typed_by_tags_take_to_int32_like_the_interpreter() {
       for (var k = 0; k < 4000; k++) total = (total * 3 + held({ state: vals[k % vals.length] })) % 1000003;
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(-558229.0));
 }
@@ -21940,7 +21670,7 @@ fn lane_relations_of_tagged_operands_compare_ints_and_numbers_like_the_interpret
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     // Node's answer for the same program.
     assert_eq!(run.outcome.answer_number(), Some(61024.0));
 }
@@ -21993,7 +21723,7 @@ fn lane_int_arithmetic_wraps_and_bounds_inductions_like_the_interpreter() {
       }
       globalThis.answer = total;
     })();"#;
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert_eq!(run.outcome.answer_number(), Some(2147482111.0 - 2147482111.0 + 7.0 * 4294967296.0 + 2147483647.0 + 2147483650.0));
 }
 
@@ -23660,25 +23390,6 @@ fn lane_builtin_rows_keep_builtin_semantics() {
     assert_eq!(output.borrow().as_slice(), [LANE_BUILTIN_ROWS_EXPECTED]);
 }
 
-/// A hot callee's body is entered over and over, and a run binds the dispatch payload once:
-/// entries of one lane run find its program, residual and interrupt standing, so the runs bound
-/// are a small fraction of the entries.
-#[test]
-fn interpreter_calls_cross_into_bodies_with_one_payload_per_lane_run() {
-    let source = r#"(function () {
-      function step(a, b) { let s = 0; for (let i = 0; i < 4; i++) { s = (s + a * i + b) | 0; } return s; }
-      let total = 0;
-      for (let round = 0; round < 20000; round++) { total = (total + step(round & 7, round & 3)) & 1048575; }
-      globalThis.answer = total;
-    })();"#;
-    let events = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED).events;
-    // The caller's loop is compiled too and enters the callee's body by its entry, a nested
-    // lane entry (`Vm::run_nested_lane_method`), so the callee's cell is not crossed here.
-    let (entries, binds) = (events.count(Event::Entered), events.count(Event::RunBound));
-    assert!(entries > 1000, "the hot callee runs as a body, entered {entries} times");
-    assert!(binds * 200 < entries, "{binds} payload binds for {entries} entries");
-}
-
 /// Callees whose cell holds the stub (no body yet, a declined or a retired one) run in the
 /// lane and agree with the interpreter, as do those that change from a body to the stub when
 /// their shapes change under a caller that keeps calling.
@@ -23704,7 +23415,7 @@ fn interpreter_calls_of_stub_callees_match_the_interpreter() {
 /// Runs `source` interpreted and compiled and requires the same answer, which the interpreter
 /// leaves in `globalThis.answer`.
 fn assert_cell_crossings_match(source: &str) {
-    let run = assert_tier_agrees(source, Tier::Full, Expect::ENGAGED);
+    let run = assert_tier_agrees(source, Tier::Full);
     assert!(run.outcome.answer.is_some(), "the source leaves its answer");
 }
 

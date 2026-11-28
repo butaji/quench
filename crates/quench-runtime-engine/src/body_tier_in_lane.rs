@@ -45,7 +45,7 @@ impl LaneView {
             LaneBody::Specialized { .. } => "specialized",
             LaneBody::Declined => "declined",
         };
-        format!("{state} unpaid={} demanded={} declined={:?}", h.unpaid, h.demanded, self.tier().body_stats.declined.get())
+        format!("{state} unpaid={} demanded={}", h.unpaid, h.demanded)
     }
 
     /// Native code (a loop region or a body) called this function, which has no body to enter: the
