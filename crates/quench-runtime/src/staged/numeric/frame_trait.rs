@@ -46,14 +46,6 @@ pub trait NumericFrame<S: Stage>: Frame<S> + super::super::GlobalFrame<S> + supe
         self.int_operand(stage, operand, miss)
     }
 
-    /// The encoded prototype link (`ProtoLink::bits`) of `constructor`'s `prototype`, where the
-    /// frame holds it as a Stable fact together with the constructor's absent `Symbol.hasInstance`
-    /// and its plain, unbound call: a dependency on both retires the code that relied on them
-    /// where one changes, so an `instanceof` of `constructor` walks the value's chain by words.
-    /// `None` where the frame holds no such fact, which leaves `instanceof` to the VM.
-    #[inline(always)]
-    fn stable_prototype(&mut self, _stage: &mut S, _constructor: Register) -> Option<S::Word> { None }
-
     /// Whether an IsHTMLDDA object can exist (the host provides one): a heap cell other than an
     /// object or array record may then be it, which no word decides.
     #[inline(always)]

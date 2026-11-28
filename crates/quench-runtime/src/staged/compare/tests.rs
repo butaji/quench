@@ -19,14 +19,12 @@ struct Probe {
     types: Vec<Option<Type>>,
     refined: Vec<(Register, Type, Edge)>,
     html_dda: bool,
-    /// The constructor `prototype` link the frame holds as a Stable fact.
-    prototype: Option<u64>,
 }
 
 impl Probe {
     fn of(values: &[Value]) -> Self {
         Self { registers: values.iter().map(|value| value.to_bits()).collect(), calls: Vec::new(), answer: None,
-            types: Vec::new(), refined: Vec::new(), html_dda: true, prototype: None }
+            types: Vec::new(), refined: Vec::new(), html_dda: true }
     }
 }
 
@@ -76,7 +74,6 @@ impl NumericFrame<Concrete> for Probe {
     fn prove_number(&mut self, _stage: &mut Concrete, _register: Register, _miss: ()) -> Option<()> { None }
     fn miss(&self) {}
     fn html_dda_possible(&self) -> bool { self.html_dda }
-    fn stable_prototype(&mut self, _stage: &mut Concrete, _constructor: Register) -> Option<u64> { self.prototype }
     fn int_fact(&self) {}
     fn number_fact(&self) {}
 }
