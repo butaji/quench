@@ -362,6 +362,12 @@ pub(super) fn own_formed_handler<const THIS: bool>(hint: Option<u32>) -> Handler
 /// `NO_CALL_LINK`, a held one's shape a recorded one.
 #[inline(always)]
 pub(super) fn set_field_hint(ip: Ip, entry: quench_runtime::vm::FieldCache) {
+    // A hint holds a `u16` field index, which a spilled slot word does not fit (`Vm::form_hint`): a spilled entry
+    // writes the empty hint, so its site keeps reading through the entry (`class_slot_address`).
+    if quench_runtime::staged::field_cache_layout::is_spilled_slot(entry.slot) {
+        set_record_hint(ip, quench_runtime::vm::NO_FIELD_RECEIVER, NO_CALL_LINK);
+        return;
+    }
     set_record_hint(ip, entry.receiver, entry.record_slot());
 }
 
